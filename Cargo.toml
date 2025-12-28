@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/skunk-bat-core",
+    "crates/skunk-bat-integrations",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0"
+repository = "https://github.com/ecoPrimals/skunkBat"
+authors = ["ecoPrimals Project"]
+
+[workspace.dependencies]
+# SourDough core traits
+sourdough-core = { path = "../sourDough/crates/sourdough-core" }
+
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Virtual workspace integration tests
+[package]
+name = "skunk-bat-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[test]]
+name = "integration_e2e"
+path = "tests/integration_e2e.rs"
+
+[[test]]
+name = "integration_beardog"
+path = "tests/integration_beardog.rs"
+
+[[test]]
+name = "integration_songbird"
+path = "tests/integration_songbird.rs"
+
+[[test]]
+name = "integration_toadstool"
+path = "tests/integration_toadstool.rs"
+
+[dependencies]
+skunk-bat-core = { path = "crates/skunk-bat-core" }
+skunk-bat-integrations = { path = "crates/skunk-bat-integrations" }
+sourdough-core = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

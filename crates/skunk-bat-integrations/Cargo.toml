@@ -1,0 +1,42 @@
+[package]
+name = "skunk-bat-integrations"
+version = "0.1.0"
+edition = "2021"
+authors = ["BiomeOS Contributors"]
+license = "MIT OR Apache-2.0"
+description = "Real ecosystem integrations for skunkBat (Beardog, Toadstool, Songbird)"
+
+[dependencies]
+# Core skunkBat
+skunk-bat-core = { path = "../skunk-bat-core" }
+
+# Ecosystem primals (optional - only when actually integrating)
+beardog-genetics = { path = "../../../../phase1/beardog/crates/beardog-genetics", optional = true }
+beardog-errors = { path = "../../../../phase1/beardog/crates/beardog-errors", optional = true }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+[features]
+default = []
+beardog-integration = ["beardog-genetics", "beardog-errors"]
+# Future features
+toadstool-integration = []
+songbird-integration = []
+# All integrations
+full = ["beardog-integration", "toadstool-integration", "songbird-integration"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+
