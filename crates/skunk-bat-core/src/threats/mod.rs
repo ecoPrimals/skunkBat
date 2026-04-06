@@ -42,7 +42,7 @@ pub trait BaselineProfiler: Send + Sync {
 
 /// Trait for topology path validation.
 ///
-/// This trait abstracts layer path validation for BiomeOS architectural
+/// This trait abstracts layer path validation for `BiomeOS` architectural
 /// enforcement, detecting layer-hopping and security boundary bypasses.
 #[async_trait]
 pub trait TopologyValidator: Send + Sync {
@@ -124,7 +124,7 @@ impl StatisticalProfiler {
     ///
     /// * `threshold` - Number of standard deviations for anomaly detection (e.g., 2.5 for 2.5 sigma)
     #[must_use]
-    pub fn new(threshold: f64) -> Self {
+    pub const fn new(threshold: f64) -> Self {
         Self {
             observations: Vec::new(),
             threshold,
@@ -147,7 +147,7 @@ impl LayerTopologyValidator {
     ///
     /// * `expected_path` - The required layer traversal sequence (e.g., [0, 1, 2, 3])
     #[must_use]
-    pub fn new(expected_path: Vec<u8>) -> Self {
+    pub const fn new(expected_path: Vec<u8>) -> Self {
         Self { expected_path }
     }
 }
@@ -156,9 +156,10 @@ impl LayerTopologyValidator {
 impl TopologyValidator for LayerTopologyValidator {
     async fn validate_path(&self, actual_path: &[u8]) -> Result<PathValidation, SkunkBatError> {
         let is_valid = actual_path == self.expected_path.as_slice();
-        
+
         // Find bypassed layers
-        let bypassed_layers: Vec<u8> = self.expected_path
+        let bypassed_layers: Vec<u8> = self
+            .expected_path
             .iter()
             .filter(|layer| !actual_path.contains(layer))
             .copied()
@@ -312,7 +313,7 @@ impl ThreatDetector {
 
     /// Check if threat detector is healthy.
     #[must_use]
-    pub fn is_healthy(&self) -> bool {
+    pub const fn is_healthy(&self) -> bool {
         self.enabled
     }
 
@@ -460,7 +461,7 @@ impl ThreatDetector {
     }
 
     /// Check system load (normalized 0.0-1.0).
-    fn check_system_load() -> f64 {
+    const fn check_system_load() -> f64 {
         // In production, this would use actual system monitoring
         // For now, return a safe value
         0.1 // 10% load
@@ -632,7 +633,7 @@ mod tests {
         // Establish baseline with some variation in normal traffic
         for i in 0..10 {
             let observation = Observation {
-                connection_rate: 10.0 + (f64::from(i) * 0.1), // Slight variation
+                connection_rate: f64::from(i).mul_add(0.1, 10.0), // Slight variation
                 traffic_volume: 1000,
                 ports_accessed: vec![80, 443],
                 timestamp: SystemTime::now(),
@@ -773,14 +774,14 @@ mod tests {
             _ => panic!("Wrong threat type"),
         }
     }
-    
+
     #[tokio::test]
     async fn test_statistical_profiler_baseline() {
         let mut profiler = StatisticalProfiler::new(2.5);
-        
+
         // Before baseline established
         assert!(!profiler.is_established());
-        
+
         // Add observations to establish baseline (needs 10+)
         for _ in 0..10 {
             let obs = Observation {
@@ -791,18 +792,18 @@ mod tests {
             };
             profiler.update(&obs).await.unwrap();
         }
-        
+
         // Should now be established
         assert!(profiler.is_established());
     }
-    
+
     #[tokio::test]
     async fn test_detector_with_behavioral_anomalies() {
         let config = test_config();
-        
+
         // Create detector with a profiler that has baseline
         let mut profiler = StatisticalProfiler::new(2.5);
-        
+
         // Establish baseline
         for _ in 0..10 {
             let obs = Observation {
@@ -813,21 +814,25 @@ mod tests {
             };
             profiler.update(&obs).await.unwrap();
         }
-        
+
         let detector = ThreatDetector::with_verifiers(
             &config,
             Box::new(LocalLineageVerifier),
             Box::new(profiler),
         );
-        
+
         // Run detection - should check behavioral anomalies
         let threats = detector.detect().await.unwrap();
-        
+
         // Might or might not find threats depending on baseline, but should run without error
-        assert!(threats.is_empty() || !threats.is_empty(), "Should return a result");
+        assert!(
+            threats.is_empty() || !threats.is_empty(),
+            "Should return a result"
+        );
     }
-    
+
     #[test]
+    #[allow(clippy::float_cmp)]
     fn test_observation_creation() {
         let obs = Observation {
             connection_rate: 10.0,
@@ -835,12 +840,12 @@ mod tests {
             ports_accessed: vec![80, 443, 8080],
             timestamp: SystemTime::now(),
         };
-        
+
         assert_eq!(obs.connection_rate, 10.0);
         assert_eq!(obs.traffic_volume, 2000);
         assert_eq!(obs.ports_accessed.len(), 3);
     }
-    
+
     #[test]
     #[allow(clippy::float_cmp)]
     fn test_anomaly_creation() {
@@ -849,7 +854,7 @@ mod tests {
             behavior: "High connection rate".to_string(),
             confidence: 0.92,
         };
-        
+
         assert_eq!(anomaly.deviation, 4.5);
         assert_eq!(anomaly.confidence, 0.92);
         assert_eq!(anomaly.behavior, "High connection rate");

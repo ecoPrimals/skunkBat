@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 sourdough-core = { workspace = true }
 tokio = { workspace = true }
@@ -14,11 +17,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-async-trait = "0.1"
+async-trait = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
-tracing-subscriber = "0.3"
+tracing-subscriber = { workspace = true }
 
 [[example]]
 name = "basic_usage"

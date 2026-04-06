@@ -1,16 +1,17 @@
 //! Beardog integration demonstration for skunkBat
 //!
 //! Shows genetic lineage verification architecture. This demo uses the
-//! LocalLineageVerifier stub to demonstrate the integration pattern.
+//! `LocalLineageVerifier` stub to demonstrate the integration pattern.
 //! For production use with real Beardog, enable the "beardog-integration" feature.
 
 use skunk_bat_core::{
     SkunkBat, SkunkBatConfig,
-    threats::{Severity, Threat, ThreatType, LineageVerifier, LocalLineageVerifier},
+    threats::{LineageVerifier, LocalLineageVerifier, Severity, Threat, ThreatType},
 };
 use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -44,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("     • Conservative default: deny unknown");
     println!("     • No external dependencies");
     println!("     • Used for testing and standalone mode\n");
-    
+
     println!("  2. BeardogLineageVerifier (real) - ⚠️ Requires feature flag");
     println!("     • Cryptographic proof validation");
     println!("     • Multi-generation lineage chains");
@@ -52,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize with stub verifier
     let verifier = LocalLineageVerifier;
-    
+
     println!("✓ Using LocalLineageVerifier for this demo");
     println!("  • Mode: Conservative (deny by default)");
     println!("  • Trust model: Defensive\n");
@@ -61,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
-    
+
     println!("✓ skunkBat initialized\n");
 
     // ════════════════════════════════════════
@@ -72,24 +73,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("════════════════════════════════════════\n");
 
     let node_id = "node-unknown-123";
-    
+
     println!("Connection attempt:");
-    println!("  • Source: {}", node_id);
+    println!("  • Source: {node_id}");
     println!("  • IP: 192.168.1.50");
     println!("  • Service: data-access\n");
 
     println!("🦨 → 🐻 Requesting lineage verification...");
     let is_family = verifier.is_family(node_id).await?;
     let lineage = verifier.get_lineage(node_id).await?;
-    
+
     println!("🐻 → 🦨 Response (stub behavior):");
     if is_family {
         println!("  ✓ Valid lineage\n");
     } else {
         println!("  ✗ NOT FAMILY");
-        println!("  • Lineage: {:?}", lineage);
+        println!("  • Lineage: {lineage:?}");
         println!("  • Reason: Conservative default (no verification available)\n");
-        
+
         // Create threat
         let threat = Threat {
             id: "beardog-threat-1".to_string(),
@@ -104,14 +105,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             description: "Connection from node with unverified genetic lineage".to_string(),
             confidence: 0.9,
         };
-        
+
         println!("🦨 Threat Detected:");
         println!("  • Type: UnknownLineage");
         println!("  • Severity: High");
         println!("  • Confidence: 90%\n");
-        
+
         skunkbat.respond_to_threat(&threat)?;
-        
+
         println!("🦨 Decision: ⚠️ CONNECTION QUARANTINED");
         println!("  • Reason: Cannot verify genetic lineage");
         println!("  • Action: Isolate for owner review");

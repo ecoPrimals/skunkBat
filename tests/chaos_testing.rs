@@ -32,7 +32,10 @@ mod chaos_tests {
         // Final verification
         skunkbat.start().await.expect("Final start should succeed");
         let scan = skunkbat.scan_network().await;
-        assert!(scan.is_ok(), "System should be functional after rapid cycles");
+        assert!(
+            scan.is_ok(),
+            "System should be functional after rapid cycles"
+        );
         skunkbat.stop().await.expect("Final stop should succeed");
     }
 
@@ -95,17 +98,23 @@ mod chaos_tests {
         config.features.observability = false;
 
         let mut skunkbat = SkunkBat::new(config);
-        
+
         // Should still start/stop without errors
-        skunkbat.start().await.expect("Should start even with all features disabled");
-        
+        skunkbat
+            .start()
+            .await
+            .expect("Should start even with all features disabled");
+
         // Operations should degrade gracefully
         let scan = skunkbat.scan_network().await;
         assert!(scan.is_ok(), "Scan should return empty result, not error");
-        
+
         let threats = skunkbat.detect_threats().await;
-        assert!(threats.is_ok(), "Detection should return empty result, not error");
-        
+        assert!(
+            threats.is_ok(),
+            "Detection should return empty result, not error"
+        );
+
         skunkbat.stop().await.expect("Should stop cleanly");
     }
 
@@ -152,10 +161,10 @@ mod chaos_tests {
         for _ in 0..20 {
             let _ = skunkbat.scan_network().await;
             let _ = skunkbat.detect_threats().await;
-            
+
             let metrics = skunkbat.get_security_metrics();
             assert!(metrics.last_updated.is_some(), "Metrics should be updated");
-            
+
             // Metrics should be internally consistent
             assert!(metrics.scans_performed >= metrics.threats_detected);
         }
@@ -168,27 +177,33 @@ mod chaos_tests {
         // Test: System can recover after simulated component failure
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
-        
+
         // Normal operation
-        skunkbat.start().await.expect("Initial start should succeed");
+        skunkbat
+            .start()
+            .await
+            .expect("Initial start should succeed");
         let _ = skunkbat.scan_network().await;
-        
+
         // Simulate failure by stopping
         skunkbat.stop().await.expect("Stop should succeed");
-        
+
         // Small delay to simulate recovery time
         sleep(Duration::from_millis(100)).await;
-        
+
         // Recovery - restart and verify functionality
-        skunkbat.start().await.expect("Recovery start should succeed");
+        skunkbat
+            .start()
+            .await
+            .expect("Recovery start should succeed");
         let scan = skunkbat.scan_network().await;
         assert!(scan.is_ok(), "Should be operational after recovery");
-        
+
         skunkbat.stop().await.expect("Final stop should succeed");
     }
 
     #[tokio::test]
-    #[ignore] // Enable for stress testing in actual deployment
+    #[ignore = "requires deployment environment for stress testing"]
     async fn test_extended_operation() {
         // Test: Can run for extended period without degradation
         let config = SkunkBatConfig::default();
@@ -198,7 +213,7 @@ mod chaos_tests {
         // Run for simulated extended period (10 seconds)
         let start_time = std::time::Instant::now();
         let duration = Duration::from_secs(10);
-        
+
         while start_time.elapsed() < duration {
             let _ = skunkbat.scan_network().await;
             let _ = skunkbat.detect_threats().await;
@@ -207,8 +222,11 @@ mod chaos_tests {
 
         // Verify still operational
         let final_scan = skunkbat.scan_network().await;
-        assert!(final_scan.is_ok(), "Should remain operational after extended run");
-        
+        assert!(
+            final_scan.is_ok(),
+            "Should remain operational after extended run"
+        );
+
         skunkbat.stop().await.expect("Stop should succeed");
     }
 
@@ -232,7 +250,7 @@ mod chaos_tests {
             config.features.observability = observe;
 
             let mut skunkbat = SkunkBat::new(config);
-            
+
             assert!(
                 skunkbat.start().await.is_ok(),
                 "Should start with any feature combination"
@@ -244,4 +262,3 @@ mod chaos_tests {
         }
     }
 }
-

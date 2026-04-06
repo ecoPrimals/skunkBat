@@ -8,7 +8,7 @@ mod toadstool_integration {
     use sourdough_core::PrimalLifecycle;
 
     #[tokio::test]
-    #[ignore] // Enable when toadstool integration is ready
+    #[ignore = "requires toadstool integration"]
     async fn test_capability_discovery() {
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
@@ -24,7 +24,7 @@ mod toadstool_integration {
     }
 
     #[tokio::test]
-    #[ignore] // Enable when toadstool integration is ready
+    #[ignore = "requires toadstool integration"]
     async fn test_primal_communication() {
         let config = SkunkBatConfig::default();
         let skunkbat = SkunkBat::new(config);
@@ -33,9 +33,8 @@ mod toadstool_integration {
         // - Query primal capabilities
         // - Verify connection status
         // - Map network topology
-        
+
         let scan = skunkbat.scan_network().await.unwrap();
         assert!(!scan.nodes.is_empty());
     }
 }
-

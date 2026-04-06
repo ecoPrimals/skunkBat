@@ -6,6 +6,7 @@
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
 use sourdough_core::PrimalLifecycle;
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -233,4 +234,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

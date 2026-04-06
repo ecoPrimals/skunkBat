@@ -195,7 +195,7 @@ impl ReconnaissanceEngine {
 
     /// Check if reconnaissance is healthy.
     #[must_use]
-    pub fn is_healthy(&self) -> bool {
+    pub const fn is_healthy(&self) -> bool {
         self.enabled
     }
 
@@ -466,39 +466,41 @@ mod tests {
         assert_eq!(conn.to, "node2");
         assert!(matches!(conn.status, ConnectionStatus::Active));
     }
-    
+
     #[tokio::test]
     async fn test_simple_topology_mapper() {
         let mapper = SimpleTopologyMapper;
         let nodes = vec![];
-        
+
         let connections = mapper.map_connections(&nodes).await.unwrap();
         assert!(connections.is_empty());
-        
+
         let mut scan = NetworkScan::default();
         assert!(mapper.update_topology(&mut scan).await.is_ok());
     }
-    
+
     #[test]
     fn test_local_discovery_self_knowledge() {
-        let _discovery = LocalDiscovery;
         let node = LocalDiscovery::local_node();
-        
+
         assert_eq!(node.node_type, "skunkBat");
         assert!(matches!(node.status, NodeStatus::Healthy));
         assert!(node.capabilities.contains(&"reconnaissance".to_string()));
         assert!(node.capabilities.contains(&"threat-detection".to_string()));
     }
-    
+
     #[tokio::test]
     async fn test_local_discovery_by_capability() {
         let discovery = LocalDiscovery;
-        let nodes = discovery.discover_by_capability("reconnaissance").await.unwrap();
-        
+        let nodes = discovery
+            .discover_by_capability("reconnaissance")
+            .await
+            .unwrap();
+
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].node_type, "skunkBat");
     }
-    
+
     #[test]
     fn test_network_scope_env_aware() {
         // Test default behavior - env-aware
@@ -507,7 +509,7 @@ mod tests {
         assert!(scope.managed_systems.is_empty());
         assert!(scope.excluded.is_empty());
     }
-    
+
     #[test]
     fn test_node_status_variants() {
         assert!(matches!(NodeStatus::Healthy, NodeStatus::Healthy));
@@ -515,7 +517,7 @@ mod tests {
         assert!(matches!(NodeStatus::Unhealthy, NodeStatus::Unhealthy));
         assert!(matches!(NodeStatus::Unknown, NodeStatus::Unknown));
     }
-    
+
     #[test]
     fn test_connection_status_variants() {
         assert!(matches!(ConnectionStatus::Active, ConnectionStatus::Active));

@@ -51,7 +51,7 @@ impl SecurityObserver {
 
     /// Check if security observer is healthy.
     #[must_use]
-    pub fn is_healthy(&self) -> bool {
+    pub const fn is_healthy(&self) -> bool {
         self.enabled
     }
 

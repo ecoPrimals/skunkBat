@@ -55,7 +55,7 @@ impl DefenseEngine {
 
     /// Check if defense engine is healthy.
     #[must_use]
-    pub fn is_healthy(&self) -> bool {
+    pub const fn is_healthy(&self) -> bool {
         self.enabled
     }
 
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(record.source, "192.168.1.100");
         assert_eq!(record.threat_id, "threat-123");
     }
-    
+
     #[test]
     fn test_defense_action_variants() {
         let action1 = DefenseAction {
@@ -387,7 +387,7 @@ mod tests {
             reason: "test".to_string(),
         };
         assert_eq!(action1.action_type, ActionType::Quarantine);
-        
+
         let action2 = DefenseAction {
             action_type: ActionType::Block,
             target: "test".to_string(),
@@ -396,7 +396,7 @@ mod tests {
         };
         assert_eq!(action2.action_type, ActionType::Block);
     }
-    
+
     #[test]
     fn test_block_action_response() {
         let threat = Threat {
@@ -412,10 +412,10 @@ mod tests {
             description: "Port scanning".to_string(),
             confidence: 0.95,
         };
-        
+
         let config = test_config();
         let engine = DefenseEngine::new(&config);
-        
+
         // Test block action can be executed
         let action = DefenseAction {
             action_type: ActionType::Block,
@@ -423,15 +423,15 @@ mod tests {
             requires_approval: false,
             reason: "High confidence attack".to_string(),
         };
-        
+
         assert!(engine.execute_action(&action, &threat).is_ok());
     }
-    
+
     #[test]
     fn test_disabled_defense_start() {
         let mut config = test_config();
         config.features.auto_defense = false;
-        
+
         let engine = DefenseEngine::new(&config);
         assert!(engine.start().is_ok());
         assert!(engine.stop().is_ok());

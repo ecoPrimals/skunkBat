@@ -4,15 +4,20 @@
 //! 1. Genetic violations (unknown lineage)
 //! 2. Behavioral anomalies (statistical deviations)
 //! 3. Intrusion attempts (attack patterns)
-//! 4. Resource exhaustion (DoS)
+//! 4. Resource exhaustion (`DoS`)
 
 use skunk_bat_core::{
     SkunkBat, SkunkBatConfig,
-    threats::{Severity, Threat, ThreatType, Observation, BaselineProfiler, StatisticalProfiler, TopologyValidator, LayerTopologyValidator},
+    threats::{
+        BaselineProfiler, LayerTopologyValidator, Observation, Severity, StatisticalProfiler,
+        Threat, ThreatType, TopologyValidator,
+    },
 };
 use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cast_precision_loss)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing with structured output
@@ -37,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. GENETIC VIOLATION (WHO)");
     println!("════════════════════════════════════════\n");
     println!("Scenario: Unknown node attempts connection\n");
-    
+
     let genetic_threat = Threat {
         id: "violation-genetic-1".to_string(),
         threat_type: ThreatType::UnknownLineage {
@@ -56,13 +61,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✗ Lineage check: FAILED");
     println!("  → No valid genetic lineage found");
     println!("  → Not in BearDog family tree\n");
-    
+
     println!("Threat Detected:");
     println!("  Type: UnknownLineage");
     println!("  Source: unknown-node-42");
     println!("  Severity: High");
     println!("  Description: Connection lacks valid lineage\n");
-    
+
     skunkbat.respond_to_threat(&genetic_threat)?;
     println!("Recommended Action: QUARANTINE");
     println!("Reasoning: Unknown genetic origin - isolate for review\n");
@@ -77,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create topology validator
     let validator = LayerTopologyValidator::new(vec![0, 1, 2, 3]);
-    
+
     println!("Expected Path: Layer 0 → 1 → 2 → 3");
     println!("Attempted Path: Layer 0 → 3 (SKIPPED LAYERS!)\n");
 
@@ -87,7 +92,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if !validation.is_valid {
         println!("✗ Topology check: FAILED");
-        println!("  → Bypassed security layers: {:?}", validation.bypassed_layers);
+        println!(
+            "  → Bypassed security layers: {:?}",
+            validation.bypassed_layers
+        );
         println!("  → Invalid path detected\n");
 
         let topology_threat = Threat {
@@ -126,11 +134,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // First, establish a baseline
     let mut profiler = StatisticalProfiler::new(2.5); // 2.5 sigma threshold
-    
+
     println!("Building baseline from normal traffic...");
     for i in 0..100 {
         let obs = Observation {
-            connection_rate: 10.0 + (i as f64 % 5.0) * 0.5, // ~10 conn/s with minor variation
+            connection_rate: (i as f64 % 5.0).mul_add(0.5, 10.0), // ~10 conn/s with minor variation
             traffic_volume: 1024 * (100 + i),
             ports_accessed: vec![80, 443],
             timestamp: SystemTime::now(),
@@ -138,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         profiler.update(&obs).await?;
     }
     println!("✓ Baseline established from 100 observations\n");
-    
+
     println!("Baseline (YOUR network normal):");
     println!("  • Connection rate: 10.2 ± 2.1 req/s");
     println!("  • Learned from 100 observations\n");
@@ -152,12 +160,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let anomalies = profiler.detect_anomalies(&anomalous_obs).await?;
-    
+
     println!("Current observation:");
     println!("  • Connection rate: 45.0 req/s");
     if let Some(anomaly) = anomalies.first() {
-        println!("  • Deviation: {:.1}σ (std deviations)\n", anomaly.deviation);
-        
+        println!(
+            "  • Deviation: {:.1}σ (std deviations)\n",
+            anomaly.deviation
+        );
+
         println!("✗ Behavioral check: ANOMALY DETECTED");
         println!("  → {:.1}σ above baseline", anomaly.deviation);
         println!("  → Extremely unusual for YOUR network\n");
@@ -166,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let behavior_threat = Threat {
         id: "violation-behavior-1".to_string(),
         threat_type: ThreatType::BehaviorAnomaly {
-            deviation: anomalies.first().map(|a| a.deviation).unwrap_or(0.0),
+            deviation: anomalies.first().map_or(0.0, |a| a.deviation),
             behavior: "Traffic pattern significantly above baseline".to_string(),
         },
         severity: Severity::Critical,
@@ -175,7 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         detected_at: SystemTime::now(),
         description: format!(
             "Traffic pattern {:.1}σ from baseline",
-            anomalies.first().map(|a| a.deviation).unwrap_or(0.0)
+            anomalies.first().map_or(0.0, |a| a.deviation)
         ),
         confidence: 0.92,
     };
@@ -184,9 +195,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Type: BehaviorAnomaly");
     println!("  Source: weird-traffic-source");
     println!("  Severity: Critical");
-    println!("  Description: Traffic pattern {:.1}σ from baseline\n", 
-        anomalies.first().map(|a| a.deviation).unwrap_or(0.0));
-    
+    println!(
+        "  Description: Traffic pattern {:.1}σ from baseline\n",
+        anomalies.first().map_or(0.0, |a| a.deviation)
+    );
+
     skunkbat.respond_to_threat(&behavior_threat)?;
     println!("Recommended Action: QUARANTINE");
     println!("Reasoning: Unusual but not necessarily malicious - isolate first\n");
@@ -227,7 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Source: attacker-node-99");
     println!("  Severity: Critical");
     println!("  Description: Active port scanning detected\n");
-    
+
     skunkbat.respond_to_threat(&intrusion_threat)?;
     println!("Recommended Action: QUARANTINE");
     println!("Reasoning: Active attack detected - immediate isolation\n");
@@ -273,7 +286,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Source: flood-attack-source");
     println!("  Severity: Critical");
     println!("  Description: Consuming excessive resources\n");
-    
+
     skunkbat.respond_to_threat(&dos_threat)?;
     println!("Recommended Action: QUARANTINE");
     println!("Reasoning: Preventing resource exhaustion - protect availability\n");
@@ -308,4 +321,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

@@ -20,11 +20,16 @@ mod e2e_tests {
         assert!(!scan.nodes.is_empty(), "Should discover at least self");
 
         // Detect threats
-        let threats = skunkbat.detect_threats().await.expect("Detection should succeed");
-        
+        let threats = skunkbat
+            .detect_threats()
+            .await
+            .expect("Detection should succeed");
+
         // Respond to any detected threats
         for threat in &threats {
-            skunkbat.respond_to_threat(threat).expect("Response should succeed");
+            skunkbat
+                .respond_to_threat(threat)
+                .expect("Response should succeed");
         }
 
         // Get security metrics
@@ -40,11 +45,14 @@ mod e2e_tests {
         // Test skunkBat in local-only mode (no external primals)
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
-        
+
         skunkbat.start().await.expect("Start should succeed");
 
         // Should work locally without external dependencies
-        let scan = skunkbat.scan_network().await.expect("Local scan should work");
+        let scan = skunkbat
+            .scan_network()
+            .await
+            .expect("Local scan should work");
         assert_eq!(scan.nodes.len(), 1, "Should discover only self");
         assert_eq!(scan.nodes[0].node_type, "skunkBat");
 
@@ -52,7 +60,7 @@ mod e2e_tests {
     }
 
     #[tokio::test]
-    #[ignore] // Enable when beardog is available
+    #[ignore = "requires beardog runtime"]
     async fn test_genetic_verification() {
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
@@ -65,7 +73,7 @@ mod e2e_tests {
     }
 
     #[tokio::test]
-    #[ignore] // Enable when songbird is available
+    #[ignore = "requires songbird runtime"]
     async fn test_threat_broadcasting() {
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
@@ -78,7 +86,7 @@ mod e2e_tests {
     }
 
     #[tokio::test]
-    #[ignore] // Enable when toadstool is available
+    #[ignore = "requires toadstool runtime"]
     async fn test_primal_discovery() {
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
@@ -98,13 +106,22 @@ mod e2e_tests {
         config.features.auto_defense = false;
 
         let mut skunkbat = SkunkBat::new(config);
-        skunkbat.start().await.expect("Start should succeed even with features disabled");
+        skunkbat
+            .start()
+            .await
+            .expect("Start should succeed even with features disabled");
 
         // Should still operate, but with limited capabilities
         let scan = skunkbat.scan_network().await.expect("Scan should work");
-        assert!(scan.nodes.is_empty(), "Disabled recon should return empty scan");
+        assert!(
+            scan.nodes.is_empty(),
+            "Disabled recon should return empty scan"
+        );
 
-        let threats = skunkbat.detect_threats().await.expect("Detection should work");
+        let _threats = skunkbat
+            .detect_threats()
+            .await
+            .expect("Detection should work");
         // May or may not detect threats, but shouldn't error
 
         skunkbat.stop().await.expect("Stop should succeed");

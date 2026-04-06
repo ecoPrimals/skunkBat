@@ -8,9 +8,25 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-or-later"
 repository = "https://github.com/ecoPrimals/skunkBat"
 authors = ["ecoPrimals Project"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
 
 [workspace.dependencies]
 # SourDough core traits
@@ -32,12 +48,21 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Async traits (used by core trait definitions)
+async-trait = "0.1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
 # Virtual workspace integration tests
 [package]
 name = "skunk-bat-tests"
 version.workspace = true
 edition.workspace = true
 publish = false
+
+[lints]
+workspace = true
 
 [[test]]
 name = "integration_e2e"

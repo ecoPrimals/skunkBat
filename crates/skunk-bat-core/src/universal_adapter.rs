@@ -250,6 +250,7 @@ pub struct AdapterStats {
 }
 
 #[async_trait]
+#[allow(clippy::significant_drop_tightening)]
 impl UniversalAdapter for LocalUniversalAdapter {
     async fn announce(&self, capability: Capability) -> Result<(), SkunkBatError> {
         info!(

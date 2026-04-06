@@ -5,14 +5,14 @@
 #[cfg(test)]
 mod songbird_integration {
     use skunk_bat_core::{
-        threats::{Severity, Threat, ThreatType},
         SkunkBat, SkunkBatConfig,
+        threats::{Severity, Threat, ThreatType},
     };
     use sourdough_core::PrimalLifecycle;
     use std::time::SystemTime;
 
     #[tokio::test]
-    #[ignore] // Enable when songbird integration is ready
+    #[ignore = "requires songbird integration"]
     async fn test_threat_alert_delivery() {
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
@@ -40,12 +40,12 @@ mod songbird_integration {
         skunkbat.respond_to_threat(&threat).unwrap();
 
         // Verify alert was sent via songbird
-        
+
         skunkbat.stop().await.unwrap();
     }
 
     #[tokio::test]
-    #[ignore] // Enable when songbird integration is ready
+    #[ignore = "requires songbird integration"]
     async fn test_metrics_broadcasting() {
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
@@ -67,7 +67,7 @@ mod songbird_integration {
     }
 
     #[tokio::test]
-    #[ignore] // Enable when songbird integration is ready
+    #[ignore = "requires songbird integration"]
     async fn test_security_event_stream() {
         let config = SkunkBatConfig::default();
         let mut skunkbat = SkunkBat::new(config);
@@ -81,4 +81,3 @@ mod songbird_integration {
         skunkbat.stop().await.unwrap();
     }
 }
-

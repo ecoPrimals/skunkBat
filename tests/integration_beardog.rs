@@ -8,10 +8,12 @@ mod beardog_integration {
     use sourdough_core::PrimalLifecycle;
 
     #[tokio::test]
-    #[ignore] // Enable when beardog integration is ready
+    #[ignore = "requires beardog integration"]
     async fn test_lineage_verification() {
-        let mut config = SkunkBatConfig::default();
-        config.lineage_id = Some("test-family-lineage".to_string());
+        let config = SkunkBatConfig {
+            lineage_id: Some("test-family-lineage".to_string()),
+            ..Default::default()
+        };
 
         let mut skunkbat = SkunkBat::new(config);
         skunkbat.start().await.unwrap();
@@ -23,15 +25,17 @@ mod beardog_integration {
 
         let _threats = skunkbat.detect_threats().await.unwrap();
         // Should detect threats from unknown lineages
-        
+
         skunkbat.stop().await.unwrap();
     }
 
     #[tokio::test]
-    #[ignore] // Enable when beardog integration is ready
+    #[ignore = "requires beardog integration"]
     async fn test_family_only_monitoring() {
-        let mut config = SkunkBatConfig::default();
-        config.lineage_id = Some("family-123".to_string());
+        let config = SkunkBatConfig {
+            lineage_id: Some("family-123".to_string()),
+            ..Default::default()
+        };
 
         let skunkbat = SkunkBat::new(config);
 
@@ -49,10 +53,12 @@ mod beardog_integration {
     }
 
     #[tokio::test]
-    #[ignore] // Enable when beardog integration is ready
+    #[ignore = "requires beardog integration"]
     async fn test_genetic_threat_response() {
-        let mut config = SkunkBatConfig::default();
-        config.lineage_id = Some("secure-family".to_string());
+        let config = SkunkBatConfig {
+            lineage_id: Some("secure-family".to_string()),
+            ..Default::default()
+        };
 
         let mut skunkbat = SkunkBat::new(config);
         skunkbat.start().await.unwrap();
@@ -65,4 +71,3 @@ mod beardog_integration {
         skunkbat.stop().await.unwrap();
     }
 }
-

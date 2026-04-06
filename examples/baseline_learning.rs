@@ -3,9 +3,11 @@
 //! Shows how statistical profiling learns YOUR network's normal behavior
 //! and detects anomalies based on statistical deviations.
 
-use skunk_bat_core::threats::{BaselineProfiler, StatisticalProfiler, Observation};
+use skunk_bat_core::threats::{BaselineProfiler, Observation, StatisticalProfiler};
 use std::time::SystemTime;
 
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::cast_precision_loss)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -37,13 +39,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..50 {
         let obs = Observation {
             // Normal: ~10 connections/sec with natural variation
-            connection_rate: 10.0 + (i as f64 % 10.0) * 0.5,
+            connection_rate: (i as f64 % 10.0).mul_add(0.5, 10.0),
             traffic_volume: 1024 * (100 + i * 2),
             ports_accessed: vec![80, 443], // Typical web traffic
             timestamp: SystemTime::now(),
         };
         profiler.update(&obs).await?;
-        
+
         if (i + 1) % 10 == 0 {
             println!("  ✓ Collected {} observations", i + 1);
         }
@@ -84,14 +86,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let anomalies = profiler.detect_anomalies(&normal_obs).await?;
-    
+
     println!("Observation 1:");
     println!("  • Connection rate: 10.5 conn/sec");
     println!("  • Deviation: ~0.2σ");
     println!("  • Result: ✓ NORMAL");
     println!("  • Action: None (within expected range)\n");
-    
-    assert!(anomalies.is_empty(), "Normal traffic should not trigger anomalies");
+
+    assert!(
+        anomalies.is_empty(),
+        "Normal traffic should not trigger anomalies"
+    );
 
     // Test 2: Slightly elevated (still normal)
     let elevated_obs = Observation {
@@ -102,14 +107,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let anomalies = profiler.detect_anomalies(&elevated_obs).await?;
-    
+
     println!("Observation 2:");
     println!("  • Connection rate: 12.0 conn/sec");
     println!("  • Deviation: ~0.8σ");
     println!("  • Result: ✓ NORMAL");
     println!("  • Action: None (natural variation)\n");
-    
-    assert!(anomalies.is_empty(), "Slight elevation should still be normal");
+
+    assert!(
+        anomalies.is_empty(),
+        "Slight elevation should still be normal"
+    );
 
     // ════════════════════════════════════════
     // PHASE 3: ANOMALY DETECTION
@@ -129,17 +137,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let anomalies = profiler.detect_anomalies(&anomalous_obs).await?;
-    
+
     println!("Observation 3:");
     println!("  • Connection rate: 45.0 conn/sec");
-    
+
     if let Some(anomaly) = anomalies.first() {
         println!("  • Deviation: {:.1}σ", anomaly.deviation);
         println!("  • Result: ✗ ANOMALY DETECTED");
         println!("  • Confidence: {:.1}%", anomaly.confidence * 100.0);
         println!("  • Behavior: {}", anomaly.behavior);
         println!("  • Action: Quarantine + Alert operator\n");
-        
+
         assert!(anomaly.deviation > 2.5, "Should exceed threshold");
     } else {
         panic!("Anomaly should be detected for 45 conn/sec");
@@ -166,17 +174,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..30 {
         let obs = Observation {
             // Gradually increasing baseline
-            connection_rate: 10.0 + (i as f64 * 0.3),
+            connection_rate: (i as f64).mul_add(0.3, 10.0),
             traffic_volume: 1024 * (100 + i * 5),
             ports_accessed: vec![80, 443],
             timestamp: SystemTime::now(),
         };
         profiler.update(&obs).await?;
-        
+
         if (i + 1) % 10 == 0 {
-            println!("  ✓ Week {}: Average ~{:.1} conn/sec (new normal)", 
-                (i + 1) / 10 + 1, 
-                10.0 + (i as f64 * 0.3)
+            println!(
+                "  ✓ Week {}: Average ~{:.1} conn/sec (new normal)",
+                (i + 1) / 10 + 1,
+                (i as f64).mul_add(0.3, 10.0)
             );
         }
     }
@@ -198,13 +207,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let anomalies = profiler.detect_anomalies(&new_normal_obs).await?;
-    
+
     println!("Testing 18.0 conn/sec:");
     println!("  • Old baseline: Would be anomalous (8σ deviation!)");
     println!("  • New baseline: ✓ NORMAL (within range)");
     println!("  • Result: Adaptation successful\n");
-    
-    assert!(anomalies.is_empty(), "Should be normal with adapted baseline");
+
+    assert!(
+        anomalies.is_empty(),
+        "Should be normal with adapted baseline"
+    );
 
     // ════════════════════════════════════════
     // SUMMARY
@@ -238,4 +250,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# cargo-deny configuration for skunkBat
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+targets = []
+all-features = true
+
+[advisories]
+yanked = "deny"
+ignore = [
+    # Transitive from sourdough-core → tarpc 0.34 → tokio-serde → bincode v1; awaiting tarpc upstream migration.
+    { id = "RUSTSEC-2025-0141", reason = "bincode v1 is transitive via tarpc; no direct usage" },
+    # Transitive from sourdough-core → tarpc 0.34 → tracing-opentelemetry → opentelemetry_sdk 0.18.
+    { id = "RUSTSEC-2026-0007", reason = "opentelemetry_sdk is transitive via tarpc; no direct usage" },
+    # Transitive from sourdough-core → tarpc 0.34 → opentelemetry_api merged into opentelemetry crate.
+    { id = "RUSTSEC-2024-0387", reason = "opentelemetry_api is transitive via tarpc; awaiting tarpc upgrade" },
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+    "BSL-1.0",
+    "AGPL-3.0-or-later",
+    "CC0-1.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+highlight = "all"
+allow-wildcard-paths = true
+
+# ecoBin v3.0 compliance: C-backed crates banned from application builds.
+# blake3 uses cc as a build-dep for optional SIMD backends; sourdough-core builds
+# with features = ["pure"] so no C code is compiled, but cc remains in the
+# resolved graph. iana-time-zone-haiku uses cc only on Haiku OS (not our targets).
+deny = [
+    { crate = "openssl-sys", wrappers = [] },
+    { crate = "openssl-src", wrappers = [] },
+    { crate = "native-tls", wrappers = [] },
+    { crate = "aws-lc-sys", wrappers = [] },
+    { crate = "cmake", wrappers = [] },
+    { crate = "cc", wrappers = ["blake3", "iana-time-zone-haiku"] },
+    { crate = "bindgen", wrappers = [] },
+    { crate = "bzip2-sys", wrappers = [] },
+    { crate = "curl-sys", wrappers = [] },
+    { crate = "libz-sys", wrappers = [] },
+    { crate = "pkg-config", wrappers = [] },
+    { crate = "vcpkg", wrappers = [] },
+    { crate = "zstd-sys", wrappers = [] },
+    { crate = "lz4-sys", wrappers = [] },
+    { crate = "libsqlite3-sys", wrappers = [] },
+    { crate = "cryptoki-sys", wrappers = [] },
+]
+
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

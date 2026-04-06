@@ -10,6 +10,7 @@ use skunk_bat_core::{
 use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -47,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
-    
+
     println!("✓ skunkBat initialized");
     println!("  • Protecting: home-nestgate");
     println!("  • Mode: Full ecosystem integration\n");
@@ -331,4 +332,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

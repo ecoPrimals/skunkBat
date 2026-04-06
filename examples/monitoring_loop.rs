@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         iteration += 1;
-        println!("--- Monitoring Cycle {} ---", iteration);
+        println!("--- Monitoring Cycle {iteration} ---");
 
         // 1. Perform reconnaissance
         match skunkbat.scan_network().await {
@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  • {} connections active", scan.topology.len());
             }
             Err(e) => {
-                eprintln!("✗ Scan failed: {}", e);
+                eprintln!("✗ Scan failed: {e}");
             }
         }
 
@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Respond to each threat
                         if let Err(e) = skunkbat.respond_to_threat(threat) {
-                            eprintln!("  ✗ Response failed: {}", e);
+                            eprintln!("  ✗ Response failed: {e}");
                         } else {
                             println!("  ✓ Response executed");
                         }
@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Err(e) => {
-                eprintln!("✗ Threat detection failed: {}", e);
+                eprintln!("✗ Threat detection failed: {e}");
             }
         }
 
@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("💚 Health: {:?}", report.status);
             }
             Err(e) => {
-                eprintln!("💔 Health check failed: {}", e);
+                eprintln!("💔 Health check failed: {e}");
             }
         }
 

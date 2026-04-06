@@ -10,6 +10,7 @@ use skunk_bat_core::{
 use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -53,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create two skunkBat instances (Alice and Bob)
     println!("Simulating two-tower federation...\n");
-    
+
     let config_alice = SkunkBatConfig::default();
     let mut skunkbat_alice = SkunkBat::new(config_alice);
     skunkbat_alice.start().await?;
@@ -282,4 +283,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

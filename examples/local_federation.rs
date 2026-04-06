@@ -10,6 +10,7 @@ use skunk_bat_core::{
 use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -221,7 +222,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • Threats processed: {}", metrics_a.threats_detected);
     println!("    • Status: Healthy");
     println!("    • Owner: Alice (full control)\n");
-    
+
     println!("  skunkBat-B:");
     println!("    • Threats processed: {}", metrics_b.threats_detected);
     println!("    • Status: Healthy");
@@ -237,4 +238,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

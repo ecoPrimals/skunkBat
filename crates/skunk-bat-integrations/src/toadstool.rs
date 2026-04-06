@@ -23,10 +23,15 @@ pub struct ToadstoolDiscoveryClient {
 /// Discovered primal from Toadstool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredPrimal {
+    /// Unique service identifier
     pub service_id: String,
+    /// Type of primal (e.g. "skunkBat", "Beardog")
     pub primal_type: String,
+    /// Advertised capabilities
     pub capabilities: Vec<String>,
+    /// Connection endpoint
     pub endpoint: String,
+    /// Primal version
     pub version: String,
 }
 
@@ -50,7 +55,7 @@ impl ToadstoolDiscoveryClient {
 
     /// Set timeout for discovery requests
     #[must_use]
-    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+    pub const fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = timeout_ms;
         self
     }
@@ -295,9 +300,11 @@ mod tests {
         let self_node = &nodes[0];
         assert_eq!(self_node.id, "my-skunkbat");
         assert_eq!(self_node.node_type, "skunkBat");
-        assert!(self_node
-            .capabilities
-            .contains(&"reconnaissance".to_string()));
+        assert!(
+            self_node
+                .capabilities
+                .contains(&"reconnaissance".to_string())
+        );
     }
 
     #[tokio::test]

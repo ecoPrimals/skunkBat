@@ -37,10 +37,6 @@
 //! }
 //! ```
 
-#![warn(missing_docs)]
-#![warn(clippy::all)]
-#![warn(clippy::pedantic)]
-
 pub mod config;
 pub mod defense;
 pub mod error;

@@ -13,6 +13,7 @@ use skunk_bat_core::{
 use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -36,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("════════════════════════════════════════");
     println!("1. MONITOR + ALERT (Low Severity)");
     println!("════════════════════════════════════════\n");
-    
+
     println!("Threat: Minor behavioral anomaly");
     println!("  • Deviation: 1.2σ from baseline");
     println!("  • Confidence: 60%");
@@ -57,13 +58,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     skunkbat.respond_to_threat(&low_threat)?;
-    
+
     println!("✓ Action Taken: MONITOR + ALERT");
     println!("  → Connection allowed to continue");
     println!("  → Logged for analysis");
     println!("  → Requires operator approval for escalation");
     println!("  → No disruption to legitimate traffic\n");
-    
+
     println!("Why Monitor?");
     println!("  • Low confidence (60%) - could be false positive");
     println!("  • Minor deviation - not clearly malicious");
@@ -76,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("════════════════════════════════════════");
     println!("2. QUARANTINE + ALERT (High Severity)");
     println!("════════════════════════════════════════\n");
-    
+
     println!("Threat: Unknown genetic lineage");
     println!("  • Peer: unknown-node-42");
     println!("  • Confidence: 90%");
@@ -97,13 +98,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     skunkbat.respond_to_threat(&high_threat)?;
-    
+
     println!("✓ Action Taken: QUARANTINE + ALERT");
     println!("  → Connection isolated (not blocked)");
     println!("  → Traffic rate-limited automatically");
     println!("  → Operator alerted for review");
     println!("  → Can be released if verified legitimate\n");
-    
+
     println!("Why Quarantine?");
     println!("  • High confidence (90%) - likely a real issue");
     println!("  • Unknown lineage - not verified family");
@@ -116,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("════════════════════════════════════════");
     println!("3. IMMEDIATE QUARANTINE (Critical)");
     println!("════════════════════════════════════════\n");
-    
+
     println!("Threat: Active DoS attack");
     println!("  • Resource: Bandwidth exhaustion");
     println!("  • Usage: 98.5% (critical level)");
@@ -138,13 +139,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     skunkbat.respond_to_threat(&critical_threat)?;
-    
+
     println!("✓ Action Taken: IMMEDIATE QUARANTINE");
     println!("  → No approval required (critical threat)");
     println!("  → Quarantine executed instantly");
     println!("  → Service availability protected");
     println!("  → Operator can review and release\n");
-    
+
     println!("Why Immediate?");
     println!("  • Very high confidence (95%)");
     println!("  • Critical severity - service at risk");
@@ -157,12 +158,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("════════════════════════════════════════");
     println!("4. BLOCK (Operator Decision)");
     println!("════════════════════════════════════════\n");
-    
+
     println!("Note: Block is available but rarely used automatically");
     println!("  • Quarantine is preferred (reversible)");
     println!("  • Block requires operator decision");
     println!("  • Use when: repeat offender, confirmed malicious\n");
-    
+
     println!("Example block scenario:");
     println!("  1. Threat detected → Quarantine");
     println!("  2. Operator reviews → Confirms malicious");
@@ -209,4 +210,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
