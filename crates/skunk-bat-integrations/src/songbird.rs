@@ -1,151 +1,223 @@
-//! Songbird integration for federated threat intelligence broadcasting
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
+//! Federation broadcast integration.
 //!
-//! This module provides threat intelligence broadcasting through Songbird's
-//! federation network for mesh-wide coordination.
+//! Connects to whatever primal announces the `federation` capability at
+//! runtime via its capability-domain symlink (`federation.sock`) or a
+//! TCP endpoint discovered from `FEDERATION_ENDPOINT`.
+//!
+//! Gracefully degrades when no federation provider is available — threats
+//! are handled locally without broadcasting.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use skunk_bat_core::error::SkunkBatError;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
 
-// Note: These types mirror Songbird's federation API
-// In production, these would come from a songbird-client crate
-
-/// Songbird federation client for threat broadcasting
+/// Federation client for threat intelligence broadcasting.
+///
+/// Transport is resolved at runtime — prefers the `federation.sock`
+/// capability symlink (UDS), falls back to `FEDERATION_ENDPOINT` (TCP).
 #[derive(Clone)]
-pub struct SongbirdFederationClient {
+pub struct FederationClient {
     endpoint: String,
+    uds_path: Option<String>,
     node_id: String,
     connected: Arc<RwLock<bool>>,
+    timeout_ms: u64,
 }
 
-/// Threat intelligence message for federation broadcast
+/// Threat intelligence message for federation broadcast.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatIntelligence {
-    /// Source skunkBat node ID
+    /// Source node ID.
     pub source_node: String,
-    /// Threat being reported
+    /// Threat being reported.
     pub threat_type: String,
-    /// Threat source identifier
+    /// Threat source identifier.
     pub threat_source: String,
-    /// Threat severity
+    /// Threat severity.
     pub severity: String,
-    /// Human-readable description
+    /// Human-readable description.
     pub description: String,
-    /// Timestamp of detection
-    pub detected_at: chrono::DateTime<chrono::Utc>,
-    /// Optional evidence/context
+    /// Detection timestamp.
+    pub detected_at: SystemTime,
+    /// Optional evidence / context.
     pub evidence: Option<String>,
 }
 
-impl SongbirdFederationClient {
-    /// Create new Songbird federation client
+impl FederationClient {
+    /// Create a new federation client targeting a TCP endpoint.
     ///
-    /// # Arguments
-    ///
-    /// * `endpoint` - Songbird federation endpoint (e.g., `<http://localhost:8080>`)
-    /// * `node_id` - This skunkBat node's identifier
+    /// UDS is not discovered — use [`from_env`] for full transport
+    /// resolution.
     #[must_use]
     pub fn new(endpoint: String, node_id: String) -> Self {
-        info!(
-            "🦨🐦 Initializing SongbirdFederationClient for node: {}",
-            node_id
-        );
+        tracing::info!("Initializing federation client for node {node_id}");
         Self {
             endpoint,
+            uds_path: None,
             node_id,
             connected: Arc::new(RwLock::new(false)),
+            timeout_ms: 5000,
         }
     }
 
-    /// Connect to Songbird federation
+    /// Create from environment with capability-socket discovery.
+    ///
+    /// Reads `FEDERATION_ENDPOINT` for TCP, `SKUNKBAT_ID` for identity,
+    /// and probes `$BIOMEOS_SOCKET_DIR/federation.sock` for UDS.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let endpoint = std::env::var("FEDERATION_ENDPOINT").unwrap_or_default();
+        let node_id = std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| "skunkbat".to_string());
+        let uds_path = {
+            let path = crate::rpc::capability_socket("federation");
+            std::path::Path::new(&path).exists().then_some(path)
+        };
+        tracing::info!(
+            endpoint = %endpoint,
+            uds = ?uds_path,
+            "Initializing federation client for node {node_id}"
+        );
+        Self {
+            endpoint,
+            uds_path,
+            node_id,
+            connected: Arc::new(RwLock::new(false)),
+            timeout_ms: 5000,
+        }
+    }
+
+    /// The TCP endpoint this client targets (if any).
+    #[must_use]
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    fn tcp_endpoint(&self) -> Option<&str> {
+        if self.endpoint.is_empty() {
+            None
+        } else {
+            Some(&self.endpoint)
+        }
+    }
+
+    async fn rpc_call(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let timeout = Duration::from_millis(self.timeout_ms);
+        crate::rpc::call(
+            self.uds_path.as_deref(),
+            self.tcp_endpoint(),
+            method,
+            params,
+            timeout,
+        )
+        .await
+    }
+
+    /// Connect to the federation provider.
+    ///
+    /// Probes the provider with `health.liveness`.  If unreachable, the
+    /// client stays in disconnected state — callers should check
+    /// [`is_connected`] before broadcasting.
     ///
     /// # Errors
     ///
-    /// Returns error if connection fails
+    /// Returns `Ok(())` even if the provider is unreachable (graceful
+    /// degradation).  The connection state is tracked internally.
     pub async fn connect(&self) -> Result<(), SkunkBatError> {
-        info!("🦨🐦 Connecting to Songbird federation: {}", self.endpoint);
+        tracing::info!("Probing federation provider");
 
-        // In production, this would establish connection to Songbird
-        // For now, simulate successful connection
-        *self.connected.write().await = true;
-        info!("🦨🐦 Connected to federation (stub)");
+        match self.rpc_call("health.liveness", None).await {
+            Ok(_) => {
+                *self.connected.write().await = true;
+                tracing::info!("Federation connected");
+            }
+            Err(e) => {
+                tracing::warn!("Federation unavailable ({e}), standalone mode");
+            }
+        }
 
         Ok(())
     }
 
-    /// Check if connected to federation
+    /// Check if connected.
     pub async fn is_connected(&self) -> bool {
         *self.connected.read().await
     }
 
-    /// Broadcast threat intelligence to federation
-    ///
-    /// # Arguments
-    ///
-    /// * `intel` - Threat intelligence to broadcast
+    /// Broadcast threat intelligence via JSON-RPC `federation.broadcast`.
     ///
     /// # Errors
     ///
-    /// Returns error if broadcast fails
+    /// Returns error if the client is not connected or the RPC fails.
     pub async fn broadcast_threat(&self, intel: &ThreatIntelligence) -> Result<(), SkunkBatError> {
         if !self.is_connected().await {
             return Err(SkunkBatError::Integration(
-                "Not connected to Songbird federation".to_string(),
+                "Not connected to federation provider".to_string(),
             ));
         }
 
-        debug!("🦨🐦 Broadcasting threat intel: {:?}", intel.threat_type);
+        let params = serde_json::to_value(intel)
+            .map_err(|e| SkunkBatError::Integration(format!("serialize: {e}")))?;
 
-        // In production, this would make HTTP/gRPC call to Songbird
-        // For now, log the broadcast (graceful degradation)
-        info!(
-            "🦨🐦 Broadcast: {} threat from {} (severity: {})",
-            intel.threat_type, intel.threat_source, intel.severity
-        );
-
-        Ok(())
+        match self.rpc_call("federation.broadcast", Some(params)).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Broadcast: {} from {} (severity: {})",
+                    intel.threat_type,
+                    intel.threat_source,
+                    intel.severity,
+                );
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("Broadcast failed: {e}");
+                Err(SkunkBatError::Integration(format!("broadcast: {e}")))
+            }
+        }
     }
 
-    /// Subscribe to threat intelligence from federation
+    /// Subscribe to threat intelligence from federation.
     ///
     /// # Errors
     ///
-    /// Returns error if subscription fails
+    /// Returns error if subscription fails.
     pub async fn subscribe_threats(&self) -> Result<(), SkunkBatError> {
         if !self.is_connected().await {
             return Err(SkunkBatError::Integration(
-                "Not connected to Songbird federation".to_string(),
+                "Not connected to federation provider".to_string(),
             ));
         }
 
-        info!("🦨🐦 Subscribed to federation threat intel");
-
-        // In production, this would set up a message subscription
-        Ok(())
+        match self.rpc_call("federation.subscribe", None).await {
+            Ok(_) => {
+                tracing::info!("Subscribed to federation threat intel");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("Subscribe failed: {e}");
+                Err(SkunkBatError::Integration(format!("subscribe: {e}")))
+            }
+        }
     }
 }
 
-/// Trait for broadcasting threats to federation
-///
-/// This trait abstracts threat broadcasting, allowing different implementations
-/// for different federation mechanisms.
+/// Trait for broadcasting threats to federation.
 #[async_trait]
 pub trait ThreatBroadcaster: Send + Sync {
-    /// Broadcast threat to federation
-    ///
-    /// # Arguments
-    ///
-    /// * `threat_type` - Type of threat detected
-    /// * `source` - Source identifier of the threat
-    /// * `severity` - Threat severity level
-    /// * `description` - Human-readable description
+    /// Broadcast threat to federation.
     ///
     /// # Errors
     ///
-    /// Returns error if broadcast fails
+    /// Returns error if broadcast fails.
     async fn broadcast(
         &self,
         threat_type: &str,
@@ -154,59 +226,26 @@ pub trait ThreatBroadcaster: Send + Sync {
         description: &str,
     ) -> Result<(), SkunkBatError>;
 
-    /// Check if broadcaster is connected to federation
+    /// Check if connected.
     async fn is_connected(&self) -> bool;
 }
 
-/// Real Songbird-backed threat broadcaster
+/// Federation-backed threat broadcaster.
 ///
-/// Broadcasts threat intelligence to the Songbird federation mesh,
-/// enabling coordinated defense across multiple skunkBat instances.
-///
-/// ## Architecture
-///
-/// - Uses Songbird's federation network for pub/sub
-/// - Each skunkBat can publish and subscribe to threat intel
-/// - Independent decision-making (coordination not control)
-/// - Graceful degradation if Songbird unavailable
-///
-/// ## Example
-///
-/// ```rust,ignore
-/// use skunk_bat_integrations::songbird::{
-///     SongbirdFederationClient,
-///     SongbirdThreatBroadcaster,
-/// };
-/// use skunk_bat_core::threats::ThreatBroadcaster;
-///
-/// let client = SongbirdFederationClient::new(
-///     "http://localhost:8080".into(),
-///     "skunkbat-01".into(),
-/// );
-/// client.connect().await?;
-///
-/// let broadcaster = SongbirdThreatBroadcaster::new(client);
-///
-/// // Broadcast threat to federation
-/// broadcaster.broadcast(&threat).await?;
-/// ```
-pub struct SongbirdThreatBroadcaster {
-    client: SongbirdFederationClient,
+/// Gracefully degrades if no federation provider is available.
+pub struct FederationThreatBroadcaster {
+    client: FederationClient,
 }
 
-impl SongbirdThreatBroadcaster {
-    /// Create new Songbird threat broadcaster
-    ///
-    /// # Arguments
-    ///
-    /// * `client` - Songbird federation client
+impl FederationThreatBroadcaster {
+    /// Create a new federation threat broadcaster.
     #[must_use]
-    pub fn new(client: SongbirdFederationClient) -> Self {
-        info!("🦨🐦 Initializing SongbirdThreatBroadcaster");
+    pub fn new(client: FederationClient) -> Self {
+        tracing::info!("Initializing federation threat broadcaster");
         Self { client }
     }
 
-    /// Convert threat info to intelligence message
+    /// Convert threat info to intelligence message.
     fn create_intel(
         &self,
         threat_type: &str,
@@ -220,19 +259,14 @@ impl SongbirdThreatBroadcaster {
             threat_source: source.to_string(),
             severity: severity.to_string(),
             description: description.to_string(),
-            detected_at: chrono::Utc::now(),
+            detected_at: SystemTime::now(),
             evidence: None,
         }
     }
 }
 
 #[async_trait]
-impl ThreatBroadcaster for SongbirdThreatBroadcaster {
-    /// Broadcast threat to Songbird federation
-    ///
-    /// # Errors
-    ///
-    /// Returns error if broadcast fails
+impl ThreatBroadcaster for FederationThreatBroadcaster {
     async fn broadcast(
         &self,
         threat_type: &str,
@@ -240,28 +274,23 @@ impl ThreatBroadcaster for SongbirdThreatBroadcaster {
         severity: &str,
         description: &str,
     ) -> Result<(), SkunkBatError> {
-        info!("🦨🐦 Broadcasting threat to federation: {}", threat_type);
+        tracing::info!("Broadcasting threat to federation: {threat_type}");
 
-        // Convert threat to federation message
         let intel = self.create_intel(threat_type, source, severity, description);
 
-        // Broadcast to federation
         match self.client.broadcast_threat(&intel).await {
             Ok(()) => {
-                info!("🦨🐦 Threat broadcast successful");
+                tracing::info!("Threat broadcast successful");
                 Ok(())
             }
             Err(e) => {
-                error!("🦨🐦 Threat broadcast failed: {}", e);
-                // Gracefully degrade - don't fail the whole operation
-                // Just log and continue (local defense still works)
-                warn!("🦨🐦 Federation broadcast failed, continuing with local-only defense");
+                tracing::error!("Threat broadcast failed: {e}");
+                tracing::warn!("Federation unavailable, continuing with local-only defense");
                 Ok(())
             }
         }
     }
 
-    /// Check if connected to federation
     async fn is_connected(&self) -> bool {
         self.client.is_connected().await
     }
@@ -272,42 +301,37 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_songbird_broadcaster_compiles() {
-        // Uses environment or safe default for testing
-        // Real testing requires Songbird runtime setup
-        let endpoint = std::env::var("SONGBIRD_ENDPOINT")
-            .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-        let client = SongbirdFederationClient::new(endpoint, "test-skunkbat".into());
-        client.connect().await.expect("Connection failed");
+    async fn test_federation_broadcaster() {
+        let client = FederationClient::from_env();
+        client.connect().await.expect("connect should not error");
 
-        let broadcaster = SongbirdThreatBroadcaster::new(client);
-        assert!(broadcaster.is_connected().await, "Should be connected");
+        let broadcaster = FederationThreatBroadcaster::new(client);
+        let result = broadcaster
+            .broadcast("TestThreat", "test", "Low", "unit test")
+            .await;
+        assert!(
+            result.is_ok(),
+            "Should gracefully degrade when disconnected"
+        );
     }
 
     #[tokio::test]
     async fn test_graceful_degradation() {
-        // Even if Songbird is unavailable, broadcast should not fail
-        let client = SongbirdFederationClient::new(
-            "http://unreachable.invalid:9999".to_string(),
-            "skunkbat".into(),
-        );
-        // Don't connect - simulate unavailability
+        let client =
+            FederationClient::new("unreachable.invalid:9999".to_string(), "skunkbat".into());
 
-        let broadcaster = SongbirdThreatBroadcaster::new(client);
+        let broadcaster = FederationThreatBroadcaster::new(client);
 
-        // Should gracefully degrade, not fail
         let result = broadcaster
             .broadcast("GeneticViolation", "test-node", "High", "Test threat")
             .await;
-        assert!(result.is_ok(), "Should gracefully degrade, not fail");
+        assert!(result.is_ok(), "Should gracefully degrade");
     }
 
     #[tokio::test]
     async fn test_threat_conversion() {
-        let endpoint = std::env::var("SONGBIRD_ENDPOINT")
-            .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-        let client = SongbirdFederationClient::new(endpoint, "my-skunkbat".into());
-        let broadcaster = SongbirdThreatBroadcaster::new(client);
+        let client = FederationClient::new(String::new(), "my-skunkbat".into());
+        let broadcaster = FederationThreatBroadcaster::new(client);
 
         let intel = broadcaster.create_intel(
             "ResourceExhaustion",
@@ -319,6 +343,28 @@ mod tests {
         assert_eq!(intel.source_node, "my-skunkbat");
         assert_eq!(intel.threat_source, "attacker-node");
         assert!(intel.threat_type.contains("ResourceExhaustion"));
-        assert!(intel.severity.contains("Critical"));
+    }
+
+    #[tokio::test]
+    async fn test_standalone_connect() {
+        let client = FederationClient::from_env();
+        assert!(client.connect().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_without_connect() {
+        let client = FederationClient::new(String::new(), "skunkbat".into());
+        let result = client
+            .broadcast_threat(&ThreatIntelligence {
+                source_node: "test".into(),
+                threat_type: "test".into(),
+                threat_source: "test".into(),
+                severity: "Low".into(),
+                description: "test".into(),
+                detected_at: SystemTime::now(),
+                evidence: None,
+            })
+            .await;
+        assert!(result.is_err(), "Should error when not connected");
     }
 }

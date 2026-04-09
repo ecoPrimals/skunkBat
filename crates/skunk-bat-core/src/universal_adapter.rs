@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Universal Adapter for capability-based primal discovery
 //!
 //! The Universal Adapter enables primals to:
@@ -198,7 +201,7 @@ impl LocalUniversalAdapter {
     /// Starts with empty registry.
     #[must_use]
     pub fn new() -> Self {
-        info!("🦨🌐 Initializing LocalUniversalAdapter");
+        info!("Initializing LocalUniversalAdapter");
         Self {
             capabilities: Arc::new(RwLock::new(HashMap::new())),
             primals: Arc::new(RwLock::new(HashMap::new())),
@@ -254,7 +257,7 @@ pub struct AdapterStats {
 impl UniversalAdapter for LocalUniversalAdapter {
     async fn announce(&self, capability: Capability) -> Result<(), SkunkBatError> {
         info!(
-            "🦨🌐 Announcing primal: {} with {} capabilities",
+            "Announcing primal: {} with {} capabilities",
             capability.primal_id,
             capability.capabilities.len()
         );
@@ -264,10 +267,7 @@ impl UniversalAdapter for LocalUniversalAdapter {
 
         // Remove old announcement if exists
         if let Some(old) = primals.get(&capability.primal_id) {
-            debug!(
-                "🦨🌐 Removing old announcement for {}",
-                capability.primal_id
-            );
+            debug!("Removing old announcement for {}", capability.primal_id);
             for cap in &old.capabilities {
                 if let Some(list) = capabilities.get_mut(cap) {
                     list.retain(|c| c.primal_id != capability.primal_id);
@@ -282,12 +282,9 @@ impl UniversalAdapter for LocalUniversalAdapter {
         for cap in &capability.capabilities {
             capabilities
                 .entry(cap.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(capability.clone());
-            debug!(
-                "🦨🌐 Registered capability: {} -> {}",
-                cap, capability.primal_id
-            );
+            debug!("Registered capability: {} -> {}", cap, capability.primal_id);
         }
 
         primals.insert(capability.primal_id.clone(), capability);
@@ -299,7 +296,7 @@ impl UniversalAdapter for LocalUniversalAdapter {
         &self,
         capability: &str,
     ) -> Result<Vec<DiscoveredPrimal>, SkunkBatError> {
-        debug!("🦨🌐 Discovering capability: {}", capability);
+        debug!("Discovering capability: {}", capability);
 
         let capabilities = self.capabilities.read().await;
 
@@ -319,7 +316,7 @@ impl UniversalAdapter for LocalUniversalAdapter {
             .unwrap_or_default();
 
         info!(
-            "🦨🌐 Found {} primals for capability: {}",
+            "Found {} primals for capability: {}",
             discovered.len(),
             capability
         );
@@ -328,7 +325,7 @@ impl UniversalAdapter for LocalUniversalAdapter {
     }
 
     async fn discover_all(&self) -> Result<Vec<DiscoveredPrimal>, SkunkBatError> {
-        debug!("🦨🌐 Discovering all primals");
+        debug!("Discovering all primals");
 
         let primals = self.primals.read().await;
 
@@ -346,7 +343,7 @@ impl UniversalAdapter for LocalUniversalAdapter {
     }
 
     async fn remove(&self, primal_id: &str) -> Result<(), SkunkBatError> {
-        info!("🦨🌐 Removing primal: {}", primal_id);
+        info!("Removing primal: {}", primal_id);
 
         let mut capabilities = self.capabilities.write().await;
         let mut primals = self.primals.write().await;
@@ -361,9 +358,9 @@ impl UniversalAdapter for LocalUniversalAdapter {
                     }
                 }
             }
-            debug!("🦨🌐 Removed primal: {}", primal_id);
+            debug!("Removed primal: {}", primal_id);
         } else {
-            warn!("🦨🌐 Primal not found for removal: {}", primal_id);
+            warn!("Primal not found for removal: {}", primal_id);
         }
 
         Ok(())

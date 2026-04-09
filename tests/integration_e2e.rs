@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! End-to-end integration tests for skunkBat
 //!
 //! Tests full ecosystem integration with multiple primals

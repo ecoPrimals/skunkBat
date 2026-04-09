@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Beardog integration demonstration for skunkBat
 //!
 //! Shows genetic lineage verification architecture. This demo uses the

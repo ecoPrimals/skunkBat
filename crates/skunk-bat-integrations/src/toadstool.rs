@@ -1,198 +1,255 @@
-//! Toadstool integration for capability-based primal discovery
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
+//! Capability-based primal discovery integration.
 //!
-//! This module provides real Toadstool primal discovery through the
-//! capability-based discovery system.
+//! Connects to whatever primal announces the `discovery` capability at
+//! runtime via its capability-domain symlink (`discovery.sock`) or a
+//! TCP endpoint discovered from `DISCOVERY_ENDPOINT`.
+//!
+//! Gracefully degrades to standalone mode when no discovery provider is
+//! available — the primal retains self-knowledge only.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use skunk_bat_core::error::SkunkBatError;
-use skunk_bat_core::reconnaissance::{Node, PrimalDiscovery};
-use tracing::{debug, error, info};
+use skunk_bat_core::reconnaissance::{Node, NodeStatus, PrimalDiscovery};
+use std::time::{Duration, SystemTime};
 
-// Note: These types mirror Toadstool's discovery API
-// In production, these would come from a toadstool-client crate
-
-/// Toadstool discovery endpoint
+/// Discovery client for capability-based primal lookup.
+///
+/// Transport is resolved at runtime — prefers the `discovery.sock`
+/// capability symlink (UDS), falls back to `DISCOVERY_ENDPOINT` (TCP).
 #[derive(Clone, Debug)]
-pub struct ToadstoolDiscoveryClient {
-    #[allow(dead_code)] // Used in production HTTP calls (not yet implemented)
+pub struct DiscoveryClient {
     endpoint: String,
+    uds_path: Option<String>,
     timeout_ms: u64,
 }
 
-/// Discovered primal from Toadstool
+/// Discovered primal from the capability registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredPrimal {
-    /// Unique service identifier
+    /// Unique service identifier.
     pub service_id: String,
-    /// Type of primal (e.g. "skunkBat", "Beardog")
-    pub primal_type: String,
-    /// Advertised capabilities
+    /// Advertised capabilities.
     pub capabilities: Vec<String>,
-    /// Connection endpoint
+    /// Connection endpoint.
     pub endpoint: String,
-    /// Primal version
+    /// Service version.
     pub version: String,
 }
 
-impl ToadstoolDiscoveryClient {
-    /// Create new Toadstool discovery client
+impl DiscoveryClient {
+    /// Create a new discovery client targeting a TCP endpoint.
     ///
-    /// # Arguments
-    ///
-    /// * `endpoint` - Toadstool discovery service endpoint (e.g., `<http://localhost:3000>`)
+    /// UDS is not discovered — use [`from_env`] for full transport
+    /// resolution.
     #[must_use]
     pub fn new(endpoint: String) -> Self {
-        info!(
-            "🦨🍄 Initializing ToadstoolDiscoveryClient for: {}",
-            endpoint
-        );
+        tracing::info!("Initializing discovery client");
         Self {
             endpoint,
+            uds_path: None,
             timeout_ms: 5000,
         }
     }
 
-    /// Set timeout for discovery requests
+    /// Create from environment with capability-socket discovery.
+    ///
+    /// Reads `DISCOVERY_ENDPOINT` for TCP and probes
+    /// `$BIOMEOS_SOCKET_DIR/discovery.sock` for UDS.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let endpoint = std::env::var("DISCOVERY_ENDPOINT").unwrap_or_default();
+        let uds_path = {
+            let path = crate::rpc::capability_socket("discovery");
+            std::path::Path::new(&path).exists().then_some(path)
+        };
+        tracing::info!(
+            endpoint = %endpoint,
+            uds = ?uds_path,
+            "Initializing discovery client"
+        );
+        Self {
+            endpoint,
+            uds_path,
+            timeout_ms: 5000,
+        }
+    }
+
+    /// Set request timeout.
     #[must_use]
     pub const fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = timeout_ms;
         self
     }
 
-    /// Discover all primals in the network
-    ///
-    /// # Errors
-    ///
-    /// Returns error if Toadstool is unreachable
-    /// Discovery stub returns empty but valid results for graceful degradation
-    #[allow(clippy::unused_async)] // Will be async when real HTTP calls are implemented
-    pub async fn discover_all(&self) -> Result<Vec<DiscoveredPrimal>, SkunkBatError> {
-        debug!("🦨🍄 Discovering all primals via Toadstool");
-
-        // In production, this would make an HTTP/gRPC call to Toadstool
-        // For now, return empty list (graceful degradation)
-        info!("🦨🍄 Toadstool discovery: No primals found (stub)");
-        Ok(Vec::new())
+    /// The TCP endpoint this client targets (if any).
+    #[must_use]
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
 
-    /// Discover primals by capability
-    ///
-    /// # Arguments
-    ///
-    /// * `capability` - Capability to search for (e.g., "lineage-verification", "orchestration")
+    fn tcp_endpoint(&self) -> Option<&str> {
+        if self.endpoint.is_empty() {
+            None
+        } else {
+            Some(&self.endpoint)
+        }
+    }
+
+    async fn rpc_call(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, SkunkBatError> {
+        let timeout = Duration::from_millis(self.timeout_ms);
+        crate::rpc::call(
+            self.uds_path.as_deref(),
+            self.tcp_endpoint(),
+            method,
+            params,
+            timeout,
+        )
+        .await
+        .map_err(SkunkBatError::Integration)
+    }
+
+    /// Discover all primals in the network.
     ///
     /// # Errors
     ///
-    /// Returns error if Toadstool is unreachable
-    /// Discovery stub returns empty but valid results for graceful degradation
-    #[allow(clippy::unused_async)] // Will be async when real HTTP calls are implemented
+    /// Returns error if the discovery provider is unreachable.
+    pub async fn discover_all(&self) -> Result<Vec<DiscoveredPrimal>, SkunkBatError> {
+        tracing::debug!("Discovering all primals");
+        match self.rpc_call("discovery.find_all", None).await {
+            Ok(value) => serde_json::from_value(value)
+                .map_err(|e| SkunkBatError::Integration(format!("parse: {e}"))),
+            Err(e) => {
+                tracing::info!("Discovery unavailable ({e}), standalone mode");
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// Discover primals by capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the discovery provider is unreachable.
     pub async fn discover_by_capability(
         &self,
         capability: &str,
     ) -> Result<Vec<DiscoveredPrimal>, SkunkBatError> {
-        info!("🦨🍄 Discovering primals with capability: {}", capability);
-
-        // In production, this would query Toadstool's capability registry
-        // For now, return empty list (graceful degradation)
-        debug!("🦨🍄 No primals found with capability: {}", capability);
-        Ok(Vec::new())
+        tracing::info!("Discovering primals with capability: {capability}");
+        let params = serde_json::json!({ "capability": capability });
+        match self
+            .rpc_call("discovery.find_by_capability", Some(params))
+            .await
+        {
+            Ok(value) => serde_json::from_value(value)
+                .map_err(|e| SkunkBatError::Integration(format!("parse: {e}"))),
+            Err(e) => {
+                tracing::debug!("No primals found with capability {capability}: {e}");
+                Ok(Vec::new())
+            }
+        }
     }
 
-    /// Discover local primals only (mDNS)
+    /// Discover local primals by scanning the BIOMEOS socket directory.
+    ///
+    /// Probes each `.sock` file (skipping symlinks) with
+    /// `capabilities.list` to learn what each primal provides.
     ///
     /// # Errors
     ///
-    /// Returns error if local discovery fails
-    /// Discovery stub returns empty but valid results for graceful degradation
-    #[allow(clippy::unused_async)] // Will be async when real mDNS calls are implemented
+    /// Returns error if local discovery fails.
     pub async fn discover_local(&self) -> Result<Vec<DiscoveredPrimal>, SkunkBatError> {
-        debug!("🦨🍄 Discovering local primals via mDNS");
+        tracing::debug!("Discovering local primals via socket dir");
 
-        // In production, this would use mDNS/DNS-SD
-        // For now, return self (self-knowledge principle)
-        Ok(Vec::new())
+        let dir = crate::rpc::socket_dir();
+        let dir_path = std::path::Path::new(&dir);
+        if !dir_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let Ok(entries) = std::fs::read_dir(dir_path) else {
+            return Ok(Vec::new());
+        };
+
+        let timeout = Duration::from_millis(self.timeout_ms);
+        let mut discovered = Vec::new();
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("sock") {
+                continue;
+            }
+            if path
+                .symlink_metadata()
+                .map(|m| m.is_symlink())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let path_str = path.to_string_lossy().to_string();
+
+            #[cfg(unix)]
+            if let Ok(value) =
+                crate::rpc::call_uds(&path_str, "capabilities.list", None, timeout).await
+            {
+                let service_id = value["primal"].as_str().unwrap_or("unknown").to_string();
+                let version = value["version"].as_str().unwrap_or("0.0.0").to_string();
+                let capabilities = value["provided_capabilities"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|c| c["type"].as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                discovered.push(DiscoveredPrimal {
+                    service_id,
+                    capabilities,
+                    endpoint: path_str,
+                    version,
+                });
+            }
+        }
+
+        Ok(discovered)
     }
 }
 
-/// Real Toadstool-backed primal discovery
+/// Capability-based primal discovery backed by an external registry.
 ///
-/// Discovers other primals at runtime based on capabilities, maintaining
-/// primal sovereignty with zero compile-time coupling.
-///
-/// ## Architecture
-///
-/// - Uses Toadstool's capability registry for discovery
-/// - Supports mDNS for local network discovery
-/// - Gracefully degrades to configured fallbacks
-/// - Maintains self-knowledge (always knows about self)
-///
-/// ## Example
-///
-/// ```rust,ignore
-/// use skunk_bat_integrations::toadstool::ToadstoolPrimalDiscovery;
-/// use skunk_bat_core::reconnaissance::PrimalDiscovery;
-///
-/// let client = ToadstoolDiscoveryClient::new("http://localhost:3000".into());
-/// let discovery = ToadstoolPrimalDiscovery::new(client, "skunkbat-01".into());
-///
-/// // Discover all primals
-/// let primals = discovery.discover_all().await?;
-///
-/// // Discover by capability
-/// let beardog = discovery.discover_by_capability("lineage-verification").await?;
-/// ```
-pub struct ToadstoolPrimalDiscovery {
-    client: ToadstoolDiscoveryClient,
+/// Maintains the self-knowledge principle: always knows about self,
+/// discovers others at runtime.  Gracefully degrades to local-only
+/// when no discovery provider is available.
+pub struct CapabilityPrimalDiscovery {
+    client: DiscoveryClient,
     self_id: String,
 }
 
-impl ToadstoolPrimalDiscovery {
-    /// Create new Toadstool primal discovery
-    ///
-    /// # Arguments
-    ///
-    /// * `client` - Toadstool discovery client
-    /// * `self_id` - This primal's identifier
+impl CapabilityPrimalDiscovery {
+    /// Create a new capability-based discovery.
     #[must_use]
-    pub fn new(client: ToadstoolDiscoveryClient, self_id: String) -> Self {
-        info!(
-            "🦨🍄 Initializing ToadstoolPrimalDiscovery for: {}",
-            self_id
-        );
+    pub fn new(client: DiscoveryClient, self_id: String) -> Self {
+        tracing::info!("Initializing capability discovery for {self_id}");
         Self { client, self_id }
     }
 
-    /// Discover primals by capability
-    ///
-    /// # Arguments
-    ///
-    /// * `capability` - Capability to search for
-    ///
-    /// # Errors
-    ///
-    /// Returns error if discovery fails
-    pub async fn discover_by_capability(
-        &self,
-        capability: &str,
-    ) -> Result<Vec<Node>, SkunkBatError> {
-        let discovered = self.client.discover_by_capability(capability).await?;
-        Ok(self.convert_to_nodes(discovered))
-    }
-
-    /// Convert Toadstool discoveries to skunkBat nodes
-    /// Note: No self state needed currently, but kept for consistency and future extensibility
-    #[allow(clippy::unused_self)]
-    fn convert_to_nodes(&self, discovered: Vec<DiscoveredPrimal>) -> Vec<Node> {
-        use skunk_bat_core::reconnaissance::NodeStatus;
-        use std::time::SystemTime;
-
+    /// Convert registry entries to skunkBat nodes.
+    fn convert_to_nodes(discovered: Vec<DiscoveredPrimal>) -> Vec<Node> {
         discovered
             .into_iter()
             .map(|primal| Node {
-                id: primal.service_id.clone(),
+                id: primal.service_id,
                 address: primal.endpoint,
-                node_type: primal.primal_type,
+                node_type: "primal".to_string(),
                 status: NodeStatus::Healthy,
                 capabilities: primal.capabilities,
                 last_seen: Some(SystemTime::now()),
@@ -200,11 +257,8 @@ impl ToadstoolPrimalDiscovery {
             .collect()
     }
 
-    /// Create self node (self-knowledge principle)
+    /// Build the self-knowledge node.
     fn create_self_node(&self) -> Node {
-        use skunk_bat_core::reconnaissance::NodeStatus;
-        use std::time::SystemTime;
-
         Node {
             id: self.self_id.clone(),
             address: "local".to_string(),
@@ -222,44 +276,26 @@ impl ToadstoolPrimalDiscovery {
 }
 
 #[async_trait]
-impl PrimalDiscovery for ToadstoolPrimalDiscovery {
-    /// Discover primals by capability
-    ///
-    /// # Errors
-    ///
-    /// Returns error if discovery fails
+impl PrimalDiscovery for CapabilityPrimalDiscovery {
     async fn discover_by_capability(&self, capability: &str) -> Result<Vec<Node>, SkunkBatError> {
-        info!("🦨🍄 Discovering primals with capability: {}", capability);
-
+        tracing::info!("Discovering primals with capability: {capability}");
         let discovered = self.client.discover_by_capability(capability).await?;
-        Ok(self.convert_to_nodes(discovered))
+        Ok(Self::convert_to_nodes(discovered))
     }
 
-    /// Discover all primals in the network
-    ///
-    /// # Errors
-    ///
-    /// Returns error if discovery fails
     async fn discover_all(&self) -> Result<Vec<Node>, SkunkBatError> {
-        info!("🦨🍄 Discovering all network primals");
+        tracing::info!("Discovering all network primals");
 
-        // Always include self
         let mut nodes = vec![self.create_self_node()];
 
-        // Attempt network-wide discovery via Toadstool
         match self.client.discover_all().await {
             Ok(discovered) => {
-                let network_nodes = self.convert_to_nodes(discovered);
-                info!(
-                    "🦨🍄 Found {} network primals via Toadstool",
-                    network_nodes.len()
-                );
+                let network_nodes = Self::convert_to_nodes(discovered);
+                tracing::info!("Found {} network primals", network_nodes.len());
                 nodes.extend(network_nodes);
             }
             Err(e) => {
-                error!("🦨🍄 Network discovery failed: {}", e);
-                // Gracefully degrade to local-only
-                // Return what we have (at minimum, self)
+                tracing::error!("Network discovery failed: {e}");
             }
         }
 
@@ -272,15 +308,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_toadstool_discovery_compiles() {
-        // Uses environment or safe default for testing
-        // Real testing requires Toadstool runtime setup
-        let endpoint = std::env::var("TOADSTOOL_ENDPOINT")
-            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
-        let client = ToadstoolDiscoveryClient::new(endpoint);
-        let discovery = ToadstoolPrimalDiscovery::new(client, "test-skunkbat".into());
+    async fn test_capability_discovery() {
+        let client = DiscoveryClient::from_env();
+        let discovery = CapabilityPrimalDiscovery::new(client, "test-skunkbat".into());
 
-        // Should at minimum discover self
         let nodes = discovery.discover_all().await.expect("Discovery failed");
         assert!(!nodes.is_empty(), "Should at least have self node");
         assert_eq!(nodes[0].node_type, "skunkBat");
@@ -288,14 +319,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_self_knowledge_principle() {
-        let endpoint = std::env::var("TOADSTOOL_ENDPOINT")
-            .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
-        let client = ToadstoolDiscoveryClient::new(endpoint);
-        let discovery = ToadstoolPrimalDiscovery::new(client, "my-skunkbat".into());
+        let client = DiscoveryClient::from_env();
+        let discovery = CapabilityPrimalDiscovery::new(client, "my-skunkbat".into());
 
-        // Even if Toadstool is unavailable, we know about self
         let nodes = discovery.discover_all().await.expect("Discovery failed");
-        assert!(!nodes.is_empty(), "Should always know about self");
+        assert!(!nodes.is_empty());
 
         let self_node = &nodes[0];
         assert_eq!(self_node.id, "my-skunkbat");
@@ -309,15 +337,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_graceful_degradation() {
-        // Even with stub implementation, discovery should not fail
-        let client = ToadstoolDiscoveryClient::new("http://unreachable.invalid:9999".to_string());
-        let discovery = ToadstoolPrimalDiscovery::new(client, "skunkbat".into());
+        let client = DiscoveryClient::new("unreachable.invalid:9999".to_string());
+        let discovery = CapabilityPrimalDiscovery::new(client, "skunkbat".into());
 
-        // Should gracefully degrade to self-only
         let result = discovery.discover_all().await;
-        assert!(result.is_ok(), "Should gracefully degrade, not fail");
+        assert!(result.is_ok(), "Should gracefully degrade");
 
         let nodes = result.expect("Already asserted Ok");
         assert_eq!(nodes.len(), 1, "Should have self node");
+    }
+
+    #[tokio::test]
+    async fn test_discover_by_capability_degradation() {
+        let client = DiscoveryClient::new("unreachable.invalid:9999".to_string());
+        let result = client.discover_by_capability("lineage-verification").await;
+        assert!(result.is_ok());
+        assert!(result.expect("ok").is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_discover_local_empty() {
+        let client = DiscoveryClient::from_env();
+        let result = client.discover_local().await;
+        assert!(result.is_ok());
     }
 }

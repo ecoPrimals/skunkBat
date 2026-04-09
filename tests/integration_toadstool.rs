@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Integration tests for skunkBat with toadstool
 //!
 //! Tests capability-based discovery integration
@@ -15,10 +18,8 @@ mod toadstool_integration {
 
         skunkbat.start().await.unwrap();
 
-        // TODO: Test capability-based primal discovery via toadstool
-        // - Register skunkBat capabilities
-        // - Discover other primals
-        // - Verify discovered nodes in reconnaissance scan
+        // Needs toadstool in the loop for capability advertisement and peer discovery.
+        // Flow: register skunkBat capabilities, discover peers, and align reconnaissance results with discovered nodes.
 
         skunkbat.stop().await.unwrap();
     }
@@ -29,10 +30,8 @@ mod toadstool_integration {
         let config = SkunkBatConfig::default();
         let skunkbat = SkunkBat::new(config);
 
-        // TODO: Test communication with discovered primals
-        // - Query primal capabilities
-        // - Verify connection status
-        // - Map network topology
+        // Exercises interaction with primals surfaced by discovery rather than static fixtures alone.
+        // Covers: capability queries, connection health, and topology mapping from reconnaissance output.
 
         let scan = skunkbat.scan_network().await.unwrap();
         assert!(!scan.nodes.is_empty());

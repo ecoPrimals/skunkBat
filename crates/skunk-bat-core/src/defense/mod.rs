@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Automated defense for skunkBat.
 //!
 //! Provides threat response, quarantine, and self-healing.
@@ -7,15 +10,14 @@ use crate::error::SkunkBatError;
 use crate::threats::{Severity, Threat};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::SystemTime;
 
-/// Defense engine.
+/// Defense engine with thread-safe quarantine tracking.
 pub struct DefenseEngine {
     enabled: bool,
-    #[allow(dead_code)]
     auto_response_enabled: bool,
-    #[allow(dead_code)]
-    quarantine_map: HashMap<String, QuarantineRecord>,
+    quarantine_map: Mutex<HashMap<String, QuarantineRecord>>,
 }
 
 impl DefenseEngine {
@@ -24,8 +26,8 @@ impl DefenseEngine {
     pub fn new(config: &SkunkBatConfig) -> Self {
         Self {
             enabled: config.features.auto_defense,
-            auto_response_enabled: true, // Can be configurable
-            quarantine_map: HashMap::new(),
+            auto_response_enabled: true,
+            quarantine_map: Mutex::new(HashMap::new()),
         }
     }
 
@@ -77,11 +79,8 @@ impl DefenseEngine {
             threat.confidence
         );
 
-        // Determine appropriate response based on threat
         let action = Self::determine_action(threat);
-
-        // Execute defense action
-        self.execute_action(&action, threat)?;
+        self.execute_action(&action, threat);
 
         Ok(())
     }
@@ -118,11 +117,10 @@ impl DefenseEngine {
     }
 
     /// Execute defense action.
-    #[allow(clippy::unnecessary_wraps)]
-    fn execute_action(&self, action: &DefenseAction, threat: &Threat) -> Result<(), SkunkBatError> {
+    fn execute_action(&self, action: &DefenseAction, threat: &Threat) {
         match action.action_type {
             ActionType::Quarantine => {
-                self.quarantine_connection(&action.target);
+                self.quarantine_connection(&action.target, threat);
                 tracing::warn!(
                     "Quarantined connection from {} (reason: {})",
                     action.target,
@@ -130,7 +128,7 @@ impl DefenseEngine {
                 );
             }
             ActionType::QuarantineAndAlert => {
-                self.quarantine_connection(&action.target);
+                self.quarantine_connection(&action.target, threat);
                 self.alert_operator(threat, action);
                 tracing::warn!(
                     "Quarantined and alerted for {} (reason: {})",
@@ -155,54 +153,60 @@ impl DefenseEngine {
                 );
             }
         }
-
-        Ok(())
     }
 
-    /// Quarantine a connection.
-    ///
-    /// # Integration Point
-    /// This method should be extended by the network layer to:
-    /// - Rate limit traffic from the source
-    /// - Restrict capabilities of quarantined connections
-    /// - Log all activity for analysis
-    /// - Maintain quarantine state for operator review
-    #[allow(clippy::unused_self)]
-    fn quarantine_connection(&self, source: &str) {
-        // Integration contract: Network layer implements isolation here
+    /// Quarantine a connection — records the quarantine and logs the action.
+    fn quarantine_connection(&self, source: &str, threat: &Threat) {
+        if let Ok(mut map) = self.quarantine_map.lock() {
+            map.insert(
+                source.to_string(),
+                QuarantineRecord {
+                    source: source.to_string(),
+                    started_at: SystemTime::now(),
+                    reason: threat.description.clone(),
+                    threat_id: threat.id.clone(),
+                },
+            );
+        }
         tracing::debug!("Quarantining connection from {source}");
     }
 
-    /// Block a connection.
-    ///
-    /// # Integration Point
-    /// This method should be extended by the network layer to:
-    /// - Close existing connections from the source
-    /// - Reject new connection attempts
-    /// - Add source to block list
-    /// - Log block event for audit
-    #[allow(clippy::unused_self)]
+    /// Block a connection — removes from quarantine (escalation) and logs.
     fn block_connection(&self, source: &str) {
-        // Integration contract: Network layer implements blocking here
+        if let Ok(mut map) = self.quarantine_map.lock() {
+            map.remove(source);
+        }
         tracing::debug!("Blocking connection from {source}");
     }
 
-    /// Alert operator about threat.
+    /// Alert operator about threat via tracing.
     ///
-    /// # Integration Point
-    /// This method should be extended to integrate with:
-    /// - **Songbird**: Send real-time alert notifications
-    /// - **petalTongue**: Update security dashboard visualization
-    /// - **rhizoCrypt**: Log to encrypted audit trail
-    #[allow(clippy::unused_self)]
+    /// In production, this is the IPC integration point — the server
+    /// layer broadcasts alerts to any primal announcing the `federation`
+    /// capability.
     fn alert_operator(&self, threat: &Threat, action: &DefenseAction) {
-        // Integration contract: Notification system implements delivery here
+        let _ = &self.auto_response_enabled; // future: gate alert on auto-response policy
         tracing::info!(
             "ALERT: Threat detected - {:?} from {} (action: {:?})",
             threat.threat_type,
             threat.source,
             action.action_type
         );
+    }
+
+    /// Get a snapshot of the current quarantine map.
+    #[must_use]
+    pub fn quarantine_snapshot(&self) -> HashMap<String, QuarantineRecord> {
+        self.quarantine_map
+            .lock()
+            .map(|map| map.clone())
+            .unwrap_or_default()
+    }
+
+    /// Check whether auto-response is enabled.
+    #[must_use]
+    pub const fn auto_response_enabled(&self) -> bool {
+        self.auto_response_enabled
     }
 }
 
@@ -424,7 +428,7 @@ mod tests {
             reason: "High confidence attack".to_string(),
         };
 
-        assert!(engine.execute_action(&action, &threat).is_ok());
+        engine.execute_action(&action, &threat);
     }
 
     #[test]
@@ -435,5 +439,78 @@ mod tests {
         let engine = DefenseEngine::new(&config);
         assert!(engine.start().is_ok());
         assert!(engine.stop().is_ok());
+    }
+
+    #[test]
+    fn test_quarantine_lifecycle() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+
+        let threat = test_threat(Severity::High, 0.8);
+        engine.respond(&threat).expect("respond should succeed");
+
+        let snapshot = engine.quarantine_snapshot();
+        assert!(!snapshot.is_empty(), "Should have quarantined the source");
+        assert!(snapshot.contains_key(&threat.source));
+
+        let record = &snapshot[&threat.source];
+        assert_eq!(record.threat_id, threat.id);
+    }
+
+    #[test]
+    fn test_quarantine_and_alert() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+
+        let threat = Threat {
+            id: "qa-test".to_string(),
+            threat_type: crate::threats::ThreatType::UnknownLineage {
+                peer_id: "unknown".to_string(),
+                lineage: None,
+            },
+            severity: Severity::High,
+            source: "10.0.0.50".to_string(),
+            target: "local".to_string(),
+            detected_at: SystemTime::now(),
+            description: "Unknown lineage detected".to_string(),
+            confidence: 0.8,
+        };
+
+        engine.respond(&threat).expect("respond should succeed");
+
+        let action = DefenseEngine::determine_action(&threat);
+        assert_eq!(action.action_type, ActionType::QuarantineAndAlert);
+    }
+
+    #[test]
+    fn test_auto_response_and_quarantine_accessors() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        assert!(engine.auto_response_enabled());
+
+        let snapshot = engine.quarantine_snapshot();
+        assert!(snapshot.is_empty());
+    }
+
+    #[test]
+    fn test_all_action_types_execute() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::Critical, 0.95);
+
+        for action_type in [
+            ActionType::Quarantine,
+            ActionType::QuarantineAndAlert,
+            ActionType::MonitorAndAlert,
+            ActionType::Block,
+        ] {
+            let action = DefenseAction {
+                action_type,
+                target: "test-target".to_string(),
+                requires_approval: false,
+                reason: "test".to_string(),
+            };
+            engine.execute_action(&action, &threat);
+        }
     }
 }

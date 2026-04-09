@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/skunk-bat-core",
     "crates/skunk-bat-integrations",
+    "crates/skunk-bat-server",
 ]
 
 [workspace.package]
@@ -38,21 +39,19 @@ tokio = { version = "1.40", features = ["full"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
 
 # Error handling
 thiserror = "2.0"
-anyhow = "1.0"
 
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Async traits (used by core trait definitions)
+# Async traits (required for dyn-dispatch trait objects)
 async-trait = "0.1"
 
-# Time
-chrono = { version = "0.4", features = ["serde"] }
+# CLI
+clap = { version = "4", features = ["derive"] }
 
 # Virtual workspace integration tests
 [package]

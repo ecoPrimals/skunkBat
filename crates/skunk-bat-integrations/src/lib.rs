@@ -1,26 +1,28 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! # skunkBat Ecosystem Integrations
 //!
-//! Real implementations of skunkBat traits for integration with other ecoPrimals.
+//! Capability-based integration layer.  Each module connects to whatever
+//! primal announces the relevant capability at runtime — no compile-time
+//! coupling to specific primal names.
 //!
-//! ## Available Integrations
-//!
-//! - **toadstool**: Capability-based primal discovery via `ToadStool`
-//! - **songbird**: Federated threat intelligence via Songbird
-//!
-//! ## Future Integrations
-//!
-//! - **beardog**: Genetic lineage verification (pending IPC client crate)
+//! | Module | Capability | Runtime Discovery |
+//! |--------|-----------|-------------------|
+//! | [`songbird`] | `federation` | `FEDERATION_ENDPOINT` env var |
+//! | [`toadstool`] | `discovery` | `DISCOVERY_ENDPOINT` env var |
 //!
 //! ## Example
 //!
 //! ```rust,ignore
-//! use skunk_bat_integrations::toadstool::ToadstoolPrimalDiscovery;
+//! use skunk_bat_integrations::toadstool::{DiscoveryClient, CapabilityPrimalDiscovery};
 //! use skunk_bat_core::reconnaissance::PrimalDiscovery;
 //!
-//! let client = ToadstoolDiscoveryClient::new("http://localhost:3000".into());
-//! let discovery = ToadstoolPrimalDiscovery::new(client, "skunkbat-01".into());
+//! let client = DiscoveryClient::from_env();
+//! let discovery = CapabilityPrimalDiscovery::new(client, "skunkbat-01".into());
 //! let primals = discovery.discover_all().await?;
 //! ```
 
+pub mod rpc;
 pub mod songbird;
 pub mod toadstool;

@@ -294,13 +294,10 @@ pub enum ThreatType {
 ```
 
 **Impact**: 
-- README originally claimed 4 types including Topology
-- Only 3 conceptual categories fully implemented
-- This is a **real gap** in the primal's evolution
+- Originally only 3 conceptual categories were implemented
+- `TopologyViolation` was added and is now fully implemented
 
-**Recommendation**: Add `TopologyViolation` variant to `ThreatType` enum
-
-**Documented in**: `GAPS_FOUND_DURING_SHOWCASE.md` (to be created)
+**Status**: RESOLVED — all 5 threat types implemented
 
 ---
 

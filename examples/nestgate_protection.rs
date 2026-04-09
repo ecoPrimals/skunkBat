@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Nestgate protection demonstration for skunkBat
 //!
 //! THE GRAND FINALE: All integrations working together to protect a Nestgate instance.

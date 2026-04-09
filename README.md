@@ -1,46 +1,80 @@
-# 🦨 skunkBat
-## Defensive Network Security for Sovereign Computing
+# skunkBat
 
-**Status**: Production Ready ✅  
-**Version**: Phase 2 Complete  
-**Coverage**: 87.37% (Core: 90-100%)
+Defensive network security primal for sovereign computing environments.
+
+**Version**: 0.1.0
+**License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 ---
 
 ## What is skunkBat?
 
-skunkBat is a **defensive network security primal** that protects sovereign computing environments through:
+skunkBat protects sovereign computing environments through metadata-only
+defensive reconnaissance. It detects threats, orchestrates graduated responses,
+and federates threat intelligence across trusted peers — all without inspecting
+packet contents or tracking user behavior.
 
-- **5 Types of Threat Detection**: Genetic, Topology, Behavioral, Intrusion, Resource
-- **Graduated Defense Response**: Monitor → Quarantine → Block (user authority preserved)
-- **Statistical Baseline Profiling**: Learns YOUR network's normal, not universal standards
-- **Zero-Coupling Architecture**: Trait-based integration with ecosystem primals
-- **Privacy by Architecture**: Metadata-only, no content inspection possible
+- **5 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral
+  (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion)
+- **Graduated Defense**: Monitor, Quarantine, Block — user authority preserved
+- **Statistical Baselines**: Learns YOUR network normal, not universal heuristics
+- **JSON-RPC IPC**: Full newline-delimited JSON-RPC 2.0 server on TCP and UDS
+- **BTSP Phase 1**: Socket naming, `FAMILY_ID` scoping, `BIOMEOS_INSECURE` guard
+- **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
+- **Privacy by Architecture**: Content inspection is structurally impossible
 
 ### Philosophy
 
-**Defensive, Not Offensive**: skunkBat protects networks, doesn't attack  
-**Reconnaissance, Not Surveillance**: Monitors patterns, not user behavior  
-**User Authority**: Owner approves major actions  
-**Sovereignty First**: Local-by-default, user-controlled data
+**Defensive, Not Offensive** — protects networks, never attacks.
+**Reconnaissance, Not Surveillance** — monitors patterns, not user behavior.
+**User Authority** — owner approves major actions.
+**Sovereignty First** — local-by-default, user-controlled data.
+
+See `RECONNAISSANCE_NOT_SURVEILLANCE.md` for the full ethical framework.
+
+---
+
+## Workspace
+
+```
+skunkBat/
+├── crates/
+│   ├── skunk-bat-core/          # Threat detection, defense, observability
+│   ├── skunk-bat-integrations/  # JSON-RPC client, discovery, federation
+│   └── skunk-bat-server/        # UniBin server (TCP + UDS + BTSP)
+├── examples/                    # 12 working examples
+├── showcase/                    # Interactive demonstrations (4 levels)
+├── tests/                       # Integration, e2e, chaos tests
+└── specs/                       # Technical specifications
+```
+
+| Crate | Role | Type |
+|-------|------|------|
+| `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
+| `skunk-bat-integrations` | JSON-RPC 2.0 client, ToadStool discovery, Songbird federation | library |
+| `skunk-bat-server` | UniBin CLI with `server`, `health`, `scan`, `detect` subcommands | binary |
 
 ---
 
 ## Quick Start
 
-### Run Showcase Demos
+### Run the Server
 
 ```bash
-# Start with local capabilities
-cd showcase/00-local-primal
-./RUN_ALL_LOCAL.sh
+# Start JSON-RPC server (TCP + UDS)
+cargo run -p skunk-bat-server -- server --port 9140
 
-# Or run individual demos
-cd 01-hello-skunkbat && ./demo.sh
-cd 02-violation-detection && ./demo.sh
+# Health check
+cargo run -p skunk-bat-server -- health
+
+# Run a scan
+cargo run -p skunk-bat-server -- scan
+
+# Detect threats
+cargo run -p skunk-bat-server -- detect
 ```
 
-### Basic Usage
+### Library Usage
 
 ```rust
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
@@ -48,132 +82,40 @@ use sourdough_core::PrimalLifecycle;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize skunkBat
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
-    
-    // Start protection
     skunkbat.start().await?;
-    
-    // Scan network
+
     skunkbat.scan_network().await?;
-    
-    // Detect threats
     let threats = skunkbat.detect_threats().await?;
-    
-    // Respond to threats
     for threat in threats {
         skunkbat.respond_to_threat(&threat)?;
     }
-    
-    // Get metrics
+
     let metrics = skunkbat.get_security_metrics();
-    
     Ok(())
 }
 ```
 
----
-
-## Features
-
-### Threat Detection (5 Types)
-
-| Type | Detects | Response |
-|------|---------|----------|
-| **Genetic** | Unknown lineage (via Beardog) | Quarantine |
-| **Topology** | Layer-hopping, path bypass | Quarantine |
-| **Behavioral** | Statistical anomalies | Graduated |
-| **Intrusion** | Attack signatures | Quarantine/Block |
-| **Resource** | DoS, exhaustion | Rate limit |
-
-### Defense Actions
-
-- **Monitor + Alert**: Low severity, requires approval
-- **Quarantine**: Isolate connection, alert operator
-- **Block**: Deny access (operator decision)
-
-### Ecosystem Integration
-
-- 🐻 **Beardog**: Genetic lineage verification (WHO)
-- 🍄 **Toadstool**: Capability-based discovery (WHERE)
-- 🐦 **Songbird**: Federated threat intelligence (COORDINATION)
-- 🏠 **Nestgate**: Protected application platform (HOME)
-
----
-
-## Documentation
-
-### Getting Started
-- `START_HERE.md` - Quick orientation
-- `QUICKSTART.md` - Fast setup guide
-- `showcase/00_START_HERE.md` - Demo walkthrough
-
-### Specifications
-- `specs/RECONNAISSANCE_SPEC.md` - Network intelligence
-- `specs/THREAT_DETECTION_SPEC.md` - Threat identification
-- `specs/AUTO_DEFENSE_SPEC.md` - Defense mechanisms
-- `specs/OBSERVABILITY_SPEC.md` - Metrics and monitoring
-
-### Production
-- `PRODUCTION_READINESS.md` - Deployment guide
-- `GAPS_FOUND_DURING_SHOWCASE.md` - Known issues (1 resolved, 2 acknowledged)
-- `DOCUMENTATION_INDEX.md` - Complete doc index
-
-### Archives
-- `archive/` - Session reports and historical documentation
-
----
-
-## Project Structure
-
-```
-skunkBat/
-├── crates/
-│   ├── skunk-bat-core/        # Core threat detection & defense
-│   └── skunk-bat-integrations/ # Ecosystem integrations
-├── examples/                   # 10 working examples (zero mocks!)
-│   ├── basic_usage.rs
-│   ├── violation_detection.rs  # All 5 threat types
-│   ├── defense_actions.rs
-│   ├── baseline_learning.rs
-│   ├── local_federation.rs
-│   ├── defensive_vs_surveillance.rs
-│   ├── beardog_integration.rs
-│   ├── toadstool_integration.rs
-│   ├── songbird_integration.rs
-│   └── nestgate_protection.rs  # Grand finale!
-├── showcase/                   # Interactive demonstrations
-│   ├── 00-local-primal/        # Level 0: Local capabilities (6 demos)
-│   ├── 01-ecosystem-integration/ # Level 1: Inter-primal (4 demos)
-│   ├── 02-federation-mesh/     # Level 2: Multi-node
-│   └── 03-production/          # Level 3: Deployment
-├── tests/                      # Integration & chaos tests
-└── specs/                      # Technical specifications
-```
-
----
-
-## Build & Test
+### Run Examples
 
 ```bash
-# Build
-cargo build --release
-
-# Run tests
-cargo test
-
-# Run examples
 cargo run --example basic_usage
 cargo run --example violation_detection
+cargo run --example songbird_integration
+```
 
-# With ecosystem integrations
-cargo build --features beardog-integration
-cargo build --features full  # All integrations
+---
 
-# Code quality
-cargo clippy --all-targets
-cargo fmt --check
+## Build and Test
+
+```bash
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+cargo fmt --all -- --check
+cargo doc --no-deps
+cargo deny check
 ```
 
 ---
@@ -181,99 +123,57 @@ cargo fmt --check
 ## Configuration
 
 ### Environment Variables
+
 ```bash
-# Required
-export SKUNKBAT_ID=your-instance-id
+# Server port (default: 9140, or SKUNKBAT_PORT)
+export SKUNKBAT_PORT=9140
 
-# Optional
-export SKUNKBAT_ADDRESS=your-address
-export SKUNKBAT_OWNED_NETWORKS=192.168.1.0/24
-export TOADSTOOL_DISCOVERY_ENDPOINT=http://toadstool.local:3000
-```
+# BTSP Phase 1
+export FAMILY_ID=your-family-id
+export BIOMEOS_SOCKET_DIR=/run/biomeos
+export BIOMEOS_INSECURE=1          # Required when FAMILY_ID is unset
 
-### Feature Flags
-```toml
-[features]
-default = []
-beardog-integration = ["beardog-genetics"]
-toadstool-integration = []
-songbird-integration = []
-full = ["beardog-integration", "toadstool-integration", "songbird-integration"]
+# Capability-based discovery (runtime, not hardcoded)
+export DISCOVERY_ENDPOINT=127.0.0.1:3000
+export FEDERATION_ENDPOINT=127.0.0.1:8080
 ```
 
 ---
 
-## Status
+## Ecosystem Integration
 
-### Completed ✅
-- [x] Core threat detection (5 types)
-- [x] Defense orchestration
-- [x] Statistical baseline profiling
-- [x] Security observability
-- [x] Multi-instance federation
-- [x] Ecosystem integrations (trait-based)
-- [x] Comprehensive showcase (10 demos)
-- [x] Production readiness
+skunkBat discovers other primals at runtime via capability-based JSON-RPC.
+No primal names are hardcoded in production code.
 
-### Metrics
-- **Test Coverage**: 87.37% overall, 90-100% core modules
-- **Examples**: 10 working demos
-- **Code Quality**: Zero compiler errors, zero critical warnings
-- **Mocks**: 0 (All real production code)
-- **Documentation**: Comprehensive
+- **BearDog**: Genetic lineage verification (WHO) — via `crypto.sock`
+- **ToadStool**: Capability-based primal discovery (WHERE) — via `discovery.sock`
+- **Songbird**: Federated threat intelligence (COORDINATION) — via `federation.sock`
+- **NestGate**: Protected application platform (HOME)
 
 ---
 
-## Ethics & Philosophy
+## Quality
 
-### What skunkBat Monitors
-✅ Connection metadata (source, destination, rate)  
-✅ Cryptographic proofs (lineage verification)  
-✅ Network topology (layer traversal)  
-✅ Statistical patterns (deviations from YOUR baseline)  
-✅ Resource consumption (impact on YOUR system)
-
-### What skunkBat Does NOT Monitor
-❌ Packet payloads or content  
-❌ User data or personal information  
-❌ Browsing history or activity  
-❌ Application usage  
-❌ Individual user behavior
-
-**Architectural Guarantee**: The code literally cannot access packet contents or user data. This isn't a promise - it's architectural impossibility.
-
-See `RECONNAISSANCE_NOT_SURVEILLANCE.md` and `ETHICS_REVIEW_SUMMARY.md` for details.
+- Edition 2024, `forbid(unsafe_code)` workspace-wide
+- Clippy pedantic + nursery, zero warnings
+- `cargo deny` advisory/ban/license/source checks pass
+- All files under 1000 lines
+- SPDX `AGPL-3.0-or-later` headers on all source files
+- Zero `TODO`/`FIXME`/`HACK` in production code
+- Pure Rust — no C dependencies in application code
 
 ---
 
-## Contributing
+## Specifications
 
-skunkBat follows modern idiomatic Rust practices:
-- Async/await patterns
-- Trait-based abstractions (zero coupling)
-- Comprehensive error handling
-- Feature gates for optional dependencies
-- 87%+ test coverage target
-
-See archived session reports in `archive/` for development methodology.
+- `specs/RECONNAISSANCE_SPEC.md` — Network intelligence
+- `specs/THREAT_DETECTION_SPEC.md` — Threat identification
+- `specs/AUTO_DEFENSE_SPEC.md` — Defense mechanisms
+- `specs/OBSERVABILITY_SPEC.md` — Metrics and monitoring
 
 ---
 
 ## License
 
-Part of the ecoPrimals ecosystem - sovereignty-first, privacy-preserving, user-controlled computing.
-
----
-
-## Support
-
-- **Documentation**: See `docs/` and `specs/`
-- **Examples**: See `examples/` (all working, zero mocks!)
-- **Showcase**: Run `showcase/00-local-primal/RUN_ALL_LOCAL.sh`
-- **Issues**: See `GAPS_FOUND_DURING_SHOWCASE.md`
-
----
-
-🦨 **Defensive by architecture. Sovereign by design. Human dignity by default.**
-
-**skunkBat: Network security that respects privacy, preserves sovereignty, and maintains user authority.**
+scyBorg triple-copyleft: software under AGPL-3.0-or-later, game mechanics
+under ORC, creative content under CC BY-SA 4.0. See `LICENSE` for details.

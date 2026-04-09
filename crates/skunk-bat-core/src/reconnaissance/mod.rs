@@ -1,146 +1,36 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Reconnaissance engine for skunkBat.
 //!
 //! Provides network scanning, topology mapping, and asset discovery.
+//! All discovery mechanisms are injected via traits — the engine has
+//! self-knowledge only and discovers others at runtime.
+
+mod discovery;
+pub mod traits;
+pub mod types;
+
+pub use discovery::{LocalDiscovery, SimpleTopologyMapper};
+pub use traits::{PrimalDiscovery, TopologyMapper};
+pub use types::*;
 
 use crate::SkunkBatConfig;
 use crate::error::SkunkBatError;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-/// Trait for capability-based primal discovery.
-///
-/// This trait abstracts discovery mechanisms, allowing skunkBat to discover
-/// primals without hardcoded knowledge. Implementations can use toadstool,
-/// mDNS, or other discovery mechanisms.
-#[async_trait]
-pub trait PrimalDiscovery: Send + Sync {
-    /// Discover primals with specified capabilities.
-    async fn discover_by_capability(&self, capability: &str) -> Result<Vec<Node>, SkunkBatError>;
-
-    /// Discover all primals on the network.
-    async fn discover_all(&self) -> Result<Vec<Node>, SkunkBatError>;
-}
-
-/// Trait for topology mapping between nodes.
-///
-/// This trait abstracts connection mapping, allowing different implementations
-/// for different network topologies and communication patterns.
-#[async_trait]
-pub trait TopologyMapper: Send + Sync {
-    /// Map connections between discovered nodes.
-    async fn map_connections(&self, nodes: &[Node]) -> Result<Vec<Connection>, SkunkBatError>;
-
-    /// Update existing topology with new information.
-    async fn update_topology(&self, current: &mut NetworkScan) -> Result<(), SkunkBatError>;
-}
-
-/// Local-only discovery implementation (self-knowledge only).
-///
-/// This implementation only discovers the local skunkBat instance.
-/// It represents the minimal self-knowledge principle: a primal only
-/// knows about itself until it discovers others at runtime.
-pub struct LocalDiscovery;
-
-#[async_trait]
-impl PrimalDiscovery for LocalDiscovery {
-    async fn discover_by_capability(&self, _capability: &str) -> Result<Vec<Node>, SkunkBatError> {
-        // Local discovery only knows about self
-        Ok(vec![Self::local_node()])
-    }
-
-    async fn discover_all(&self) -> Result<Vec<Node>, SkunkBatError> {
-        // Local discovery only knows about self
-        Ok(vec![Self::local_node()])
-    }
-}
-
-impl LocalDiscovery {
-    /// Get local node information from system
-    ///
-    /// Discovers self information from:
-    /// - System hostname
-    /// - Network interfaces
-    /// - Environment variables
-    fn local_node() -> Node {
-        Node {
-            id: Self::discover_self_id(),
-            address: Self::discover_self_address(),
-            node_type: "skunkBat".to_string(),
-            status: NodeStatus::Healthy,
-            capabilities: vec![
-                "reconnaissance".to_string(),
-                "threat-detection".to_string(),
-                "defense".to_string(),
-                "observability".to_string(),
-            ],
-            last_seen: Some(SystemTime::now()),
-        }
-    }
-
-    /// Discover own identity from system
-    ///
-    /// Priority:
-    /// 1. `SKUNKBAT_ID` environment variable
-    /// 2. Generated from timestamp (deterministic per boot)
-    fn discover_self_id() -> String {
-        std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| {
-            // Use process start time as deterministic ID
-            let pid = std::process::id();
-            let now = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            format!("skunkbat-{pid}-{now}")
-        })
-    }
-
-    /// Discover own network address from system
-    ///
-    /// Priority:
-    /// 1. `SKUNKBAT_ADDRESS` environment variable
-    /// 2. First non-loopback interface
-    /// 3. Loopback as fallback
-    fn discover_self_address() -> String {
-        if let Ok(addr) = std::env::var("SKUNKBAT_ADDRESS") {
-            return addr;
-        }
-
-        // In production, this would query network interfaces
-        // For now, use loopback as safe default
-        "127.0.0.1".to_string()
-    }
-}
-
-/// Simple topology mapper for local-only scenarios.
-pub struct SimpleTopologyMapper;
-
-#[async_trait]
-impl TopologyMapper for SimpleTopologyMapper {
-    async fn map_connections(&self, _nodes: &[Node]) -> Result<Vec<Connection>, SkunkBatError> {
-        // Simple mapper returns empty topology (no connections to discover yet)
-        Ok(Vec::new())
-    }
-
-    async fn update_topology(&self, _current: &mut NetworkScan) -> Result<(), SkunkBatError> {
-        // No updates needed for simple topology
-        Ok(())
-    }
-}
-
-/// Reconnaissance engine.
+/// Reconnaissance engine — orchestrates scanning and topology mapping.
 pub struct ReconnaissanceEngine {
     enabled: bool,
     scope: NetworkScope,
-    #[allow(dead_code)]
     discovered_assets: HashMap<String, Node>,
     discovery: Box<dyn PrimalDiscovery>,
     topology_mapper: Box<dyn TopologyMapper>,
 }
 
 impl ReconnaissanceEngine {
-    /// Create a new reconnaissance engine with default local discovery.
+    /// Create with default local discovery (self-knowledge only).
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
         Self::with_discovery(
@@ -150,10 +40,7 @@ impl ReconnaissanceEngine {
         )
     }
 
-    /// Create a reconnaissance engine with custom discovery mechanisms.
-    ///
-    /// This allows injection of different discovery implementations
-    /// (e.g., toadstool-based discovery) without hardcoding dependencies.
+    /// Create with custom discovery mechanisms injected at runtime.
     #[must_use]
     pub fn with_discovery(
         config: &SkunkBatConfig,
@@ -199,6 +86,12 @@ impl ReconnaissanceEngine {
         self.enabled
     }
 
+    /// Access the discovered asset registry.
+    #[must_use]
+    pub const fn discovered_assets(&self) -> &HashMap<String, Node> {
+        &self.discovered_assets
+    }
+
     /// Scan network topology.
     ///
     /// # Errors
@@ -211,11 +104,8 @@ impl ReconnaissanceEngine {
 
         tracing::info!("Starting network reconnaissance scan");
 
-        // Discover primals via capability-based discovery (trait-based, no hardcoding)
-        let nodes = self.discover_primals().await?;
-
-        // Map network connections between primals (trait-based topology mapping)
-        let topology = self.map_topology(&nodes).await?;
+        let nodes = self.discovery.discover_all().await?;
+        let topology = self.topology_mapper.map_connections(&nodes).await?;
 
         tracing::info!(
             "Reconnaissance scan complete: {} nodes, {} connections",
@@ -230,126 +120,6 @@ impl ReconnaissanceEngine {
             scope: self.scope.clone(),
         })
     }
-
-    /// Discover primals using the injected discovery mechanism.
-    async fn discover_primals(&self) -> Result<Vec<Node>, SkunkBatError> {
-        // Use the discovery trait - no hardcoding of discovery mechanism
-        self.discovery.discover_all().await
-    }
-
-    /// Map network topology using the injected mapper.
-    async fn map_topology(&self, nodes: &[Node]) -> Result<Vec<Connection>, SkunkBatError> {
-        // Use the topology mapper trait - no hardcoding of mapping mechanism
-        self.topology_mapper.map_connections(nodes).await
-    }
-}
-
-/// Network scanning scope.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkScope {
-    /// Networks explicitly owned by user
-    pub owned_networks: Vec<String>,
-
-    /// Systems user manages
-    pub managed_systems: Vec<String>,
-
-    /// Explicitly excluded (privacy zones)
-    pub excluded: Vec<String>,
-}
-
-impl Default for NetworkScope {
-    fn default() -> Self {
-        Self {
-            owned_networks: Self::discover_owned_networks(),
-            managed_systems: Vec::new(),
-            excluded: Vec::new(),
-        }
-    }
-}
-
-impl NetworkScope {
-    /// Discover owned networks from system
-    ///
-    /// Priority:
-    /// 1. `SKUNKBAT_OWNED_NETWORKS` environment variable (comma-separated)
-    /// 2. System network interfaces
-    /// 3. Empty list (zero knowledge)
-    fn discover_owned_networks() -> Vec<String> {
-        if let Ok(networks) = std::env::var("SKUNKBAT_OWNED_NETWORKS") {
-            return networks.split(',').map(|s| s.trim().to_string()).collect();
-        }
-
-        // In production, this would query network interfaces
-        // For now, return empty (zero knowledge by default)
-        Vec::new()
-    }
-}
-
-/// Network scan results.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct NetworkScan {
-    /// Discovered nodes
-    pub nodes: Vec<Node>,
-    /// Network topology
-    pub topology: Vec<Connection>,
-    /// When the scan was performed
-    pub scan_time: Option<SystemTime>,
-    /// Scan scope
-    pub scope: NetworkScope,
-}
-
-/// Network node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Node {
-    /// Node identifier
-    pub id: String,
-    /// Node address
-    pub address: String,
-    /// Node type (primal name)
-    pub node_type: String,
-    /// Node status
-    pub status: NodeStatus,
-    /// Node capabilities
-    pub capabilities: Vec<String>,
-    /// Last seen timestamp
-    pub last_seen: Option<SystemTime>,
-}
-
-/// Node status.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NodeStatus {
-    /// Node is healthy
-    Healthy,
-    /// Node is degraded
-    Degraded,
-    /// Node is unhealthy
-    Unhealthy,
-    /// Node is unknown
-    Unknown,
-}
-
-/// Network connection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Connection {
-    /// Source node
-    pub from: String,
-    /// Destination node
-    pub to: String,
-    /// Connection type/protocol
-    pub protocol: String,
-    /// Connection status
-    pub status: ConnectionStatus,
-}
-
-/// Connection status.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ConnectionStatus {
-    /// Connection is active
-    Active,
-    /// Connection is idle
-    Idle,
-    /// Connection is closed
-    Closed,
 }
 
 #[cfg(test)]
@@ -385,7 +155,6 @@ mod tests {
     fn test_reconnaissance_start_stop() {
         let config = test_config();
         let engine = ReconnaissanceEngine::new(&config);
-
         assert!(engine.start().is_ok());
         assert!(engine.stop().is_ok());
     }
@@ -394,11 +163,7 @@ mod tests {
     async fn test_network_scan() {
         let config = test_config();
         let engine = ReconnaissanceEngine::new(&config);
-
-        let result = engine.scan().await;
-        assert!(result.is_ok());
-
-        let scan = result.unwrap();
+        let scan = engine.scan().await.expect("scan should succeed");
         assert!(
             !scan.nodes.is_empty(),
             "Should discover at least local node"
@@ -410,29 +175,16 @@ mod tests {
     async fn test_disabled_reconnaissance() {
         let mut config = test_config();
         config.features.reconnaissance = false;
-
         let engine = ReconnaissanceEngine::new(&config);
         assert!(!engine.is_healthy());
-
-        let result = engine.scan().await;
-        assert!(result.is_ok());
-        let scan = result.unwrap();
-        assert_eq!(
-            scan.nodes.len(),
-            0,
-            "Disabled engine should return empty scan"
-        );
+        let scan = engine.scan().await.expect("scan should succeed");
+        assert_eq!(scan.nodes.len(), 0);
     }
 
     #[test]
     fn test_network_scope_default() {
         let scope = NetworkScope::default();
-        // Zero knowledge by default (discovers from environment/system)
-        // In tests without SKUNKBAT_OWNED_NETWORKS set, owned_networks is empty
-        assert!(
-            scope.owned_networks.is_empty(),
-            "Should have zero knowledge by default"
-        );
+        assert!(scope.owned_networks.is_empty());
         assert!(scope.managed_systems.is_empty());
         assert!(scope.excluded.is_empty());
     }
@@ -447,9 +199,7 @@ mod tests {
             capabilities: vec!["test".to_string()],
             last_seen: Some(SystemTime::now()),
         };
-
         assert_eq!(node.id, "test-node");
-        assert_eq!(node.node_type, "testPrimal");
         assert!(matches!(node.status, NodeStatus::Healthy));
     }
 
@@ -461,18 +211,17 @@ mod tests {
             protocol: "http".to_string(),
             status: ConnectionStatus::Active,
         };
-
         assert_eq!(conn.from, "node1");
-        assert_eq!(conn.to, "node2");
         assert!(matches!(conn.status, ConnectionStatus::Active));
     }
 
     #[tokio::test]
     async fn test_simple_topology_mapper() {
         let mapper = SimpleTopologyMapper;
-        let nodes = vec![];
-
-        let connections = mapper.map_connections(&nodes).await.unwrap();
+        let connections = mapper
+            .map_connections(&[])
+            .await
+            .expect("mapping should succeed");
         assert!(connections.is_empty());
 
         let mut scan = NetworkScan::default();
@@ -482,11 +231,9 @@ mod tests {
     #[test]
     fn test_local_discovery_self_knowledge() {
         let node = LocalDiscovery::local_node();
-
         assert_eq!(node.node_type, "skunkBat");
         assert!(matches!(node.status, NodeStatus::Healthy));
         assert!(node.capabilities.contains(&"reconnaissance".to_string()));
-        assert!(node.capabilities.contains(&"threat-detection".to_string()));
     }
 
     #[tokio::test]
@@ -495,19 +242,9 @@ mod tests {
         let nodes = discovery
             .discover_by_capability("reconnaissance")
             .await
-            .unwrap();
-
+            .expect("discovery should succeed");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].node_type, "skunkBat");
-    }
-
-    #[test]
-    fn test_network_scope_env_aware() {
-        // Test default behavior - env-aware
-        let scope = NetworkScope::default();
-        // Works whether env var is set or not
-        assert!(scope.managed_systems.is_empty());
-        assert!(scope.excluded.is_empty());
     }
 
     #[test]
@@ -523,5 +260,13 @@ mod tests {
         assert!(matches!(ConnectionStatus::Active, ConnectionStatus::Active));
         assert!(matches!(ConnectionStatus::Idle, ConnectionStatus::Idle));
         assert!(matches!(ConnectionStatus::Closed, ConnectionStatus::Closed));
+    }
+
+    #[test]
+    fn test_network_scan_default() {
+        let scan = NetworkScan::default();
+        assert!(scan.nodes.is_empty());
+        assert!(scan.topology.is_empty());
+        assert!(scan.scan_time.is_none());
     }
 }

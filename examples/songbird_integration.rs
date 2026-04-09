@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Songbird integration demonstration for skunkBat
 //!
 //! Shows federated threat intelligence sharing. Demonstrates how skunkBat

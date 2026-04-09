@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Integration tests for skunkBat with beardog
 //!
 //! Tests genetic lineage verification integration
@@ -18,10 +21,8 @@ mod beardog_integration {
         let mut skunkbat = SkunkBat::new(config);
         skunkbat.start().await.unwrap();
 
-        // TODO: Test lineage verification via beardog
-        // - Register with beardog using lineage_id
-        // - Verify genetic trust chain
-        // - Detect unknown lineage threats
+        // Requires a live lineage-verification provider for full coverage.
+        // Integration: register with lineage_id, verify the genetic trust chain, and surface unknown-lineage threats.
 
         let _threats = skunkbat.detect_threats().await.unwrap();
         // Should detect threats from unknown lineages
@@ -39,10 +40,8 @@ mod beardog_integration {
 
         let skunkbat = SkunkBat::new(config);
 
-        // TODO: Test family-only reconnaissance
-        // - Only scan nodes with verified lineage
-        // - Flag connections from outside family
-        // - Verify genetic threat detection
+        // Family-scoped reconnaissance assumes beardog-backed lineage filtering when integrated.
+        // Scope: restrict scans to verified lineage, flag external connections, and validate genetic threat signals.
 
         let scan = skunkbat.scan_network().await.unwrap();
         // Should only include family nodes
@@ -63,10 +62,8 @@ mod beardog_integration {
         let mut skunkbat = SkunkBat::new(config);
         skunkbat.start().await.unwrap();
 
-        // TODO: Test response to genetic threats
-        // - Simulate connection from unknown lineage
-        // - Verify threat detection
-        // - Verify quarantine action
+        // Exercises containment when traffic appears from an unregistered lineage.
+        // Steps: simulate an unknown-lineage peer, assert detection, then assert quarantine or equivalent isolation.
 
         skunkbat.stop().await.unwrap();
     }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! # skunkBat
 //!
 //! Reconnaissance & Automated Defense
@@ -73,7 +76,6 @@ pub use observability::SecurityObserver;
 /// Provides reconnaissance, threat detection, and automated defense
 /// for the ecoPrimals ecosystem.
 pub struct SkunkBat {
-    #[allow(dead_code)]
     config: SkunkBatConfig,
     state: PrimalState,
     reconnaissance: ReconnaissanceEngine,
@@ -135,6 +137,18 @@ impl SkunkBat {
     #[must_use]
     pub fn get_security_metrics(&self) -> observability::SecurityMetrics {
         self.observer.get_metrics()
+    }
+
+    /// Access the configuration.
+    #[must_use]
+    pub const fn config(&self) -> &SkunkBatConfig {
+        &self.config
+    }
+
+    /// Access the current primal state.
+    #[must_use]
+    pub fn state(&self) -> PrimalState {
+        <Self as PrimalLifecycle>::state(self)
     }
 }
 

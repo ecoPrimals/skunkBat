@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Baseline learning demonstration for skunkBat
 //!
 //! Shows how statistical profiling learns YOUR network's normal behavior

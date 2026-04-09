@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Toadstool integration demonstration for skunkBat
 //!
 //! Shows capability-based primal discovery. Demonstrates how skunkBat discovers
@@ -46,8 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("}}");
     println!();
     println!("// Toadstool provides the answers");
-    println!("pub struct ToadstoolPrimalDiscovery {{");
-    println!("    client: ToadstoolClient,");
+    println!("pub struct CapabilityPrimalDiscovery {{");
+    println!("    client: DiscoveryClient,");
     println!("}}");
     println!("```\n");
 

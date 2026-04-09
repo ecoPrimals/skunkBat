@@ -1,0 +1,41 @@
+skunkBat — Reconnaissance & Automated Defense
+Triple-Copyleft Licensing (scyBorg)
+
+This repository contains three categories of content, each under its own
+copyleft license. All three are governed by independent nonprofits —
+no single entity can revoke them.
+
+==========================================================================
+1. SOFTWARE (Code, shaders, build scripts, configurations, tests, tools)
+   License: GNU Affero General Public License v3.0 or later (AGPL-3.0+)
+   Full text: https://www.gnu.org/licenses/agpl-3.0.html
+   Governing body: Free Software Foundation (nonprofit)
+
+   Network use triggers the distribution obligation.
+   SaaS wrappers must release source.
+
+2. GAME MECHANICS (Rules, stat blocks, progression, encounter math)
+   License: Open RPG Creative License (ORC)
+   Full text: https://azoralaw.com/orclicense/
+   Governing body: Open RPG Creative Foundation (nonprofit)
+
+   Irrevocable and perpetual.
+
+3. CREATIVE CONTENT & DOCUMENTATION (Art, narrative, docs, guides, specs)
+   License: Creative Commons Attribution-ShareAlike 4.0 International
+   Full text: https://creativecommons.org/licenses/by-sa/4.0/
+   Governing body: Creative Commons (nonprofit)
+
+   Attribution required. Derivatives must use the same license.
+
+==========================================================================
+
+RESERVED MATERIAL (per ORC and scyBorg Exception Protocol):
+- ecoPrimals project name and branding
+- Individual primal names (skunkBat, BearDog, Songbird, NestGate, etc.)
+- Gate names and deployment-specific configuration
+
+See wateringHole/LICENSING_AND_COPYLEFT.md for the full scyBorg standard.
+See wateringHole/SCYBORG_EXCEPTION_PROTOCOL.md for symbiotic exception policy.
+
+Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
