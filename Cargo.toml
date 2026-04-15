@@ -36,6 +36,9 @@ sourdough-core = { path = "../sourDough/crates/sourdough-core" }
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }
 
+# Byte buffers
+bytes = "1.8"
+
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

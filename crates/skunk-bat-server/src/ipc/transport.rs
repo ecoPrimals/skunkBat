@@ -100,7 +100,224 @@ impl BtspConfig {
     }
 }
 
-/// Bind TCP and accept connections.
+// ── BTSP Phase 2: Handshake Config ──────────────────────────────────────
+
+/// Configuration for BTSP server-side handshake (Phase 2).
+///
+/// When present, every accepted connection must complete a BTSP handshake
+/// via the BearDog security provider before JSON-RPC is served.
+#[derive(Debug, Clone)]
+pub struct BtspHandshakeConfig {
+    /// Path to BearDog's UDS socket for `btsp.session.*` RPCs.
+    pub provider_socket: std::path::PathBuf,
+    /// Family identifier (used for logging and future cipher scoping).
+    #[allow(dead_code)]
+    pub family_id: String,
+}
+
+impl BtspHandshakeConfig {
+    /// Resolve handshake config from the environment.
+    ///
+    /// Returns `Some` when `FAMILY_ID` is set to a production value.
+    #[must_use]
+    pub fn from_env() -> Option<Self> {
+        let fid = std::env::var("FAMILY_ID")
+            .ok()
+            .filter(|v| !v.is_empty() && v != "default")?;
+
+        let provider_socket = std::env::var("BTSP_PROVIDER_SOCKET")
+            .or_else(|_| std::env::var("BEARDOG_SOCKET"))
+            .ok()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                let provider = std::env::var("BTSP_PROVIDER").unwrap_or_else(|_| "beardog".to_owned());
+                let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
+                    let xdg = std::env::var("XDG_RUNTIME_DIR")
+                        .unwrap_or_else(|_| "/tmp".to_owned());
+                    format!("{xdg}/biomeos")
+                });
+                std::path::PathBuf::from(format!("{socket_dir}/{provider}-{fid}.sock"))
+            });
+
+        Some(Self {
+            provider_socket,
+            family_id: fid,
+        })
+    }
+}
+
+// ── BTSP Phase 2: Wire Framing ──────────────────────────────────────────
+
+const MAX_FRAME_SIZE: u32 = 0x0100_0000;
+
+async fn read_frame<R: tokio::io::AsyncReadExt + Unpin>(
+    reader: &mut R,
+) -> Result<bytes::Bytes, std::io::Error> {
+    let len = reader.read_u32().await?;
+    if len > MAX_FRAME_SIZE {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("BTSP frame too large: {len}"),
+        ));
+    }
+    let mut buf = bytes::BytesMut::zeroed(len as usize);
+    reader.read_exact(&mut buf).await?;
+    Ok(buf.freeze())
+}
+
+async fn write_frame<W: tokio::io::AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    data: &[u8],
+) -> Result<(), std::io::Error> {
+    let len = u32::try_from(data.len()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "frame too large for u32")
+    })?;
+    writer.write_u32(len).await?;
+    writer.write_all(data).await?;
+    writer.flush().await
+}
+
+// ── BTSP Phase 2: Provider Client ───────────────────────────────────────
+
+async fn provider_call(
+    socket: &std::path::Path,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let mut stream = tokio::net::UnixStream::connect(socket)
+        .await
+        .map_err(|e| format!("BTSP provider {}: {e}", socket.display()))?;
+
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1
+    });
+    let mut line = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    line.push('\n');
+    stream.write_all(line.as_bytes()).await.map_err(|e| e.to_string())?;
+    stream.flush().await.map_err(|e| e.to_string())?;
+
+    let mut reader = BufReader::new(stream);
+    let mut response_line = String::new();
+    reader.read_line(&mut response_line).await.map_err(|e| e.to_string())?;
+
+    let resp: serde_json::Value = serde_json::from_str(&response_line).map_err(|e| e.to_string())?;
+    if let Some(err) = resp.get("error") {
+        return Err(format!("BTSP provider error: {err}"));
+    }
+    resp.get("result").cloned().ok_or_else(|| "no result in provider response".to_owned())
+}
+
+// ── BTSP Phase 2: Server Handshake ──────────────────────────────────────
+
+async fn perform_server_handshake<S>(
+    stream: &mut S,
+    config: &BtspHandshakeConfig,
+) -> Result<String, String>
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    let client_hello_bytes = read_frame(stream).await.map_err(|e| format!("read ClientHello: {e}"))?;
+    let client_hello: serde_json::Value = serde_json::from_slice(&client_hello_bytes)
+        .map_err(|e| format!("parse ClientHello: {e}"))?;
+
+    let client_ephemeral_pub = client_hello
+        .get("client_ephemeral_pub")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+
+    let challenge = format!("{:032x}", rand_u128());
+
+    let create_result = provider_call(
+        &config.provider_socket,
+        "btsp.session.create",
+        serde_json::json!({
+            "family_seed_ref": "env:FAMILY_SEED",
+            "client_ephemeral_pub": client_ephemeral_pub,
+            "challenge": challenge,
+        }),
+    ).await?;
+
+    let session_id = create_result.get("session_id").and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
+    let server_ephemeral_pub = create_result.get("server_ephemeral_pub").and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
+
+    let server_hello = serde_json::json!({
+        "session_id": session_id,
+        "server_ephemeral_pub": server_ephemeral_pub,
+        "challenge": challenge,
+    });
+    write_frame(stream, &serde_json::to_vec(&server_hello).map_err(|e| e.to_string())?).await
+        .map_err(|e| format!("write ServerHello: {e}"))?;
+
+    let cr_bytes = read_frame(stream).await.map_err(|e| format!("read ChallengeResponse: {e}"))?;
+    let challenge_response: serde_json::Value = serde_json::from_slice(&cr_bytes)
+        .map_err(|e| format!("parse ChallengeResponse: {e}"))?;
+
+    let client_response = challenge_response.get("response").and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
+    let preferred_cipher = challenge_response.get("preferred_cipher").and_then(serde_json::Value::as_str).unwrap_or("null").to_owned();
+
+    let verify_result = provider_call(
+        &config.provider_socket,
+        "btsp.session.verify",
+        serde_json::json!({
+            "session_id": session_id,
+            "client_response": client_response,
+            "client_ephemeral_pub": client_ephemeral_pub,
+            "server_ephemeral_pub": server_ephemeral_pub,
+            "challenge": challenge,
+        }),
+    ).await?;
+
+    let verified = verify_result.get("verified").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    if !verified {
+        let reason = verify_result.get("reason").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+        let err_frame = serde_json::json!({"error": "handshake_failed", "reason": reason});
+        let _ = write_frame(stream, &serde_json::to_vec(&err_frame).unwrap_or_default()).await;
+        return Err(format!("BTSP verify failed: {reason}"));
+    }
+
+    let _negotiate = provider_call(
+        &config.provider_socket,
+        "btsp.negotiate",
+        serde_json::json!({
+            "session_id": session_id,
+            "preferred_cipher": preferred_cipher,
+            "bond_type": "Covalent",
+        }),
+    ).await;
+
+    let complete = serde_json::json!({
+        "status": "complete",
+        "session_id": session_id,
+        "cipher": "null",
+    });
+    write_frame(stream, &serde_json::to_vec(&complete).map_err(|e| e.to_string())?).await
+        .map_err(|e| format!("write Complete: {e}"))?;
+
+    tracing::info!(session_id = %session_id, "BTSP handshake complete (null cipher)");
+    Ok(session_id)
+}
+
+fn rand_u128() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    t ^ (std::process::id() as u128) ^ 0x5555_5555_5555_5555_5555_5555_5555_5555
+}
+
+// ── Listeners ────────────────────────────────────────────────────────────
+
+/// Bind TCP and accept connections with optional BTSP handshake.
+///
+/// TCP uses the same first-byte peek as BearDog: `{` → plain JSON-RPC
+/// (biomeOS composition), otherwise BTSP framed handshake.
 pub async fn serve_tcp(
     state: Arc<RwLock<SkunkBat>>,
     port: u16,
@@ -108,17 +325,36 @@ pub async fn serve_tcp(
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!("TCP JSON-RPC listening on 0.0.0.0:{port}");
 
+    let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
+    if let Some(ref cfg) = btsp_config {
+        tracing::info!("BTSP Phase 2 active on TCP: provider={}", cfg.provider_socket.display());
+    }
+
     loop {
-        let (stream, addr) = listener.accept().await?;
+        let (mut stream, addr) = listener.accept().await?;
         tracing::debug!("TCP connection from {addr}");
         let state = Arc::clone(&state);
+        let btsp = btsp_config.clone();
         tokio::spawn(async move {
+            if let Some(ref cfg) = btsp {
+                let mut peek_buf = [0u8; 1];
+                let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
+                if n > 0 && peek_buf[0] != b'{' {
+                    match perform_server_handshake(&mut stream, cfg).await {
+                        Ok(sid) => tracing::debug!("BTSP authenticated TCP {addr}: session={sid}"),
+                        Err(e) => {
+                            tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
+                            return;
+                        }
+                    }
+                }
+            }
             handle_connection(state, stream).await;
         });
     }
 }
 
-/// Bind UDS and accept connections per BTSP Phase 1 naming.
+/// Bind UDS and accept connections per BTSP Phase 1 naming + Phase 2 handshake.
 #[cfg(unix)]
 pub async fn serve_uds(
     state: Arc<RwLock<SkunkBat>>,
@@ -141,11 +377,26 @@ pub async fn serve_uds(
 
     create_capability_symlink(&btsp);
 
+    let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
+    if let Some(ref cfg) = btsp_config {
+        tracing::info!("BTSP Phase 2 active on UDS: provider={}", cfg.provider_socket.display());
+    }
+
     loop {
-        let (stream, _addr) = listener.accept().await?;
+        let (mut stream, _addr) = listener.accept().await?;
         tracing::debug!("UDS connection accepted");
         let state = Arc::clone(&state);
+        let btsp = btsp_config.clone();
         tokio::spawn(async move {
+            if let Some(ref cfg) = btsp {
+                match perform_server_handshake(&mut stream, cfg).await {
+                    Ok(sid) => tracing::debug!("BTSP authenticated UDS: session={sid}"),
+                    Err(e) => {
+                        tracing::warn!("BTSP handshake failed UDS: {e}");
+                        return;
+                    }
+                }
+            }
             handle_connection(state, stream).await;
         });
     }
