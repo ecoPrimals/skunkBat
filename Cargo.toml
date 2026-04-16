@@ -87,6 +87,7 @@ skunk-bat-core = { path = "crates/skunk-bat-core" }
 skunk-bat-integrations = { path = "crates/skunk-bat-integrations" }
 sourdough-core = { workspace = true }
 tokio = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

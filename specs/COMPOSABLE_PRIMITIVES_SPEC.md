@@ -48,7 +48,7 @@ and scheduling hints are centralized:
 |---------------------|-------|
 | `PRIMAL_ID` | `"skunkbat"` |
 | `CAPABILITIES` | All exposed methods (see IPC table below) |
-| `CONSUMED_CAPABILITIES` | `btsp.session.verify`, `lineage.verify`, `discovery.query`, `federation.peers` |
+| `CONSUMED_CAPABILITIES` | `btsp.server.verify`, `genetic.verify_lineage`, `capabilities.list`, `discovery.query`, `federation.peers` |
 
 ---
 
@@ -87,7 +87,7 @@ Standard.
 | Method | What It Does | Standalone Use |
 |--------|-------------|----------------|
 | `lineage.challenge` | Challenge an entity to present lineage proof | Trust boundary gates |
-| `lineage.verify` | Verify a presented lineage proof (delegates to BearDog) | Any trust decision |
+| `lineage.verify` | Verify a presented lineage proof (delegates to BearDog `genetic.verify_lineage`: `our_family_id`, `peer_family_id`, `lineage_proof`, `lineage_seed`) | Any trust decision |
 
 ### 2.5 Health Domain
 
@@ -151,9 +151,13 @@ provides self/non-self discrimination (thymic selection). See
 `THYMIC_SELECTION_SPEC.md`.
 
 ```
-lineage.challenge { peer_id } → BearDog btsp.session.verify
-  → { verified: true, bond_type: "covalent" }  // self
-  → { verified: false }                         // non-self → escalate
+lineage.challenge { peer_id }
+  → BearDog btsp.server.verify { session_token, client_ephemeral_pub, response, preferred_cipher }
+    → { verified: true, session_id, cipher }  // self
+    → { verified: false, error }              // non-self → escalate
+  → BearDog genetic.verify_lineage { our_family_id, peer_family_id, lineage_proof, lineage_seed }
+    → { valid: true, depth, generation }      // deep lineage confirmed
+    → { valid: false, reason }                // lineage broken → block
 ```
 
 ### 4.2 skunkBat + coralReef: Compiler Sensing

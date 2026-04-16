@@ -101,7 +101,7 @@ cryptographic verification. In the thymic model:
 - BearDog = MHC (Major Histocompatibility Complex)
 - Family seed = self-antigen repertoire
 - Lineage proof = identity card presentation
-- `btsp.session.verify` = MHC recognition event
+- `btsp.server.verify` = MHC recognition event (canonical; `btsp.session.verify` accepted as legacy alias)
 
 skunkBat never generates or verifies cryptographic proofs itself. It uses
 BearDog's lineage system as the definition of self. The thymus uses MHC
@@ -272,10 +272,17 @@ The thymic system requires the following from BearDog's RPC surface:
 
 | Method | Purpose in Thymic Model |
 |--------|------------------------|
-| `btsp.session.verify` | Core identity check — is this entity family? |
-| `lineage.verify` | Deep lineage chain verification for roster building |
-| `lineage.list` | Enumerate current family members for negative selection |
-| `lineage.revoke` (event) | Trigger detector regeneration on revocation |
+| `btsp.server.create_session` | Establish BTSP session context (canonical; `btsp.session.create` legacy alias) |
+| `btsp.server.verify` | Core identity check — is this entity family? (canonical; `btsp.session.verify` legacy alias) |
+| `btsp.server.negotiate` | Negotiate cipher for verified session (canonical; `btsp.session.negotiate` legacy alias) |
+| `genetic.verify_lineage` | Deep lineage chain verification for roster building — params: `our_family_id`, `peer_family_id`, `lineage_proof`, `lineage_seed`, optional `chain_id` |
+| `capabilities.list` | Discover available BearDog capabilities for feature-gating |
+| `rpc.methods` | Enumerate current BearDog methods (replaces assumed `lineage.list`) |
+
+> **Note:** BearDog v0.9.0 does not expose `lineage.list` or `lineage.verify`
+> as server-side IPC methods. Roster enumeration for negative selection should
+> use `capabilities.list` combined with locally-cached family member identities
+> observed through `genetic.verify_lineage` responses.
 
 skunkBat does not call `crypto.sign`, `crypto.encrypt`, or any
 key-management methods. It only reads identity assertions.
@@ -353,6 +360,8 @@ innate immunity (complement, inflammation) complements adaptive immunity
 ---
 
 **Status:** Design phase. Implementation depends on live BearDog lineage
-verification (`btsp.session.verify`, `lineage.list`) becoming available
-over IPC. The architectural foundation (BTSP Phase 2, first-byte peek,
-`PeekedStream`) is already in place.
+verification (`btsp.server.verify`, `genetic.verify_lineage`) becoming
+available over IPC. The BTSP handshake implementation in `btsp.rs` is
+aligned with BearDog v0.9.0's canonical method names and parameter shapes
+(`session_token`, `family_seed`, `preferred_cipher`). The architectural
+foundation (BTSP Phase 2, first-byte peek, `PeekedStream`) is in place.

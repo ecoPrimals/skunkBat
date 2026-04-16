@@ -466,13 +466,15 @@ two selection phases. skunkBat applies the same principle: instead of
 maintaining a database of known attacks (signature-based), it learns what
 **self** looks like and flags everything else.
 
-**Positive selection** — Can a detector probe read BearDog's lineage system
-at all? Probes that cannot parse identity presentations are useless and are
-eliminated.
+**Positive selection** — Can a detector probe read BearDog's identity system?
+Probes are tested against `btsp.server.verify` and `genetic.verify_lineage`
+responses. Probes that cannot parse identity presentations are useless and
+are eliminated.
 
 **Negative selection** — Does a detector probe react to verified family
 members (covalent bonds)? Probes that flag self are dangerous (autoimmune
-risk) and are eliminated.
+risk) and are eliminated. The family roster is built from observed
+`genetic.verify_lineage` results and locally cached identities.
 
 **What survives** — Probes that can read the identity system AND do not
 react to self. These mature detectors are deployed and will react to any

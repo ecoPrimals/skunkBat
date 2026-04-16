@@ -109,9 +109,11 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
                     }
                 ],
                 "consumed_capabilities": [
+                    "btsp.server.verify",
+                    "genetic.verify_lineage",
+                    "capabilities.list",
                     "federation.broadcast",
-                    "discovery.find_by_capability",
-                    "lineage.verify"
+                    "discovery.find_by_capability"
                 ],
                 "protocol": "jsonrpc-2.0",
                 "transport": ["uds", "tcp"]
