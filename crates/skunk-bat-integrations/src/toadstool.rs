@@ -16,6 +16,9 @@ use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::reconnaissance::{Node, NodeStatus, PrimalDiscovery};
 use std::time::{Duration, SystemTime};
 
+/// Default RPC timeout for discovery calls (ms).
+const DEFAULT_TIMEOUT_MS: u64 = 5000;
+
 /// Discovery client for capability-based primal lookup.
 ///
 /// Transport is resolved at runtime — prefers the `discovery.sock`
@@ -43,7 +46,7 @@ pub struct DiscoveredPrimal {
 impl DiscoveryClient {
     /// Create a new discovery client targeting a TCP endpoint.
     ///
-    /// UDS is not discovered — use [`from_env`] for full transport
+    /// UDS is not discovered — use [`DiscoveryClient::from_env`] for full transport
     /// resolution.
     #[must_use]
     pub fn new(endpoint: String) -> Self {
@@ -51,7 +54,7 @@ impl DiscoveryClient {
         Self {
             endpoint,
             uds_path: None,
-            timeout_ms: 5000,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 
@@ -74,7 +77,7 @@ impl DiscoveryClient {
         Self {
             endpoint,
             uds_path,
-            timeout_ms: 5000,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 

@@ -15,11 +15,14 @@ use tracing_subscriber::EnvFilter;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// Default TCP port for JSON-RPC when `SKUNKBAT_PORT` is unset.
+const DEFAULT_PORT: u16 = 9140;
+
 fn default_port() -> u16 {
     std::env::var("SKUNKBAT_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(9140)
+        .unwrap_or(DEFAULT_PORT)
 }
 
 /// skunkBat — Reconnaissance & Automated Defense

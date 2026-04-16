@@ -23,14 +23,3 @@ async-trait = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros"] }
 tracing-subscriber = { workspace = true }
 
-[[example]]
-name = "basic_usage"
-path = "../../examples/basic_usage.rs"
-
-[[example]]
-name = "threat_response"
-path = "../../examples/threat_response.rs"
-
-[[example]]
-name = "monitoring_loop"
-path = "../../examples/monitoring_loop.rs"

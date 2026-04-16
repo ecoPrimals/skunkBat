@@ -60,7 +60,7 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
         return resp;
     }
 
-    let id = request.id.clone();
+    let id = request.id_or_null();
 
     match request.method.as_str() {
         "health.liveness" => Response::success(id, serde_json::json!({"status": "alive"})),
@@ -176,7 +176,7 @@ mod tests {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
             params: None,
-            id: serde_json::json!(1),
+            id: Some(serde_json::json!(1)),
         }
     }
 
@@ -190,10 +190,7 @@ mod tests {
     #[tokio::test]
     async fn test_security_scan() {
         let state = make_state();
-        {
-            let mut sb = state.write().await;
-            sb.start().await.expect("start");
-        }
+        state.write().await.start().await.expect("start");
         let resp = dispatch(&state, make_request("security.scan")).await;
         assert!(resp.error.is_none());
     }
@@ -229,7 +226,7 @@ mod tests {
             jsonrpc: "1.0".to_string(),
             method: "health.liveness".to_string(),
             params: None,
-            id: serde_json::json!(1),
+            id: Some(serde_json::json!(1)),
         };
         let resp = dispatch(&state, req).await;
         assert!(resp.error.is_some());

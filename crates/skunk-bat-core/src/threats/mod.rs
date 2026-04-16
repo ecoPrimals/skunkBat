@@ -28,6 +28,19 @@ use crate::SkunkBatConfig;
 use crate::error::SkunkBatError;
 use std::time::SystemTime;
 
+/// Default sigma threshold for the statistical anomaly profiler.
+const DEFAULT_SIGMA_THRESHOLD: f64 = 2.5;
+
+/// Deviation thresholds for severity classification.
+const SEVERITY_HIGH_DEVIATION: f64 = 5.0;
+const SEVERITY_MEDIUM_DEVIATION: f64 = 3.0;
+
+/// System load threshold that triggers a `DoS` threat.
+const DOS_LOAD_THRESHOLD: f64 = 0.9;
+
+/// Default confidence for resource exhaustion detections.
+const DOS_CONFIDENCE: f64 = 0.8;
+
 /// Threat detector — orchestrates all five detection categories.
 pub struct ThreatDetector {
     enabled: bool,
@@ -43,7 +56,7 @@ impl ThreatDetector {
         Self::with_verifiers(
             config,
             Box::new(LocalLineageVerifier),
-            Box::new(StatisticalProfiler::new(2.5)),
+            Box::new(StatisticalProfiler::new(DEFAULT_SIGMA_THRESHOLD)),
         )
     }
 
@@ -127,7 +140,10 @@ impl ThreatDetector {
         &*self.lineage_verifier
     }
 
-    #[allow(clippy::unused_async)]
+    #[expect(
+        clippy::unused_async,
+        reason = "async signature for trait consistency when BearDog integration lands"
+    )]
     async fn detect_genetic_threats(&self) -> Result<Vec<Threat>, SkunkBatError> {
         tracing::debug!("Genetic threat detection ready (awaiting peer connections)");
         Ok(Vec::new())
@@ -152,9 +168,9 @@ impl ThreatDetector {
         let threats = anomalies
             .into_iter()
             .map(|a| {
-                let severity = if a.deviation > 5.0 {
+                let severity = if a.deviation > SEVERITY_HIGH_DEVIATION {
                     Severity::High
-                } else if a.deviation > 3.0 {
+                } else if a.deviation > SEVERITY_MEDIUM_DEVIATION {
                     Severity::Medium
                 } else {
                     Severity::Low
@@ -178,16 +194,22 @@ impl ThreatDetector {
         Ok(threats)
     }
 
-    #[allow(clippy::unused_async)]
+    #[expect(
+        clippy::unused_async,
+        reason = "async signature for future network intrusion detection"
+    )]
     async fn detect_intrusions(&self) -> Result<Vec<Threat>, SkunkBatError> {
         tracing::debug!("Intrusion detection active (awaiting network data)");
         Ok(Vec::new())
     }
 
-    #[allow(clippy::unused_async)]
+    #[expect(
+        clippy::unused_async,
+        reason = "async signature for future async system metrics"
+    )]
     async fn detect_resource_exhaustion(&self) -> Result<Vec<Threat>, SkunkBatError> {
         let load = Self::check_system_load();
-        if load > 0.9 {
+        if load > DOS_LOAD_THRESHOLD {
             return Ok(vec![Threat {
                 id: format!("dos-{:?}", SystemTime::now()),
                 threat_type: ThreatType::DenialOfService {
@@ -199,24 +221,53 @@ impl ThreatDetector {
                 target: "local".to_string(),
                 detected_at: SystemTime::now(),
                 description: format!("High CPU usage detected: {:.1}%", load * 100.0),
-                confidence: 0.8,
+                confidence: DOS_CONFIDENCE,
             }]);
         }
         Ok(Vec::new())
     }
 
     fn check_system_load() -> f64 {
-        let raw = std::fs::read_to_string("/proc/loadavg")
-            .ok()
-            .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
-            .unwrap_or(0.0);
+        #[cfg(target_os = "linux")]
+        {
+            let raw = std::fs::read_to_string("/proc/loadavg")
+                .ok()
+                .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+                .unwrap_or(0.0);
 
-        #[allow(clippy::cast_precision_loss)]
-        let cpus = std::thread::available_parallelism()
-            .map(|n| n.get() as f64)
-            .unwrap_or(1.0);
+            #[expect(clippy::cast_precision_loss, reason = "CPU count fits in f64")]
+            let cpus = std::thread::available_parallelism()
+                .map(|n| n.get() as f64)
+                .unwrap_or(1.0);
 
-        (raw / cpus).min(1.0)
+            (raw / cpus).min(1.0)
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            std::process::Command::new("uptime")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| {
+                    s.rsplit("load average")
+                        .next()?
+                        .trim_start_matches([':', ' '])
+                        .split(',')
+                        .next()?
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                })
+                .map(|raw| {
+                    #[expect(clippy::cast_precision_loss, reason = "CPU count fits in f64")]
+                    let cpus = std::thread::available_parallelism()
+                        .map(|n| n.get() as f64)
+                        .unwrap_or(1.0);
+                    (raw / cpus).min(1.0)
+                })
+                .unwrap_or(0.0)
+        }
     }
 }
 
@@ -374,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp, reason = "exact literal comparison in test")]
     fn test_threat_creation() {
         let threat = Threat {
             id: "threat-1".to_string(),
@@ -394,7 +445,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::float_cmp)]
     fn test_dos_threat() {
         let tt = ThreatType::DenialOfService {
             resource: "bandwidth".to_string(),
@@ -458,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp, reason = "exact literal comparison in test")]
     fn test_observation_creation() {
         let obs = Observation {
             connection_rate: 10.0,
@@ -472,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp, reason = "exact literal comparison in test")]
     fn test_anomaly_creation() {
         let anomaly = Anomaly {
             deviation: 4.5,

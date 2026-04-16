@@ -13,6 +13,12 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
+/// Confidence threshold for automatic quarantine of critical threats.
+const CRITICAL_CONFIDENCE_THRESHOLD: f64 = 0.9;
+
+/// Confidence threshold for automatic quarantine of high-severity threats.
+const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.7;
+
 /// Defense engine with thread-safe quarantine tracking.
 pub struct DefenseEngine {
     enabled: bool,
@@ -88,7 +94,9 @@ impl DefenseEngine {
     /// Determine appropriate defense action.
     fn determine_action(threat: &Threat) -> DefenseAction {
         // Critical threats: immediate quarantine
-        if threat.severity == Severity::Critical && threat.confidence > 0.9 {
+        if threat.severity == Severity::Critical
+            && threat.confidence > CRITICAL_CONFIDENCE_THRESHOLD
+        {
             return DefenseAction {
                 action_type: ActionType::Quarantine,
                 target: threat.source.clone(),
@@ -98,7 +106,7 @@ impl DefenseEngine {
         }
 
         // High severity: quarantine with alert
-        if threat.severity == Severity::High && threat.confidence > 0.7 {
+        if threat.severity == Severity::High && threat.confidence > HIGH_CONFIDENCE_THRESHOLD {
             return DefenseAction {
                 action_type: ActionType::QuarantineAndAlert,
                 target: threat.source.clone(),

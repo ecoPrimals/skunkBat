@@ -2,6 +2,9 @@
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
 //! JSON-RPC 2.0 message types.
+//!
+//! Supports single requests, batch requests (JSON arrays), and
+//! notifications (requests without an `id` field per spec §4.1).
 
 use serde::{Deserialize, Serialize};
 
@@ -15,8 +18,9 @@ pub(super) struct Request {
     /// Optional parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
-    /// Request identifier.
-    pub id: serde_json::Value,
+    /// Request identifier — `None` for notifications.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<serde_json::Value>,
 }
 
 /// JSON-RPC 2.0 response.
@@ -81,15 +85,29 @@ impl Response {
 
 impl Request {
     /// Validate that the request has the correct `jsonrpc` field.
-    #[allow(clippy::result_large_err)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "Response is the natural error for validation"
+    )]
     pub(super) fn validate(&self) -> Result<(), Response> {
+        let id = self.id.clone().unwrap_or(serde_json::Value::Null);
         if self.jsonrpc != "2.0" {
             return Err(Response::error(
-                self.id.clone(),
+                id,
                 INVALID_REQUEST,
                 "jsonrpc field must be \"2.0\"",
             ));
         }
         Ok(())
+    }
+
+    /// Whether this is a notification (no `id` field per JSON-RPC 2.0 §4.1).
+    pub(super) const fn is_notification(&self) -> bool {
+        self.id.is_none()
+    }
+
+    /// Extract the id, falling back to `Null` for notifications.
+    pub(super) fn id_or_null(&self) -> serde_json::Value {
+        self.id.clone().unwrap_or(serde_json::Value::Null)
     }
 }

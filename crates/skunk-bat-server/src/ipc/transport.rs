@@ -105,13 +105,13 @@ impl BtspConfig {
 /// Configuration for BTSP server-side handshake (Phase 2).
 ///
 /// When present, every accepted connection must complete a BTSP handshake
-/// via the BearDog security provider before JSON-RPC is served.
+/// via the `BearDog` security provider before JSON-RPC is served.
 #[derive(Debug, Clone)]
 pub struct BtspHandshakeConfig {
-    /// Path to BearDog's UDS socket for `btsp.session.*` RPCs.
+    /// Path to `BearDog`'s UDS socket for `btsp.session.*` RPCs.
     pub provider_socket: std::path::PathBuf,
     /// Family identifier (used for logging and future cipher scoping).
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "reserved for BTSP Phase 2 cipher scoping")]
     pub family_id: String,
 }
 
@@ -128,16 +128,19 @@ impl BtspHandshakeConfig {
         let provider_socket = std::env::var("BTSP_PROVIDER_SOCKET")
             .or_else(|_| std::env::var("BEARDOG_SOCKET"))
             .ok()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                let provider = std::env::var("BTSP_PROVIDER").unwrap_or_else(|_| "beardog".to_owned());
-                let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
-                    let xdg = std::env::var("XDG_RUNTIME_DIR")
-                        .unwrap_or_else(|_| "/tmp".to_owned());
-                    format!("{xdg}/biomeos")
-                });
-                std::path::PathBuf::from(format!("{socket_dir}/{provider}-{fid}.sock"))
-            });
+            .map_or_else(
+                || {
+                    let provider =
+                        std::env::var("BTSP_PROVIDER").unwrap_or_else(|_| "beardog".to_owned());
+                    let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
+                        let xdg =
+                            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
+                        format!("{xdg}/biomeos")
+                    });
+                    std::path::PathBuf::from(format!("{socket_dir}/{provider}-{fid}.sock"))
+                },
+                std::path::PathBuf::from,
+            );
 
         Some(Self {
             provider_socket,
@@ -198,21 +201,40 @@ async fn provider_call(
     });
     let mut line = serde_json::to_string(&request).map_err(|e| e.to_string())?;
     line.push('\n');
-    stream.write_all(line.as_bytes()).await.map_err(|e| e.to_string())?;
+    stream
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
     stream.flush().await.map_err(|e| e.to_string())?;
 
     let mut reader = BufReader::new(stream);
     let mut response_line = String::new();
-    reader.read_line(&mut response_line).await.map_err(|e| e.to_string())?;
+    reader
+        .read_line(&mut response_line)
+        .await
+        .map_err(|e| e.to_string())?;
 
-    let resp: serde_json::Value = serde_json::from_str(&response_line).map_err(|e| e.to_string())?;
+    let resp: serde_json::Value =
+        serde_json::from_str(&response_line).map_err(|e| e.to_string())?;
     if let Some(err) = resp.get("error") {
         return Err(format!("BTSP provider error: {err}"));
     }
-    resp.get("result").cloned().ok_or_else(|| "no result in provider response".to_owned())
+    resp.get("result")
+        .cloned()
+        .ok_or_else(|| "no result in provider response".to_owned())
 }
 
 // ── BTSP Phase 2: Server Handshake ──────────────────────────────────────
+
+/// Accumulated state during the BTSP handshake exchange.
+struct HandshakeState {
+    client_ephemeral_pub: String,
+    challenge: String,
+    session_id: String,
+    server_ephemeral_pub: String,
+    client_response: String,
+    preferred_cipher: String,
+}
 
 async fn perform_server_handshake<S>(
     stream: &mut S,
@@ -221,16 +243,31 @@ async fn perform_server_handshake<S>(
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
-    let client_hello_bytes = read_frame(stream).await.map_err(|e| format!("read ClientHello: {e}"))?;
+    let mut hs = btsp_exchange_hello(stream, config).await?;
+    let (client_response, preferred_cipher) = btsp_read_challenge_response(stream).await?;
+    hs.client_response = client_response;
+    hs.preferred_cipher = preferred_cipher;
+
+    btsp_verify_and_complete(stream, config, &hs).await?;
+
+    tracing::info!(session_id = %hs.session_id, "BTSP handshake complete (null cipher)");
+    Ok(hs.session_id)
+}
+
+async fn btsp_exchange_hello<S>(
+    stream: &mut S,
+    config: &BtspHandshakeConfig,
+) -> Result<HandshakeState, String>
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    let client_hello_bytes = read_frame(stream)
+        .await
+        .map_err(|e| format!("read ClientHello: {e}"))?;
     let client_hello: serde_json::Value = serde_json::from_slice(&client_hello_bytes)
         .map_err(|e| format!("parse ClientHello: {e}"))?;
 
-    let client_ephemeral_pub = client_hello
-        .get("client_ephemeral_pub")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-
+    let client_ephemeral_pub = json_str(&client_hello, "client_ephemeral_pub");
     let challenge = format!("{:032x}", rand_u128());
 
     let create_result = provider_call(
@@ -241,41 +278,80 @@ where
             "client_ephemeral_pub": client_ephemeral_pub,
             "challenge": challenge,
         }),
-    ).await?;
+    )
+    .await?;
 
-    let session_id = create_result.get("session_id").and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
-    let server_ephemeral_pub = create_result.get("server_ephemeral_pub").and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
+    let session_id = json_str(&create_result, "session_id");
+    let server_ephemeral_pub = json_str(&create_result, "server_ephemeral_pub");
 
     let server_hello = serde_json::json!({
         "session_id": session_id,
         "server_ephemeral_pub": server_ephemeral_pub,
         "challenge": challenge,
     });
-    write_frame(stream, &serde_json::to_vec(&server_hello).map_err(|e| e.to_string())?).await
-        .map_err(|e| format!("write ServerHello: {e}"))?;
+    write_frame(
+        stream,
+        &serde_json::to_vec(&server_hello).map_err(|e| e.to_string())?,
+    )
+    .await
+    .map_err(|e| format!("write ServerHello: {e}"))?;
 
-    let cr_bytes = read_frame(stream).await.map_err(|e| format!("read ChallengeResponse: {e}"))?;
-    let challenge_response: serde_json::Value = serde_json::from_slice(&cr_bytes)
-        .map_err(|e| format!("parse ChallengeResponse: {e}"))?;
+    Ok(HandshakeState {
+        client_ephemeral_pub,
+        challenge,
+        session_id,
+        server_ephemeral_pub,
+        client_response: String::new(),
+        preferred_cipher: String::new(),
+    })
+}
 
-    let client_response = challenge_response.get("response").and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
-    let preferred_cipher = challenge_response.get("preferred_cipher").and_then(serde_json::Value::as_str).unwrap_or("null").to_owned();
+async fn btsp_read_challenge_response<S>(stream: &mut S) -> Result<(String, String), String>
+where
+    S: tokio::io::AsyncReadExt + Unpin,
+{
+    let cr_bytes = read_frame(stream)
+        .await
+        .map_err(|e| format!("read ChallengeResponse: {e}"))?;
+    let cr: serde_json::Value =
+        serde_json::from_slice(&cr_bytes).map_err(|e| format!("parse ChallengeResponse: {e}"))?;
 
+    Ok((
+        json_str(&cr, "response"),
+        json_str_or(&cr, "preferred_cipher", "null"),
+    ))
+}
+
+async fn btsp_verify_and_complete<S>(
+    stream: &mut S,
+    config: &BtspHandshakeConfig,
+    hs: &HandshakeState,
+) -> Result<(), String>
+where
+    S: tokio::io::AsyncWriteExt + Unpin,
+{
     let verify_result = provider_call(
         &config.provider_socket,
         "btsp.session.verify",
         serde_json::json!({
-            "session_id": session_id,
-            "client_response": client_response,
-            "client_ephemeral_pub": client_ephemeral_pub,
-            "server_ephemeral_pub": server_ephemeral_pub,
-            "challenge": challenge,
+            "session_id": hs.session_id,
+            "client_response": hs.client_response,
+            "client_ephemeral_pub": hs.client_ephemeral_pub,
+            "server_ephemeral_pub": hs.server_ephemeral_pub,
+            "challenge": hs.challenge,
         }),
-    ).await?;
+    )
+    .await?;
 
-    let verified = verify_result.get("verified").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let verified = verify_result
+        .get("verified")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     if !verified {
-        let reason = verify_result.get("reason").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+        let reason = verify_result
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
         let err_frame = serde_json::json!({"error": "handshake_failed", "reason": reason});
         let _ = write_frame(stream, &serde_json::to_vec(&err_frame).unwrap_or_default()).await;
         return Err(format!("BTSP verify failed: {reason}"));
@@ -285,22 +361,42 @@ where
         &config.provider_socket,
         "btsp.negotiate",
         serde_json::json!({
-            "session_id": session_id,
-            "preferred_cipher": preferred_cipher,
+            "session_id": hs.session_id,
+            "preferred_cipher": hs.preferred_cipher,
             "bond_type": "Covalent",
         }),
-    ).await;
+    )
+    .await;
 
     let complete = serde_json::json!({
         "status": "complete",
-        "session_id": session_id,
+        "session_id": hs.session_id,
         "cipher": "null",
     });
-    write_frame(stream, &serde_json::to_vec(&complete).map_err(|e| e.to_string())?).await
-        .map_err(|e| format!("write Complete: {e}"))?;
+    write_frame(
+        stream,
+        &serde_json::to_vec(&complete).map_err(|e| e.to_string())?,
+    )
+    .await
+    .map_err(|e| format!("write Complete: {e}"))?;
 
-    tracing::info!(session_id = %session_id, "BTSP handshake complete (null cipher)");
-    Ok(session_id)
+    Ok(())
+}
+
+fn json_str(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_owned()
+}
+
+fn json_str_or(value: &serde_json::Value, key: &str, default: &str) -> String {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(default)
+        .to_owned()
 }
 
 fn rand_u128() -> u128 {
@@ -309,14 +405,14 @@ fn rand_u128() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    t ^ (std::process::id() as u128) ^ 0x5555_5555_5555_5555_5555_5555_5555_5555
+    t ^ u128::from(std::process::id()) ^ 0x5555_5555_5555_5555_5555_5555_5555_5555
 }
 
 // ── Listeners ────────────────────────────────────────────────────────────
 
 /// Bind TCP and accept connections with optional BTSP handshake.
 ///
-/// TCP uses the same first-byte peek as BearDog: `{` → plain JSON-RPC
+/// TCP uses the same first-byte peek as `BearDog`: `{` → plain JSON-RPC
 /// (biomeOS composition), otherwise BTSP framed handshake.
 pub async fn serve_tcp(
     state: Arc<RwLock<SkunkBat>>,
@@ -327,7 +423,10 @@ pub async fn serve_tcp(
 
     let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
     if let Some(ref cfg) = btsp_config {
-        tracing::info!("BTSP Phase 2 active on TCP: provider={}", cfg.provider_socket.display());
+        tracing::info!(
+            "BTSP Phase 2 active on TCP: provider={}",
+            cfg.provider_socket.display()
+        );
     }
 
     loop {
@@ -379,7 +478,10 @@ pub async fn serve_uds(
 
     let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
     if let Some(ref cfg) = btsp_config {
-        tracing::info!("BTSP Phase 2 active on UDS: provider={}", cfg.provider_socket.display());
+        tracing::info!(
+            "BTSP Phase 2 active on UDS: provider={}",
+            cfg.provider_socket.display()
+        );
     }
 
     loop {
@@ -428,15 +530,190 @@ fn create_capability_symlink(btsp: &BtspConfig) {
     }
 }
 
-/// Get UID without libc dependency (reads /proc/self/status on Linux).
+/// Get UID without libc — `/proc/self/status` on Linux, `id -u` elsewhere.
 fn proc_uid() -> u32 {
-    std::fs::read_to_string("/proc/self/status")
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("Uid:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|v| v.parse().ok())
+            })
+            .unwrap_or_else(uid_fallback)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        uid_fallback()
+    }
+}
+
+fn uid_fallback() -> u32 {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
         .ok()
-        .and_then(|s| {
-            s.lines()
-                .find(|l| l.starts_with("Uid:"))
-                .and_then(|l| l.split_whitespace().nth(1))
-                .and_then(|v| v.parse().ok())
-        })
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse().ok())
         .unwrap_or(1000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_btsp_socket_path_standalone() {
+        let config = BtspConfig {
+            socket_dir: "/tmp/biomeos".into(),
+            family_id: None,
+            insecure: false,
+        };
+        assert_eq!(config.socket_path(), "/tmp/biomeos/skunkbat.sock");
+    }
+
+    #[test]
+    fn test_btsp_socket_path_family() {
+        let config = BtspConfig {
+            socket_dir: "/tmp/biomeos".into(),
+            family_id: Some("mygate".into()),
+            insecure: false,
+        };
+        assert_eq!(config.socket_path(), "/tmp/biomeos/skunkbat-mygate.sock");
+    }
+
+    #[test]
+    fn test_capability_symlink_path() {
+        let config = BtspConfig {
+            socket_dir: "/run/user/1000/biomeos".into(),
+            family_id: None,
+            insecure: false,
+        };
+        assert_eq!(
+            config.capability_symlink_path(),
+            "/run/user/1000/biomeos/security.sock"
+        );
+    }
+
+    #[test]
+    fn test_btsp_config_log_mode_standalone() {
+        let config = BtspConfig {
+            socket_dir: "/tmp/biomeos".into(),
+            family_id: None,
+            insecure: false,
+        };
+        config.log_mode();
+    }
+
+    #[test]
+    fn test_btsp_config_log_mode_insecure() {
+        let config = BtspConfig {
+            socket_dir: "/tmp/biomeos".into(),
+            family_id: None,
+            insecure: true,
+        };
+        config.log_mode();
+    }
+
+    #[test]
+    fn test_btsp_config_log_mode_family() {
+        let config = BtspConfig {
+            socket_dir: "/tmp/biomeos".into(),
+            family_id: Some("prod".into()),
+            insecure: false,
+        };
+        config.log_mode();
+    }
+
+    #[test]
+    fn test_proc_uid_returns_real_value() {
+        let uid = proc_uid();
+        assert!(uid > 0, "UID should be a positive number");
+    }
+
+    #[test]
+    fn test_uid_fallback_returns_value() {
+        let uid = uid_fallback();
+        assert!(uid > 0);
+    }
+
+    #[test]
+    fn test_rand_u128_varies() {
+        let a = rand_u128();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let b = rand_u128();
+        assert_ne!(a, b);
+    }
+
+    #[tokio::test]
+    async fn test_frame_roundtrip() {
+        let data = b"hello world";
+        let mut buf = Vec::new();
+        write_frame(&mut buf, data).await.unwrap();
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let result = read_frame(&mut cursor).await.unwrap();
+        assert_eq!(&result[..], data);
+    }
+
+    #[tokio::test]
+    async fn test_frame_too_large() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(MAX_FRAME_SIZE + 1).to_be_bytes());
+        let mut cursor = std::io::Cursor::new(buf);
+        let result = read_frame(&mut cursor).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_frame_empty() {
+        let data = b"";
+        let mut buf = Vec::new();
+        write_frame(&mut buf, data).await.unwrap();
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let result = read_frame(&mut cursor).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_provider_call_unreachable() {
+        let result = provider_call(
+            std::path::Path::new("/nonexistent/socket.sock"),
+            "test.method",
+            serde_json::json!({}),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_str_helper() {
+        let val = serde_json::json!({"key": "value"});
+        assert_eq!(json_str(&val, "key"), "value");
+        assert_eq!(json_str(&val, "missing"), "");
+    }
+
+    #[test]
+    fn test_json_str_or_helper() {
+        let val = serde_json::json!({"key": "value"});
+        assert_eq!(json_str_or(&val, "key", "default"), "value");
+        assert_eq!(json_str_or(&val, "missing", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn test_handshake_state_construction() {
+        let hs = HandshakeState {
+            client_ephemeral_pub: "pub_key".into(),
+            challenge: "challenge_hex".into(),
+            session_id: "session_1".into(),
+            server_ephemeral_pub: "srv_key".into(),
+            client_response: String::new(),
+            preferred_cipher: "null".into(),
+        };
+        assert_eq!(hs.session_id, "session_1");
+        assert!(hs.client_response.is_empty());
+    }
 }

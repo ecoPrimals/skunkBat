@@ -8,7 +8,10 @@ use sourdough_core::config::CommonConfig;
 
 /// Feature flags for skunkBat capabilities.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "feature flags are naturally boolean"
+)]
 pub struct FeatureFlags {
     /// Enable reconnaissance
     pub reconnaissance: bool,

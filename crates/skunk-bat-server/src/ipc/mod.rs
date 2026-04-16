@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-#![allow(unreachable_pub)]
+#![expect(
+    unreachable_pub,
+    reason = "transport types used by main.rs via re-export"
+)]
 //! IPC layer — JSON-RPC 2.0 over newline-delimited streams.
 //!
 //! Implements the Primal IPC Protocol v3.1:

@@ -19,8 +19,8 @@ use skunk_bat_core::{
 use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::cast_precision_loss)]
+#[expect(clippy::too_many_lines, reason = "self-contained demo")]
+#[expect(clippy::cast_precision_loss, reason = "demo percentages")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing with structured output

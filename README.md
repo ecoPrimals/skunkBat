@@ -18,8 +18,8 @@ packet contents or tracking user behavior.
   (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion)
 - **Graduated Defense**: Monitor, Quarantine, Block — user authority preserved
 - **Statistical Baselines**: Learns YOUR network normal, not universal heuristics
-- **JSON-RPC IPC**: Full newline-delimited JSON-RPC 2.0 server on TCP and UDS
-- **BTSP Phase 1**: Socket naming, `FAMILY_ID` scoping, `BIOMEOS_INSECURE` guard
+- **JSON-RPC 2.0**: Full spec — single, batch, and notification support
+- **BTSP Phase 1/2**: Socket naming, handshake framework, `FAMILY_ID` scoping
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -43,7 +43,7 @@ skunkBat/
 │   ├── skunk-bat-integrations/  # JSON-RPC client, discovery, federation
 │   └── skunk-bat-server/        # UniBin server (TCP + UDS + BTSP)
 ├── examples/                    # 12 working examples
-├── showcase/                    # Interactive demonstrations (4 levels)
+├── showcase/                    # 4-tier interactive demos (22 scenarios)
 ├── tests/                       # Integration, e2e, chaos tests
 └── specs/                       # Technical specifications
 ```
@@ -155,12 +155,15 @@ No primal names are hardcoded in production code.
 ## Quality
 
 - Edition 2024, `forbid(unsafe_code)` workspace-wide
-- Clippy pedantic + nursery, zero warnings
+- Clippy pedantic + nursery, zero warnings (`-D warnings`)
+- All `#[allow]` migrated to `#[expect(reason)]`
 - `cargo deny` advisory/ban/license/source checks pass
-- All files under 1000 lines
+- All files under 1000 lines (largest: 719)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
+- Named constants for all thresholds — no magic numbers
 - Pure Rust — no C dependencies in application code
+- 149 tests passing, 81.9% line coverage (llvm-cov)
 
 ---
 

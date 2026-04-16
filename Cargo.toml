@@ -34,7 +34,7 @@ strip = true
 sourdough-core = { path = "../sourDough/crates/sourdough-core" }
 
 # Async runtime
-tokio = { version = "1.40", features = ["full"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "time", "fs", "process", "signal"] }
 
 # Byte buffers
 bytes = "1.8"

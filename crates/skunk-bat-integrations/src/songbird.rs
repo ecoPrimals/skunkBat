@@ -17,6 +17,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
+/// Default RPC timeout for federation calls (ms).
+const DEFAULT_TIMEOUT_MS: u64 = 5000;
+
 /// Federation client for threat intelligence broadcasting.
 ///
 /// Transport is resolved at runtime — prefers the `federation.sock`
@@ -52,7 +55,7 @@ pub struct ThreatIntelligence {
 impl FederationClient {
     /// Create a new federation client targeting a TCP endpoint.
     ///
-    /// UDS is not discovered — use [`from_env`] for full transport
+    /// UDS is not discovered — use [`FederationClient::from_env`] for full transport
     /// resolution.
     #[must_use]
     pub fn new(endpoint: String, node_id: String) -> Self {
@@ -62,7 +65,7 @@ impl FederationClient {
             uds_path: None,
             node_id,
             connected: Arc::new(RwLock::new(false)),
-            timeout_ms: 5000,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 
@@ -88,7 +91,7 @@ impl FederationClient {
             uds_path,
             node_id,
             connected: Arc::new(RwLock::new(false)),
-            timeout_ms: 5000,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 
@@ -126,7 +129,7 @@ impl FederationClient {
     ///
     /// Probes the provider with `health.liveness`.  If unreachable, the
     /// client stays in disconnected state — callers should check
-    /// [`is_connected`] before broadcasting.
+    /// [`FederationClient::is_connected`] before broadcasting.
     ///
     /// # Errors
     ///

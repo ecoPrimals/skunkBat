@@ -42,12 +42,24 @@ All integration is capability-based runtime discovery. No primal names hardcoded
 Pure Rust. Depends on `sourdough-core` for primal lifecycle traits, `async-trait`
 for dyn-dispatch async methods. No C dependencies in application code.
 
+## JSON-RPC 2.0
+
+Full spec compliance including:
+- Single requests with standard error codes (-32700 through -32603)
+- **Batch requests** (JSON array dispatch, per-spec error handling)
+- **Notifications** (id-less requests produce no response, per §4.1)
+- Newline-delimited framing on TCP and UDS
+
 ## Tests
 
-124+ unit tests, integration tests (per-primal, e2e, chaos — gated behind `#[ignore]`
-until runtime primals are available). 12 working examples covering all capabilities.
+149 tests passing (84 core + 14 integrations + 22 server + 9 chaos + 3 e2e + doctests),
+14 ignored (gated behind external primals). 12 working examples. 81.9% line coverage
+(llvm-cov); core crate at ~96%, server at ~60% (transport accept-loops are untestable
+without real sockets).
 
 ## Status
 
-v0.1.0 — Edition 2024, clippy pedantic+nursery clean, `forbid(unsafe_code)` workspace-wide.
-JSON-RPC IPC server with BTSP Phase 1 and Wire Standard L2/L3 compliance.
+v0.1.0 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+workspace-wide. All `#[allow]` migrated to `#[expect(reason)]`. JSON-RPC IPC server with
+BTSP Phase 1/2 and Wire Standard L2/L3 compliance. Cross-platform (`proc_uid`, `check_system_load`).
+No magic numbers in production code — all thresholds are named constants.

@@ -1,555 +1,120 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+
 # Implementation Gaps Analysis
 
-**What exists vs what's needed for complete skunkBat showcase**
+**Current state vs what's needed for complete skunkBat deployment.**
+
+*Updated: April 2026*
 
 ---
 
-## Current State Assessment
+## Current State
 
-### ✅ What's Implemented (Production Code)
+### Build Health
+
+| Metric | Value |
+|--------|-------|
+| Tests | 149 passing / 0 failures / 14 ignored (external-primal-gated) |
+| Coverage | 81.9% line (cargo-llvm-cov) |
+| Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
+| Format | CLEAN — `cargo fmt --check` |
+| Docs | CLEAN — `cargo doc --no-deps`, zero warnings |
+| Deny | CLEAN — `cargo deny check` (advisory/ban/license/source) |
+| Unsafe | `forbid(unsafe_code)` workspace-wide |
+| Max file | 719 lines (`transport.rs`); limit 1000 |
+| Edition | 2024 |
+
+### What's Implemented (Production Code)
 
 **Core Architecture:**
-- ✅ Trait-based dependency injection
-- ✅ Async/await throughout
-- ✅ Zero unsafe code
-- ✅ Configuration system
-- ✅ Error handling
+- Trait-based dependency injection (sourdough-core `PrimalLifecycle`)
+- Async/await throughout on Tokio
+- Zero unsafe code, `forbid(unsafe_code)`
+- All `#[allow]` migrated to `#[expect(reason)]`
+- Named constants for all thresholds (no magic numbers)
+- Cross-platform implementations (`proc_uid`, `check_system_load`)
 
-**Reconnaissance Engine:**
-- ✅ `PrimalDiscovery` trait defined
-- ✅ `TopologyMapper` trait defined
-- ✅ `LocalPrimalDiscovery` (default implementation)
-- ✅ `SimpleTopologyMapper` (default implementation)
-- ✅ `scan_network()` method
-- ✅ Node and Connection data structures
+**JSON-RPC 2.0 Server (from scratch):**
+- Single requests with standard error codes (-32700 through -32603)
+- **Batch requests** (JSON array dispatch)
+- **Notifications** (id-less requests produce no response, per spec §4.1)
+- Newline-delimited framing on TCP and UDS
+- BTSP Phase 1 socket naming + Phase 2 handshake framework
+- Wire Standard L2 (`capabilities.list`) and L3 (`identity.get`)
+- Capability symlinks (`security.sock`)
 
-**Threat Detection Engine:**
-- ✅ `LineageVerifier` trait defined
-- ✅ `BaselineProfiler` trait defined
-- ✅ `LocalLineageVerifier` (default implementation)
-- ✅ `StatisticalProfiler` (working implementation)
-- ✅ `detect_threats()` method
-- ✅ Threat types (Genetic, Behavioral, Intrusion, ResourceExhaustion)
-- ✅ Anomaly detection logic
+**Threat Detection (5 types):**
+- Genetic (lineage) — trait + local stub + BearDog delegation
+- Topology (layer-hopping) — trait + simple mapper
+- Behavioral (statistical anomaly) — `StatisticalProfiler` with rolling baselines
+- Intrusion (signatures) — framework + pattern matching
+- Resource (DoS/exhaustion) — real `check_system_load` on Linux + fallback
 
 **Defense Engine:**
-- ✅ Defense action types (Quarantine, RateLimit, Block)
-- ✅ Severity assessment
-- ✅ User approval workflow structure
-- ✅ Integration contracts documented
+- Graduated response: Monitor / Quarantine / Block
+- Severity assessment with named confidence thresholds
+- User-approval workflow structure
 
-**Observability Engine:**
-- ✅ Metrics collection framework
-- ✅ Structured logging (tracing)
-- ✅ Health checks
-- ✅ Audit logging structure
+**Observability:**
+- Metrics collection, structured logging, health checks, audit logging
 
-**Tests:**
-- ✅ 56 unit tests (all passing)
-- ✅ 89.7% coverage
-- ✅ Integration test frameworks
+**Integrations (JSON-RPC clients):**
+- `RpcClient` — full JSON-RPC 2.0 client with BTSP handshake
+- `DiscoveryClient` — capability-based ToadStool discovery
+- `FederationClient` — Songbird federation broadcast
 
-**Documentation:**
-- ✅ 6,000+ lines of docs
-- ✅ 2,657 lines of specs
-- ✅ Complete audit trail
-- ✅ Ethics framework
+**Showcase:**
+- 12 working examples (`cargo run --example ...`)
+- 4-tier interactive demo suite (22 demos with `demo.sh` scripts)
 
 ---
 
-## 🔍 Gaps: What's Missing or Stubbed
+## Remaining Gaps
 
-### 1. Violation Detection Gaps
+These are **integration-layer** gaps — the local architecture is sound, and
+all internal traits are implemented. What remains is connecting to live
+ecosystem primals.
 
-#### Genetic Violation Detection
-```
-Status: STUBBED
-Location: crates/skunk-bat-core/src/threats/mod.rs
+### CRITICAL — Blocks real deployment
 
-Current:
-✅ LineageVerifier trait defined
-✅ LocalLineageVerifier (stub - always returns false)
-❌ Real Beardog integration missing
+| Gap | Status | Notes |
+|-----|--------|-------|
+| **BearDog live integration** | Trait defined, local stub works | Need live `crypto.sock` peer |
+| **Network layer defense execution** | Actions logged, not enforced | Need OS/firewall abstraction |
 
-Needed:
-- [ ] BeardogClient wrapper
-- [ ] Beardog RPC/API integration
-- [ ] Lineage verification against real Beardog
-- [ ] Revocation handling
-- [ ] Lineage chain traversal
-```
+### HIGH — Significantly limits functionality
 
-**Impact:** Cannot verify genetic lineage in reality, only in tests.
+| Gap | Status | Notes |
+|-----|--------|-------|
+| **ToadStool live discovery** | Client written, `#[ignore]`-gated tests | Blocked on ToadStool availability |
+| **Songbird live federation** | Client written, `#[ignore]`-gated tests | Blocked on Songbird availability |
+| **User approval workflow** | `requires_approval` field exists | Need notification + response channel |
+| **Topology path validation** | Mapper trait + stub | Need real topology data source |
 
-**Priority:** HIGH - Core to security model
+### MEDIUM — Enhances features
 
----
+| Gap | Status | Notes |
+|-----|--------|-------|
+| **Federation threat sharing** | Conceptual | Needs intel format + pub/sub |
+| **NestGate data protection** | Not started | Specific to NestGate deployments |
+| **Multiple baseline windows** | Single rolling window works | Hour/day/week windows |
+| **Baseline persistence** | Ephemeral (by design) | Optional save/restore |
+| **Coordinated mesh blocking** | Conceptual | Needs federation consensus |
 
-#### Topology Violation Detection
-```
-Status: PARTIAL
-Location: crates/skunk-bat-core/src/reconnaissance/mod.rs
+### LOW — Future polish
 
-Current:
-✅ TopologyMapper trait defined
-✅ SimpleTopologyMapper (stub - no actual mapping)
-❌ Real topology discovery missing
-❌ Path validation incomplete
-
-Needed:
-- [ ] SongbirdClient wrapper
-- [ ] Songbird topology queries
-- [ ] Connection path tracing
-- [ ] Layer validation logic
-- [ ] Invalid path detection
-```
-
-**Impact:** Cannot detect layer-hopping attacks.
-
-**Priority:** HIGH - Required for layered security
+| Gap | Status | Notes |
+|-----|--------|-------|
+| **Configurable per-deployment thresholds** | Constants, not yet runtime-configurable | Config struct evolution |
+| **Bandwidth monitoring** | Not started | Per-connection tracking |
 
 ---
 
-#### Behavioral Anomaly Detection
-```
-Status: IMPLEMENTED (needs tuning)
-Location: crates/skunk-bat-core/src/threats/mod.rs
+## Key Insight
 
-Current:
-✅ StatisticalProfiler implemented
-✅ Baseline learning works
-✅ Anomaly detection works
-⚠️ Thresholds need tuning
+Most gaps are **ecosystem integration points** that require peer primals
+(BearDog, ToadStool, Songbird) to be running. The core architecture, IPC
+server, and local threat/defense logic are complete and tested.
 
-Needed:
-- [ ] Configurable thresholds per deployment
-- [ ] Multiple baseline windows (hour, day, week)
-- [ ] Baseline persistence (optional)
-- [ ] Performance optimization for large datasets
-```
-
-**Impact:** Works but may have false positives/negatives.
-
-**Priority:** MEDIUM - Functional but needs refinement
-
----
-
-#### Resource Exhaustion Detection
-```
-Status: STUBBED
-Location: crates/skunk-bat-core/src/threats/mod.rs
-
-Current:
-✅ Framework exists
-❌ check_system_load() returns stub value (0.1)
-❌ No real system metrics collection
-
-Needed:
-- [ ] Real system metrics (CPU, memory, network)
-- [ ] Per-connection resource tracking
-- [ ] Rate limiting implementation
-- [ ] Bandwidth monitoring
-```
-
-**Impact:** Cannot detect DoS attacks in reality.
-
-**Priority:** HIGH - Critical for availability defense
-
----
-
-### 2. Defense Execution Gaps
-
-#### Network Layer Integration
-```
-Status: DOCUMENTED (not implemented)
-Location: crates/skunk-bat-core/src/defense/mod.rs
-
-Current:
-✅ Integration contracts documented
-✅ Methods defined (quarantine_connection, block_connection)
-❌ No actual network layer integration
-
-Needed:
-- [ ] Network layer abstraction trait
-- [ ] Integration with NestGate/Songbird for blocking
-- [ ] Connection quarantine implementation
-- [ ] Rate limiting at network layer
-```
-
-**Impact:** Defense actions are logged but don't actually affect network.
-
-**Priority:** CRITICAL - Core defensive capability
-
----
-
-#### User Approval Workflow
-```
-Status: FRAMEWORK (not implemented)
-Location: crates/skunk-bat-core/src/defense/mod.rs
-
-Current:
-✅ requires_approval field exists
-❌ No actual approval mechanism
-❌ No owner notification system
-
-Needed:
-- [ ] Approval request generation
-- [ ] Owner notification (via Songbird?)
-- [ ] Approval response handling
-- [ ] Timeout/default behavior
-```
-
-**Impact:** Automatic actions without owner control.
-
-**Priority:** HIGH - Sovereignty principle
-
----
-
-### 3. Integration Gaps
-
-#### Toadstool Integration
-```
-Status: TRAIT DEFINED (not integrated)
-Location: crates/skunk-bat-core/src/reconnaissance/mod.rs
-
-Current:
-✅ PrimalDiscovery trait defined
-✅ LocalPrimalDiscovery works (local only)
-❌ No ToadstoolDiscovery implementation
-
-Needed:
-- [ ] ToadstoolClient wrapper
-- [ ] Capability-based discovery queries
-- [ ] Node metadata extraction
-- [ ] Federation peer discovery
-```
-
-**Impact:** Cannot discover other primals, only sees self.
-
-**Priority:** HIGH - Required for federation mesh
-
----
-
-#### Beardog Integration
-```
-Status: TRAIT DEFINED (not integrated)
-Location: crates/skunk-bat-core/src/threats/mod.rs
-
-Current:
-✅ LineageVerifier trait defined
-✅ LocalLineageVerifier stub works
-❌ No BeardogVerifier implementation
-
-Needed:
-- [ ] BeardogClient wrapper
-- [ ] Lineage verification API calls
-- [ ] Revocation event subscriptions
-- [ ] Trust level determination
-```
-
-**Impact:** Cannot verify genetic lineage in reality.
-
-**Priority:** CRITICAL - Core security primitive
-
----
-
-#### Songbird Integration
-```
-Status: TRAIT DEFINED (not integrated)
-Location: crates/skunk-bat-core/src/reconnaissance/mod.rs
-
-Current:
-✅ TopologyMapper trait defined
-✅ SimpleTopologyMapper stub works
-❌ No SongbirdMapper implementation
-
-Needed:
-- [ ] SongbirdClient wrapper
-- [ ] Topology query API
-- [ ] Connection tracking
-- [ ] Path validation
-```
-
-**Impact:** Cannot map real network topology.
-
-**Priority:** HIGH - Required for topology defense
-
----
-
-#### NestGate Integration
-```
-Status: NOT STARTED
-Location: N/A
-
-Current:
-❌ No NestGate-specific code
-
-Needed:
-- [ ] NestGate data access monitoring
-- [ ] Layer-specific access control
-- [ ] Data exfiltration detection
-- [ ] Vault protection integration
-```
-
-**Impact:** Cannot protect NestGate data layers.
-
-**Priority:** MEDIUM - Specific to NestGate deployments
-
----
-
-### 4. Federation Mesh Gaps
-
-#### Threat Intelligence Sharing
-```
-Status: CONCEPTUAL (not implemented)
-Location: N/A
-
-Current:
-❌ No threat sharing code
-❌ No federation coordination
-
-Needed:
-- [ ] Threat intel format/protocol
-- [ ] Songbird publish/subscribe for threats
-- [ ] Peer trust verification
-- [ ] Intel validation
-```
-
-**Impact:** Cannot share threats with federation.
-
-**Priority:** MEDIUM - Federation feature
-
----
-
-#### Coordinated Blocking
-```
-Status: CONCEPTUAL (not implemented)
-Location: N/A
-
-Current:
-❌ No mesh-wide block coordination
-❌ No revocation broadcasting
-
-Needed:
-- [ ] Block request protocol
-- [ ] Federation acknowledgment system
-- [ ] Revocation propagation
-- [ ] Mesh consensus (optional)
-```
-
-**Impact:** Cannot coordinate defense across mesh.
-
-**Priority:** MEDIUM - Federation feature
-
----
-
-### 5. Showcase-Specific Gaps
-
-#### Demonstration Examples
-```
-Status: NOT STARTED
-Location: showcase/
-
-Current:
-✅ README structures created
-❌ No runnable examples yet
-
-Needed:
-- [ ] showcase/01-violation-detection/*.rs examples
-- [ ] showcase/02-defensive-vs-surveillance/*.rs examples
-- [ ] showcase/03-federation-mesh/*.rs examples
-- [ ] showcase/04-layered-security/*.rs examples
-- [ ] showcase/05-integration-examples/*.rs examples
-```
-
-**Impact:** Cannot demonstrate capabilities visually.
-
-**Priority:** HIGH - Essential for proving concept
-
----
-
-## Priority Matrix
-
-### CRITICAL (Blocks core functionality)
-1. **Beardog Integration** - Cannot verify lineage
-2. **Network Layer Integration** - Defense actions don't execute
-3. **System Metrics** - Cannot detect DoS
-
-### HIGH (Significantly limits functionality)
-4. **Toadstool Integration** - Cannot discover federation
-5. **Songbird Topology** - Cannot validate paths
-6. **User Approval System** - Sovereignty at risk
-7. **Showcase Examples** - Cannot demonstrate capabilities
-
-### MEDIUM (Nice to have, enhances features)
-8. **Federation Threat Sharing** - Limits coordination
-9. **NestGate Integration** - Specific use case
-10. **Baseline Tuning** - Works but could be better
-
-### LOW (Future enhancements)
-11. **Baseline Persistence** - Ephemeral is fine
-12. **Multi-window Baselines** - Single window works
-13. **Performance Optimization** - Not a bottleneck yet
-
----
-
-## Evolution Roadmap
-
-### Phase 1: Core Security (Weeks 1-2)
-**Goal:** Make violation detection real
-
-```
-Week 1:
-- [ ] Implement BeardogClient wrapper
-- [ ] Integrate real lineage verification
-- [ ] Test genetic violation detection
-
-Week 2:
-- [ ] Implement real system metrics
-- [ ] Complete resource exhaustion detection
-- [ ] Test DoS detection
-```
-
-**Deliverable:** Real violation detection works
-
----
-
-### Phase 2: Defense Execution (Weeks 3-4)
-**Goal:** Make defense actions execute
-
-```
-Week 3:
-- [ ] Define network layer abstraction
-- [ ] Implement connection blocking
-- [ ] Implement quarantine
-
-Week 4:
-- [ ] Implement rate limiting
-- [ ] Add user approval workflow
-- [ ] Test defense execution
-```
-
-**Deliverable:** Defense actions affect network
-
----
-
-### Phase 3: Federation Integration (Weeks 5-6)
-**Goal:** Enable mesh coordination
-
-```
-Week 5:
-- [ ] Implement ToadstoolClient
-- [ ] Enable primal discovery
-- [ ] Implement SongbirdClient
-- [ ] Enable topology queries
-
-Week 6:
-- [ ] Implement threat sharing protocol
-- [ ] Enable coordinated blocking
-- [ ] Test mesh coordination
-```
-
-**Deliverable:** Federation mesh works
-
----
-
-### Phase 4: Showcase Development (Weeks 7-8)
-**Goal:** Demonstrate capabilities
-
-```
-Week 7:
-- [ ] Build violation detection examples
-- [ ] Build defensive vs surveillance comparison
-- [ ] Create visual demonstrations
-
-Week 8:
-- [ ] Build federation mesh examples
-- [ ] Build layered security examples
-- [ ] Complete integration examples
-```
-
-**Deliverable:** Full showcase suite ready
-
----
-
-## Testing Strategy
-
-### Unit Tests (Ongoing)
-- Maintain >85% coverage
-- Test each gap as it's filled
-- Add integration-specific tests
-
-### Integration Tests (Phase 3)
-- Test real Beardog integration
-- Test real Toadstool integration
-- Test real Songbird integration
-
-### Showcase Tests (Phase 4)
-- Each example must run successfully
-- Visual output must be clear
-- Gaps must be obvious
-
----
-
-## Gap Tracking
-
-Use this checklist to track progress:
-
-### Violation Detection
-- [ ] Beardog lineage verification (real)
-- [ ] Topology path validation (real)
-- [ ] Behavioral baseline (tuned)
-- [ ] Resource metrics (real)
-
-### Defense Execution
-- [ ] Network layer blocking
-- [ ] Connection quarantine
-- [ ] Rate limiting
-- [ ] User approval workflow
-
-### Federation
-- [ ] Toadstool discovery
-- [ ] Songbird topology
-- [ ] Threat sharing
-- [ ] Coordinated blocking
-
-### Showcase
-- [ ] Violation detection examples (4)
-- [ ] Defensive vs surveillance (2)
-- [ ] Federation mesh (3)
-- [ ] Layered security (3)
-- [ ] Integration examples (4)
-
-**Total:** 21 gaps to fill
-
----
-
-## Success Criteria
-
-### Minimum Viable Showcase
-- [ ] 1 violation detection example running
-- [ ] 1 defensive vs surveillance comparison
-- [ ] 1 federation mesh example
-- [ ] Documentation explains gaps clearly
-
-### Complete Showcase
-- [ ] All examples running
-- [ ] Real integrations working
-- [ ] Visual demonstrations complete
-- [ ] Gap evolution path documented
-
----
-
-## Next Actions
-
-1. **Immediate:** Build first showcase example (genetic violation)
-2. **Short-term:** Implement Beardog integration
-3. **Medium-term:** Complete Phase 1 & 2
-4. **Long-term:** Full showcase suite
-
----
-
-**Key Insight:** Most gaps are **integration points** - the core architecture is sound. We need to connect skunkBat to the ecosystem.
-
-🦨 Architecture complete • Integrations needed • Path forward clear 🛡️✨
-
+The `#[ignore]`-gated integration tests are ready to light up as each
+peer primal comes online.

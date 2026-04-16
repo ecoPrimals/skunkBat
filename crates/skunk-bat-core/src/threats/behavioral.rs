@@ -36,9 +36,9 @@ impl StatisticalProfiler {
             return None;
         }
 
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(clippy::cast_precision_loss, reason = "observation counts fit in f64")]
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(clippy::cast_precision_loss, reason = "observation counts fit in f64")]
         let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
         let std_dev = variance.sqrt();
 

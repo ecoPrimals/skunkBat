@@ -221,7 +221,7 @@ impl LocalUniversalAdapter {
             capabilities_per_primal: if primals.is_empty() {
                 0.0
             } else {
-                #[allow(clippy::cast_precision_loss)]
+                #[expect(clippy::cast_precision_loss, reason = "usize counts fit in f64")]
                 let avg = primals
                     .values()
                     .map(|p| p.capabilities.len())
@@ -253,7 +253,10 @@ pub struct AdapterStats {
 }
 
 #[async_trait]
-#[allow(clippy::significant_drop_tightening)]
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "registry mutations require both locks held"
+)]
 impl UniversalAdapter for LocalUniversalAdapter {
     async fn announce(&self, capability: Capability) -> Result<(), SkunkBatError> {
         info!(
