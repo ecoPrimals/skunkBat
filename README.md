@@ -16,10 +16,14 @@ packet contents or tracking user behavior.
 
 - **5 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral
   (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion)
+- **Composable Primitives**: `baseline`, `metadata`, `response`, `lineage`, `health` —
+  each independently useful as standalone capabilities
+- **Thymic Selection Model**: Self/non-self discrimination via BearDog lineage (design phase)
 - **Graduated Defense**: Monitor, Quarantine, Block — user authority preserved
 - **Statistical Baselines**: Learns YOUR network normal, not universal heuristics
 - **JSON-RPC 2.0**: Full spec — single, batch, and notification support
-- **BTSP Phase 1/2**: Socket naming, handshake on TCP + UDS, first-byte peek
+- **BTSP Phase 1/2**: Socket naming, BearDog-delegated handshake on TCP + UDS,
+  first-byte peek for biomeOS composition bypass
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -145,10 +149,15 @@ export FEDERATION_ENDPOINT=127.0.0.1:8080
 skunkBat discovers other primals at runtime via capability-based JSON-RPC.
 No primal names are hardcoded in production code.
 
-- **BearDog**: Genetic lineage verification (WHO) — via `crypto.sock`
+- **BearDog**: Genetic lineage verification (WHO) — `btsp.server.*`, `genetic.verify_lineage` via `crypto.sock`
 - **ToadStool**: Capability-based primal discovery (WHERE) — via `discovery.sock`
 - **Songbird**: Federated threat intelligence (COORDINATION) — via `federation.sock`
 - **NestGate**: Protected application platform (HOME)
+
+### Consumed Capabilities
+
+`btsp.server.verify`, `genetic.verify_lineage`, `capabilities.list`,
+`federation.broadcast`, `discovery.find_by_capability`
 
 ---
 
@@ -158,21 +167,25 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - All `#[allow]` migrated to `#[expect(reason)]`
 - `cargo deny` advisory/ban/license/source checks pass
-- All files under 1000 lines (largest: 719)
+- All files under 1000 lines (largest: 867)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — no C dependencies in application code
-- 153 tests passing, 82.0% line coverage (llvm-cov)
+- 171 tests passing, 89.6% line coverage (llvm-cov)
+- CI: GitHub Actions with fmt/clippy/doc/deny/test/coverage gates
 
 ---
 
 ## Specifications
 
+- `specs/00_SPECIFICATIONS_INDEX.md` — Index of all specifications
 - `specs/RECONNAISSANCE_SPEC.md` — Network intelligence
-- `specs/THREAT_DETECTION_SPEC.md` — Threat identification
+- `specs/THREAT_DETECTION_SPEC.md` — Threat identification (includes thymic model, bond-type mapping)
 - `specs/AUTO_DEFENSE_SPEC.md` — Defense mechanisms
 - `specs/OBSERVABILITY_SPEC.md` — Metrics and monitoring
+- `specs/THYMIC_SELECTION_SPEC.md` — Self/non-self discrimination model (design phase)
+- `specs/COMPOSABLE_PRIMITIVES_SPEC.md` — Primitive decomposition and composition patterns
 
 ---
 

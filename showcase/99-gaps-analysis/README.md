@@ -14,14 +14,14 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 149 passing / 0 failures / 14 ignored (external-primal-gated) |
-| Coverage | 81.9% line (cargo-llvm-cov) |
+| Tests | 171 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Coverage | 89.6% line (cargo-llvm-cov; CI gate: 85%) |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
 | Docs | CLEAN — `cargo doc --no-deps`, zero warnings |
 | Deny | CLEAN — `cargo deny check` (advisory/ban/license/source) |
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
-| Max file | 719 lines (`transport.rs`); limit 1000 |
+| Max file | 867 lines (`btsp.rs`); limit 1000 |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)
@@ -39,7 +39,7 @@
 - **Batch requests** (JSON array dispatch)
 - **Notifications** (id-less requests produce no response, per spec §4.1)
 - Newline-delimited framing on TCP and UDS
-- BTSP Phase 1 socket naming + Phase 2 handshake framework
+- BTSP Phase 1 socket naming + Phase 2 BearDog-delegated handshake (aligned with BearDog v0.9.0)
 - Wire Standard L2 (`capabilities.list`) and L3 (`identity.get`)
 - Capability symlinks (`security.sock`)
 
@@ -79,7 +79,7 @@ ecosystem primals.
 
 | Gap | Status | Notes |
 |-----|--------|-------|
-| **BearDog live integration** | Trait defined, local stub works | Need live `crypto.sock` peer |
+| **BearDog live integration** | BTSP handshake aligned with v0.9.0, integration test wired | Need live `crypto.sock` peer for E2E validation |
 | **Network layer defense execution** | Actions logged, not enforced | Need OS/firewall abstraction |
 
 ### HIGH — Significantly limits functionality

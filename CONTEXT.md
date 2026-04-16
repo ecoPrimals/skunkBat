@@ -10,7 +10,7 @@ observability — all metadata-only, no content inspection by architecture.
 |-------|------|------|
 | `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, ToadStool discovery, Songbird federation | library |
-| `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1 socket naming, Wire Standard L2/L3 | binary |
+| `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2 (BearDog-delegated handshake), Wire Standard L2/L3 | binary |
 
 ## Key Concepts
 
@@ -31,12 +31,31 @@ observability — all metadata-only, no content inspection by architecture.
 
 ## Ecosystem Integration
 
-- **BearDog**: Genetic lineage verification (WHO) — JSON-RPC via `crypto.sock` or `DISCOVERY_ENDPOINT`
+- **BearDog**: Genetic lineage verification (WHO) — `btsp.server.*` and `genetic.verify_lineage` via `crypto.sock` or `DISCOVERY_ENDPOINT`
 - **ToadStool**: Capability-based primal discovery (WHERE) — JSON-RPC via `discovery.sock` or `DISCOVERY_ENDPOINT`
 - **Songbird**: Federated threat intelligence (COORDINATION) — JSON-RPC via `federation.sock` or `FEDERATION_ENDPOINT`
 - **NestGate**: Protected application platform (HOME)
 
 All integration is capability-based runtime discovery. No primal names hardcoded in routing.
+
+## Composable Primitives
+
+skunkBat decomposes into five primitive domains, each independently useful:
+
+| Domain | What It Does | General Use |
+|--------|-------------|-------------|
+| `baseline` | Rolling-window statistical anomaly detection | Time-series pattern analysis for any metric |
+| `metadata` | Connection metadata extraction and classification | Traffic analysis, deduplication |
+| `response` | Progressive state machine with escalation | Any graduated workflow engine |
+| `lineage` | Identity challenge via BearDog delegation | Trust boundary arbitration |
+| `health` | System load, network state, resource utilization | Cross-platform system sensing |
+
+## Thymic Selection Model (Design Phase)
+
+Self/non-self discrimination inspired by biological thymic education. BearDog provides
+the genetic identity system (MHC); skunkBat acts as the thymus, training detector probes
+against known-self and eliminating self-reactive ones. What survives detects novel threats
+without signature databases. See `specs/THYMIC_SELECTION_SPEC.md`.
 
 ## Dependencies
 
@@ -53,13 +72,16 @@ Full spec compliance including:
 
 ## Tests
 
-153 tests passing (84 core + 14 integrations + 42 server + 9 chaos + 3 e2e + doctests),
-14 ignored (gated behind external primals). 12 working examples. 82.0% line coverage
-(llvm-cov); core crate at ~96%, server at ~49% transport / ~86% server / ~96% dispatch.
+171 tests passing (84 core + 22 integrations + 45 server + 7 binary + 9 chaos + 3 e2e + doctests),
+15 ignored (gated behind external primals). 12 working examples. 89.6% line coverage
+(llvm-cov); core crate ~96%, btsp ~90%, dispatch ~96%, rpc ~93%.
 
 ## Status
 
-v0.1.0 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.0-dev — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. All `#[allow]` migrated to `#[expect(reason)]`. JSON-RPC IPC server with
-BTSP Phase 1/2 (TCP + UDS first-byte peek) and Wire Standard L2/L3 compliance.
-Cross-platform (`proc_uid`, `check_system_load`). No magic numbers — all thresholds named.
+BTSP Phase 1/2 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned with v0.9.0)
+and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
+`genetic.verify_lineage`, `capabilities.list`, `federation.broadcast`,
+`discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
+No magic numbers — all thresholds named. 28 source files, 7,288 lines, max 867 lines/file.
