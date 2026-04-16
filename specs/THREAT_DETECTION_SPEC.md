@@ -1,10 +1,10 @@
 # skunkBat Threat Detection Specification
 
-**Version:** 0.1.0 (Draft)  
-**Status:** Initial Specification  
+**Version:** 0.2.0-dev  
+**Status:** Core implemented; thymic selection and bond-type classification in design  
 **Author:** ecoPrimals Project  
-**Date:** December 27, 2025  
-**License:** AGPL-3.0  
+**Date:** April 2026 (evolved from December 2025 draft)  
+**License:** AGPL-3.0-or-later  
 
 ---
 
@@ -454,7 +454,70 @@ threat_detection:
 
 ---
 
-**Status:** Initial draft complete. Implementation follows reconnaissance spec.
+## 6. Thymic Selection Model (PLANNED)
 
-**Next:** AUTO_DEFENSE_SPEC.md (automated response to detected threats)
+> **Status: DESIGN PHASE** — not yet implemented. See `THYMIC_SELECTION_SPEC.md`
+> for the full specification.
+
+### 6.1 Biological Analogy
+
+The thymus trains T-cells to distinguish **self** from **non-self** through
+two selection phases. skunkBat applies the same principle: instead of
+maintaining a database of known attacks (signature-based), it learns what
+**self** looks like and flags everything else.
+
+**Positive selection** — Can a detector probe read BearDog's lineage system
+at all? Probes that cannot parse identity presentations are useless and are
+eliminated.
+
+**Negative selection** — Does a detector probe react to verified family
+members (covalent bonds)? Probes that flag self are dangerous (autoimmune
+risk) and are eliminated.
+
+**What survives** — Probes that can read the identity system AND do not
+react to self. These mature detectors are deployed and will react to any
+entity that fails to present valid lineage.
+
+### 6.2 Advantages Over Signature-Based Detection
+
+- Zero-day attacks are detectable — they have no valid lineage
+- No signature database to maintain — self-knowledge is the only database
+- Novel threats are the default case — everything unknown is non-self
+- False positives are trained out via negative selection
+
+### 6.3 Continuous Training Loop
+
+The detector population is regenerated periodically as the network evolves:
+new family members join (lineage expansion), members leave (revocation),
+behavioral baselines drift. Each regeneration cycle produces fresh detectors
+calibrated to the current self-model.
+
+---
+
+## 7. Bond-Type Threat Classification (PLANNED)
+
+> **Status: DESIGN PHASE** — maps the ecosystem bonding model to immune
+> categories for threat assessment.
+
+The chemistry bonding model from `ECOSYSTEM_ARCHITECTURE.md` maps to
+immunological categories that determine skunkBat's default response:
+
+| Bond Type | Immune Analog | Default Response |
+|-----------|---------------|------------------|
+| **Covalent** (family seed) | Self — your own cells | Never flag. Autoimmune if attacked. |
+| **Ionic** (contract) | Commensal — known beneficial non-self | Tolerate within contract bounds. Monitor for violation. |
+| **Metallic** (sub-specialized) | Organ-specific tolerance | Permit within role scope (compute-only, storage-only). |
+| **Weak** (pre-trust) | Unknown antigen | Default suspicion. Challenge, probe, verify before trust. |
+
+The Pixel 8a onboarding pattern (weak -> covalent after BearDog verification)
+is the canonical example: unknown entity is challenged, lineage is verified
+cryptographically, trust escalates. skunkBat monitors the entire transition
+and flags anomalies at each stage.
+
+---
+
+**Status:** Core threat detection (sections 1-5) implemented and tested.
+Thymic selection (section 6) and bond-type classification (section 7) are
+in design phase — see `THYMIC_SELECTION_SPEC.md` and
+`COMPOSABLE_PRIMITIVES_SPEC.md` for full specifications.
 
