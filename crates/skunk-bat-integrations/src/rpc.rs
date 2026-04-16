@@ -209,6 +209,7 @@ fn uid_fallback() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn test_socket_dir_fallback() {
@@ -246,5 +247,142 @@ mod tests {
         .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("no endpoint"));
+    }
+
+    #[tokio::test]
+    async fn test_call_stream_success() {
+        let (client, mut server) = tokio::io::duplex(1024);
+
+        let handle = tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(&mut server);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(req["method"], "test.ping");
+            assert_eq!(req["jsonrpc"], "2.0");
+
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {"pong": true},
+                "id": req["id"]
+            });
+            let mut resp_line = serde_json::to_string(&resp).unwrap();
+            resp_line.push('\n');
+            server.write_all(resp_line.as_bytes()).await.unwrap();
+            server.flush().await.unwrap();
+        });
+
+        let result = call_stream(
+            client,
+            "test.ping",
+            Some(serde_json::json!({})),
+            Duration::from_secs(5),
+        )
+        .await;
+
+        handle.await.unwrap();
+        let val = result.expect("should succeed");
+        assert_eq!(val["pong"], true);
+    }
+
+    #[tokio::test]
+    async fn test_call_stream_rpc_error() {
+        let (client, mut server) = tokio::io::duplex(1024);
+
+        let handle = tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(&mut server);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "error": {"code": -32601, "message": "Method not found"},
+                "id": req["id"]
+            });
+            let mut resp_line = serde_json::to_string(&resp).unwrap();
+            resp_line.push('\n');
+            server.write_all(resp_line.as_bytes()).await.unwrap();
+            server.flush().await.unwrap();
+        });
+
+        let result = call_stream(client, "bogus.method", None, Duration::from_secs(5)).await;
+
+        handle.await.unwrap();
+        let err = result.unwrap_err();
+        assert!(err.contains("-32601"));
+        assert!(err.contains("Method not found"));
+    }
+
+    #[tokio::test]
+    async fn test_call_stream_null_result() {
+        let (client, mut server) = tokio::io::duplex(1024);
+
+        let handle = tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(&mut server);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+
+            let resp = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}\n";
+            server.write_all(resp.as_bytes()).await.unwrap();
+            server.flush().await.unwrap();
+        });
+
+        let result = call_stream(client, "test.null", None, Duration::from_secs(5)).await;
+
+        handle.await.unwrap();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("null result"));
+    }
+
+    #[tokio::test]
+    async fn test_call_stream_timeout() {
+        let (client, _server) = tokio::io::duplex(1024);
+
+        let result = call_stream(client, "test.slow", None, Duration::from_millis(50)).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("timeout"));
+    }
+
+    #[tokio::test]
+    async fn test_call_uds_unreachable() {
+        let result = call_uds(
+            "/nonexistent/socket.sock",
+            "test.method",
+            None,
+            Duration::from_millis(100),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_call_tcp_fallback() {
+        let result = call(
+            Some("/nonexistent/socket.sock"),
+            Some("127.0.0.1:1"),
+            "test.method",
+            None,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_request_id_increments() {
+        let a = NEXT_ID.load(Ordering::Relaxed);
+        let _ = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let b = NEXT_ID.load(Ordering::Relaxed);
+        assert_eq!(b, a + 1);
+    }
+
+    #[test]
+    fn test_proc_uid_returns_real_value() {
+        assert!(proc_uid() > 0);
     }
 }

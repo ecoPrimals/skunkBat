@@ -9,10 +9,6 @@ all-features = true
 [advisories]
 yanked = "deny"
 ignore = [
-    # Transitive from sourdough-core → tarpc 0.34 → tokio-serde → bincode v1; awaiting tarpc upstream migration.
-    { id = "RUSTSEC-2025-0141", reason = "bincode v1 is transitive via tarpc; no direct usage" },
-    # Transitive from sourdough-core → tarpc 0.34 → tracing-opentelemetry → opentelemetry_sdk 0.18.
-    { id = "RUSTSEC-2026-0007", reason = "opentelemetry_sdk is transitive via tarpc; no direct usage" },
     # Transitive from sourdough-core → tarpc 0.34 → opentelemetry_api merged into opentelemetry crate.
     { id = "RUSTSEC-2024-0387", reason = "opentelemetry_api is transitive via tarpc; awaiting tarpc upgrade" },
 ]
