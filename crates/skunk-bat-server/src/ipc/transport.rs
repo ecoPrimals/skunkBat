@@ -3,15 +3,69 @@
 
 //! Transport layer — TCP and Unix domain socket listeners.
 //!
-//! Implements BTSP Phase 1 (socket naming with `FAMILY_ID` awareness)
-//! and Primal IPC Protocol v3.1 (filesystem sockets in `$BIOMEOS_SOCKET_DIR`).
+//! Implements BTSP Phase 1 (socket naming with `FAMILY_ID` awareness),
+//! Phase 2 (BearDog-delegated handshake on both TCP and UDS), and
+//! Primal IPC Protocol v3.1 (filesystem sockets in `$BIOMEOS_SOCKET_DIR`).
+//!
+//! Both TCP and UDS use first-byte peek to auto-detect protocol:
+//! `{` → plain JSON-RPC (biomeOS composition bypass), otherwise BTSP
+//! framed handshake. TCP uses native `TcpStream::peek`; UDS uses
+//! `PeekedStream` (read-one-byte + replay) since `UnixStream` lacks peek.
 
 use skunk_bat_core::SkunkBat;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
 use super::server::handle_connection;
+
+// ── First-byte peek wrapper ──────────────────────────────────────────────
+//
+// `tokio::net::UnixStream` lacks `peek()`. This wrapper reads one byte
+// destructively, then replays it on the first `poll_read`. Both
+// `AsyncRead` and `AsyncWrite` are delegated so the wrapper is a
+// transparent drop-in for any stream type.
+
+struct PeekedStream<S> {
+    peeked: Option<u8>,
+    inner: S,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for PeekedStream<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if let Some(byte) = this.peeked.take() {
+            buf.put_slice(&[byte]);
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut this.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for PeekedStream<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
 
 /// BTSP Phase 1 environment configuration.
 pub struct BtspConfig {
@@ -454,10 +508,15 @@ pub async fn serve_tcp(
 }
 
 /// Bind UDS and accept connections per BTSP Phase 1 naming + Phase 2 handshake.
+///
+/// Uses first-byte peek (via `PeekedStream`) to auto-detect protocol:
+/// `{` → plain JSON-RPC (biomeOS composition), otherwise BTSP framed
+/// handshake. Matches the TCP behavior exactly.
 #[cfg(unix)]
 pub async fn serve_uds(
     state: Arc<RwLock<SkunkBat>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    use tokio::io::AsyncReadExt;
     use tokio::net::UnixListener;
 
     let btsp = BtspConfig::from_env()
@@ -479,7 +538,7 @@ pub async fn serve_uds(
     let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
     if let Some(ref cfg) = btsp_config {
         tracing::info!(
-            "BTSP Phase 2 active on UDS: provider={}",
+            "BTSP Phase 2 active on UDS (first-byte peek): provider={}",
             cfg.provider_socket.display()
         );
     }
@@ -491,15 +550,28 @@ pub async fn serve_uds(
         let btsp = btsp_config.clone();
         tokio::spawn(async move {
             if let Some(ref cfg) = btsp {
-                match perform_server_handshake(&mut stream, cfg).await {
-                    Ok(sid) => tracing::debug!("BTSP authenticated UDS: session={sid}"),
-                    Err(e) => {
-                        tracing::warn!("BTSP handshake failed UDS: {e}");
-                        return;
+                let mut first = [0u8; 1];
+                let n = stream.read(&mut first).await.unwrap_or(0);
+                if n == 0 {
+                    return;
+                }
+                let mut peeked = PeekedStream {
+                    peeked: Some(first[0]),
+                    inner: stream,
+                };
+                if first[0] != b'{' {
+                    match perform_server_handshake(&mut peeked, cfg).await {
+                        Ok(sid) => tracing::debug!("BTSP authenticated UDS: session={sid}"),
+                        Err(e) => {
+                            tracing::warn!("BTSP handshake failed UDS: {e}");
+                            return;
+                        }
                     }
                 }
+                handle_connection(state, peeked).await;
+            } else {
+                handle_connection(state, stream).await;
             }
-            handle_connection(state, stream).await;
         });
     }
 }
@@ -715,5 +787,80 @@ mod tests {
         };
         assert_eq!(hs.session_id, "session_1");
         assert!(hs.client_response.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_peeked_stream_replays_byte() {
+        use tokio::io::AsyncReadExt;
+
+        let inner = std::io::Cursor::new(b"ello world");
+        let mut ps = PeekedStream {
+            peeked: Some(b'h'),
+            inner,
+        };
+
+        let mut buf = vec![0u8; 11];
+        let n = ps.read(&mut buf).await.unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(buf[0], b'h');
+
+        let n2 = ps.read(&mut buf).await.unwrap();
+        assert_eq!(&buf[..n2], b"ello world");
+    }
+
+    #[tokio::test]
+    async fn test_peeked_stream_json_detection() {
+        use tokio::io::AsyncReadExt;
+
+        let inner = std::io::Cursor::new(b"\"jsonrpc\":\"2.0\"}");
+        let mut ps = PeekedStream {
+            peeked: Some(b'{'),
+            inner,
+        };
+
+        let mut buf = vec![0u8; 32];
+        let mut total = 0;
+        loop {
+            let n = ps.read(&mut buf[total..]).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            total += n;
+        }
+        assert_eq!(&buf[..total], b"{\"jsonrpc\":\"2.0\"}");
+    }
+
+    #[tokio::test]
+    async fn test_peeked_stream_write_passthrough() {
+        use tokio::io::AsyncWriteExt;
+
+        let inner = Vec::<u8>::new();
+        let mut ps = PeekedStream {
+            peeked: Some(b'x'),
+            inner,
+        };
+
+        ps.write_all(b"hello").await.unwrap();
+        ps.flush().await.unwrap();
+        assert_eq!(&ps.inner, b"hello");
+    }
+
+    #[tokio::test]
+    async fn test_peeked_stream_btsp_first_byte() {
+        let btsp_frame = {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&10u32.to_be_bytes());
+            buf.extend_from_slice(b"0123456789");
+            buf
+        };
+        let first = btsp_frame[0];
+        let inner = std::io::Cursor::new(btsp_frame[1..].to_vec());
+        let mut ps = PeekedStream {
+            peeked: Some(first),
+            inner,
+        };
+
+        let frame = read_frame(&mut ps).await.unwrap();
+        assert_eq!(&frame[..], b"0123456789");
     }
 }

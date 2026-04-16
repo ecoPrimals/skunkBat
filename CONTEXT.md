@@ -24,6 +24,7 @@ observability — all metadata-only, no content inspection by architecture.
 
 - **Transport**: TCP (`--port`, default 9140) + UDS (`$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`)
 - **BTSP Phase 1**: `FAMILY_ID` socket scoping, `BIOMEOS_INSECURE` guard, `XDG_RUNTIME_DIR` fallback
+- **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with first-byte peek (`{` → plain JSON-RPC for biomeOS composition bypass)
 - **Wire Standard**: `capabilities.list` (L2) and `identity.get` (L3) methods
 - **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`
 - **Capability Symlinks**: `security.sock` domain symlink created on bind
@@ -52,14 +53,13 @@ Full spec compliance including:
 
 ## Tests
 
-149 tests passing (84 core + 14 integrations + 22 server + 9 chaos + 3 e2e + doctests),
-14 ignored (gated behind external primals). 12 working examples. 81.9% line coverage
-(llvm-cov); core crate at ~96%, server at ~60% (transport accept-loops are untestable
-without real sockets).
+153 tests passing (84 core + 14 integrations + 42 server + 9 chaos + 3 e2e + doctests),
+14 ignored (gated behind external primals). 12 working examples. 82.0% line coverage
+(llvm-cov); core crate at ~96%, server at ~49% transport / ~86% server / ~96% dispatch.
 
 ## Status
 
 v0.1.0 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. All `#[allow]` migrated to `#[expect(reason)]`. JSON-RPC IPC server with
-BTSP Phase 1/2 and Wire Standard L2/L3 compliance. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers in production code — all thresholds are named constants.
+BTSP Phase 1/2 (TCP + UDS first-byte peek) and Wire Standard L2/L3 compliance.
+Cross-platform (`proc_uid`, `check_system_load`). No magic numbers — all thresholds named.

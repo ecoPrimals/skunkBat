@@ -19,7 +19,7 @@ packet contents or tracking user behavior.
 - **Graduated Defense**: Monitor, Quarantine, Block — user authority preserved
 - **Statistical Baselines**: Learns YOUR network normal, not universal heuristics
 - **JSON-RPC 2.0**: Full spec — single, batch, and notification support
-- **BTSP Phase 1/2**: Socket naming, handshake framework, `FAMILY_ID` scoping
+- **BTSP Phase 1/2**: Socket naming, handshake on TCP + UDS, first-byte peek
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -163,7 +163,7 @@ No primal names are hardcoded in production code.
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — no C dependencies in application code
-- 149 tests passing, 81.9% line coverage (llvm-cov)
+- 153 tests passing, 82.0% line coverage (llvm-cov)
 
 ---
 
