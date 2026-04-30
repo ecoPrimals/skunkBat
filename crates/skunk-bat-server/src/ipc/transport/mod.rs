@@ -13,9 +13,11 @@
 //! `PeekedStream` (read-one-byte + replay) since `UnixStream` lacks peek.
 
 mod btsp;
+mod config;
 mod peek;
+mod sys;
 
-pub use btsp::{BtspConfig, BtspHandshakeConfig};
+pub use config::{BtspConfig, BtspHandshakeConfig};
 
 use btsp::perform_server_handshake;
 use peek::PeekedStream;

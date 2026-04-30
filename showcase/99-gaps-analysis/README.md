@@ -14,15 +14,15 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 171 passing / 0 failures / 15 ignored (external-primal-gated) |
-| Coverage | 89.6% line (cargo-llvm-cov; CI gate: 85%) |
+| Tests | 178 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Coverage | 90.0% line (cargo-llvm-cov; CI gate: 85%) |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
 | Docs | CLEAN — `cargo doc --no-deps`, zero warnings |
 | Deny | CLEAN — `cargo deny check` (advisory/ban/license/source); `async-trait` banned |
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
-| Max file | 867 lines (`btsp.rs`); limit 1000 |
+| Max file | 623 lines (`btsp.rs`); limit 1000 |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)

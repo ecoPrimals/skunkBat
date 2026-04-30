@@ -81,7 +81,10 @@ pub async fn call(
     let _ = uds_path;
 
     if let Some(endpoint) = tcp_endpoint {
-        let addr = endpoint.strip_prefix("http://").unwrap_or(endpoint);
+        let addr = endpoint
+            .strip_prefix("http://")
+            .or_else(|| endpoint.strip_prefix("https://"))
+            .unwrap_or(endpoint);
         return call_tcp(addr, method, params, timeout).await;
     }
 

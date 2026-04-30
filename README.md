@@ -172,7 +172,7 @@ No primal names are hardcoded in production code.
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — no C dependencies in application code
-- 171 tests passing, 89.6% line coverage (llvm-cov)
+- 178 tests passing, 90.0% line coverage (llvm-cov)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test/coverage gates
 
 ---

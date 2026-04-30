@@ -50,6 +50,8 @@ pub(super) struct RpcError {
     pub data: Option<serde_json::Value>,
 }
 
+const JSONRPC_VERSION: &str = "2.0";
+
 // Standard JSON-RPC 2.0 error codes.
 pub(super) const PARSE_ERROR: i32 = -32700;
 pub(super) const INVALID_REQUEST: i32 = -32600;
@@ -61,7 +63,7 @@ impl Response {
     /// Build a success response.
     pub(super) fn success(id: serde_json::Value, result: serde_json::Value) -> Self {
         Self {
-            jsonrpc: "2.0".to_string(),
+            jsonrpc: JSONRPC_VERSION.to_owned(),
             result: Some(result),
             error: None,
             id,
@@ -71,7 +73,7 @@ impl Response {
     /// Build an error response.
     pub(super) fn error(id: serde_json::Value, code: i32, message: impl Into<String>) -> Self {
         Self {
-            jsonrpc: "2.0".to_string(),
+            jsonrpc: JSONRPC_VERSION.to_owned(),
             result: None,
             error: Some(RpcError {
                 code,
@@ -91,7 +93,7 @@ impl Request {
     )]
     pub(super) fn validate(&self) -> Result<(), Response> {
         let id = self.id.clone().unwrap_or(serde_json::Value::Null);
-        if self.jsonrpc != "2.0" {
+        if self.jsonrpc != JSONRPC_VERSION {
             return Err(Response::error(
                 id,
                 INVALID_REQUEST,

@@ -68,7 +68,7 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
         "health.readiness" => {
             let sb = state.read().await;
             let ready = sb.state().is_running();
-            let state_str = format!("{}", sb.state());
+            let state_str = sb.state().to_string();
             drop(sb);
             Response::success(id, serde_json::json!({"ready": ready, "state": state_str}))
         }
@@ -80,7 +80,7 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
         "security.metrics" => serialize(id, state.read().await.get_security_metrics()),
 
         "lifecycle.state" => {
-            let state_str = format!("{}", state.read().await.state());
+            let state_str = state.read().await.state().to_string();
             Response::success(id, serde_json::json!({"state": state_str}))
         }
 

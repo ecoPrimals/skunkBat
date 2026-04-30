@@ -1,156 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-//! BTSP (Biotic Transport Security Protocol) — configuration, framing,
-//! provider client, and server-side handshake.
+//! BTSP (Biotic Transport Security Protocol) — wire framing, provider
+//! client, and server-side handshake (Phase 2).
 //!
-//! Phase 1: socket naming with `FAMILY_ID` awareness.
-//! Phase 2: `BearDog`-delegated handshake via provider RPC.
+//! Configuration lives in [`super::config`]; UID helpers in [`super::sys`].
 
 use serde_json::Value;
 
 /// Maximum BTSP frame size: 16 MiB.
 const MAX_FRAME_SIZE: u32 = 0x0100_0000;
 
-// ── Phase 1: Environment Configuration ──────────────────────────────────
-
-/// BTSP Phase 1 environment configuration.
-pub struct BtspConfig {
-    /// Socket directory (`BIOMEOS_SOCKET_DIR` or `XDG_RUNTIME_DIR/biomeos`).
-    pub socket_dir: String,
-    /// Family ID if set — triggers production socket naming.
-    pub family_id: Option<String>,
-    /// True when `BIOMEOS_INSECURE=1` is set (development mode).
-    pub insecure: bool,
-}
-
-impl BtspConfig {
-    /// Read BTSP Phase 1 config from environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` when both `FAMILY_ID` and `BIOMEOS_INSECURE=1` are set.
-    pub fn from_env() -> Result<Self, String> {
-        let family_id = std::env::var("FAMILY_ID")
-            .ok()
-            .filter(|v| !v.is_empty() && v != "default");
-
-        let insecure = std::env::var("BIOMEOS_INSECURE")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-
-        if family_id.is_some() && insecure {
-            return Err(
-                "BTSP guard: FAMILY_ID and BIOMEOS_INSECURE=1 cannot both be set".to_string(),
-            );
-        }
-
-        let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
-            let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-                .unwrap_or_else(|_| format!("/run/user/{}", proc_uid()));
-            format!("{runtime_dir}/biomeos")
-        });
-
-        Ok(Self {
-            socket_dir,
-            family_id,
-            insecure,
-        })
-    }
-
-    /// Compute the UDS socket path per BTSP Phase 1 naming convention.
-    ///
-    /// - Development: `{socket_dir}/skunkbat.sock`
-    /// - Production:  `{socket_dir}/skunkbat-{family_id}.sock`
-    pub fn socket_path(&self) -> String {
-        self.family_id.as_ref().map_or_else(
-            || format!("{}/skunkbat.sock", self.socket_dir),
-            |fid| format!("{}/skunkbat-{fid}.sock", self.socket_dir),
-        )
-    }
-
-    /// Compute the capability-domain symlink path.
-    ///
-    /// `{socket_dir}/security.sock` → `skunkbat[-{fid}].sock`
-    pub fn capability_symlink_path(&self) -> String {
-        format!("{}/security.sock", self.socket_dir)
-    }
-
-    /// Log the current BTSP mode.
-    pub fn log_mode(&self) {
-        match &self.family_id {
-            Some(fid) => {
-                tracing::info!(
-                    "BTSP Phase 1: production mode (FAMILY_ID={fid}), socket={}",
-                    self.socket_path()
-                );
-            }
-            None if self.insecure => {
-                tracing::info!(
-                    "BTSP: development mode (BIOMEOS_INSECURE=1), socket={}",
-                    self.socket_path()
-                );
-            }
-            None => {
-                tracing::info!(
-                    "BTSP: standalone mode (no FAMILY_ID), socket={}",
-                    self.socket_path()
-                );
-            }
-        }
-    }
-}
-
-// ── Phase 2: Handshake Config ───────────────────────────────────────────
-
-/// Configuration for BTSP server-side handshake (Phase 2).
-///
-/// When present, every accepted connection must complete a BTSP handshake
-/// via the `BearDog` security provider before JSON-RPC is served.
-#[derive(Debug, Clone)]
-pub struct BtspHandshakeConfig {
-    /// Path to `BearDog`'s UDS socket for `btsp.server.*` RPCs.
-    pub provider_socket: std::path::PathBuf,
-    /// Family identifier (used for logging and future cipher scoping).
-    #[expect(dead_code, reason = "reserved for BTSP Phase 2 cipher scoping")]
-    pub family_id: String,
-}
-
-impl BtspHandshakeConfig {
-    /// Resolve handshake config from the environment.
-    ///
-    /// Returns `Some` when `FAMILY_ID` is set to a production value.
-    #[must_use]
-    pub fn from_env() -> Option<Self> {
-        let fid = std::env::var("FAMILY_ID")
-            .ok()
-            .filter(|v| !v.is_empty() && v != "default")?;
-
-        let provider_socket = std::env::var("BTSP_PROVIDER_SOCKET")
-            .or_else(|_| std::env::var("BEARDOG_SOCKET"))
-            .ok()
-            .map_or_else(
-                || {
-                    let provider =
-                        std::env::var("BTSP_PROVIDER").unwrap_or_else(|_| "beardog".to_owned());
-                    let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
-                        let xdg =
-                            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
-                        format!("{xdg}/biomeos")
-                    });
-                    std::path::PathBuf::from(format!("{socket_dir}/{provider}-{fid}.sock"))
-                },
-                std::path::PathBuf::from,
-            );
-
-        Some(Self {
-            provider_socket,
-            family_id: fid,
-        })
-    }
-}
-
-// ── Phase 2: Wire Framing ───────────────────────────────────────────────
+// ── Wire Framing ───────────────────────────────────────────────────────
 
 pub async fn read_frame<R: tokio::io::AsyncReadExt + Unpin>(
     reader: &mut R,
@@ -179,7 +40,7 @@ pub async fn write_frame<W: tokio::io::AsyncWriteExt + Unpin>(
     writer.flush().await
 }
 
-// ── Phase 2: Provider Client ────────────────────────────────────────────
+// ── Provider Client ────────────────────────────────────────────────────
 
 pub async fn provider_call(
     socket: &std::path::Path,
@@ -222,7 +83,7 @@ pub async fn provider_call(
         .ok_or_else(|| "no result in provider response".to_owned())
 }
 
-// ── Phase 2: Server Handshake ───────────────────────────────────────────
+// ── Server Handshake ───────────────────────────────────────────────────
 
 /// Accumulated state during the BTSP handshake exchange.
 ///
@@ -239,7 +100,7 @@ pub struct HandshakeState {
 
 pub async fn perform_server_handshake<S>(
     stream: &mut S,
-    config: &BtspHandshakeConfig,
+    config: &super::config::BtspHandshakeConfig,
 ) -> Result<String, String>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
@@ -258,7 +119,7 @@ where
 
 async fn btsp_exchange_hello<S>(
     stream: &mut S,
-    config: &BtspHandshakeConfig,
+    config: &super::config::BtspHandshakeConfig,
 ) -> Result<HandshakeState, String>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
@@ -273,7 +134,6 @@ where
 
     let family_seed = std::env::var("FAMILY_SEED").unwrap_or_default();
 
-    // BearDog btsp.server.create_session: {family_seed} → {server_ephemeral_pub, challenge, session_token}
     let create_result = provider_call(
         &config.provider_socket,
         "btsp.server.create_session",
@@ -326,14 +186,12 @@ where
 
 async fn btsp_verify_and_complete<S>(
     stream: &mut S,
-    config: &BtspHandshakeConfig,
+    config: &super::config::BtspHandshakeConfig,
     hs: &mut HandshakeState,
 ) -> Result<(), String>
 where
     S: tokio::io::AsyncWriteExt + Unpin,
 {
-    // BearDog btsp.server.verify: {session_token, client_ephemeral_pub, response, preferred_cipher}
-    //   → {verified, session_id?, cipher?, error?}
     let verify_result = provider_call(
         &config.provider_socket,
         "btsp.server.verify",
@@ -366,7 +224,6 @@ where
         .map(str::to_owned);
     let cipher = json_str_or(&verify_result, "cipher", "null");
 
-    // BearDog btsp.server.negotiate: {session_token, cipher} → {accepted, cipher}
     let _negotiate = provider_call(
         &config.provider_socket,
         "btsp.server.negotiate",
@@ -393,6 +250,8 @@ where
     Ok(())
 }
 
+// ── JSON helpers ───────────────────────────────────────────────────────
+
 pub fn json_str(value: &Value, key: &str) -> String {
     value
         .get(key)
@@ -409,112 +268,9 @@ fn json_str_or(value: &Value, key: &str, default: &str) -> String {
         .to_owned()
 }
 
-/// Get UID without libc — `/proc/self/status` on Linux, `id -u` elsewhere.
-pub fn proc_uid() -> u32 {
-    #[cfg(target_os = "linux")]
-    {
-        std::fs::read_to_string("/proc/self/status")
-            .ok()
-            .and_then(|s| {
-                s.lines()
-                    .find(|l| l.starts_with("Uid:"))
-                    .and_then(|l| l.split_whitespace().nth(1))
-                    .and_then(|v| v.parse().ok())
-            })
-            .unwrap_or_else(uid_fallback)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        uid_fallback()
-    }
-}
-
-pub fn uid_fallback() -> u32 {
-    std::process::Command::new("id")
-        .arg("-u")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(1000)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn socket_path_standalone() {
-        let config = BtspConfig {
-            socket_dir: "/tmp/biomeos".into(),
-            family_id: None,
-            insecure: false,
-        };
-        assert_eq!(config.socket_path(), "/tmp/biomeos/skunkbat.sock");
-    }
-
-    #[test]
-    fn socket_path_family() {
-        let config = BtspConfig {
-            socket_dir: "/tmp/biomeos".into(),
-            family_id: Some("mygate".into()),
-            insecure: false,
-        };
-        assert_eq!(config.socket_path(), "/tmp/biomeos/skunkbat-mygate.sock");
-    }
-
-    #[test]
-    fn capability_symlink_path() {
-        let config = BtspConfig {
-            socket_dir: "/run/user/1000/biomeos".into(),
-            family_id: None,
-            insecure: false,
-        };
-        assert_eq!(
-            config.capability_symlink_path(),
-            "/run/user/1000/biomeos/security.sock"
-        );
-    }
-
-    #[test]
-    fn log_mode_standalone() {
-        BtspConfig {
-            socket_dir: "/tmp/biomeos".into(),
-            family_id: None,
-            insecure: false,
-        }
-        .log_mode();
-    }
-
-    #[test]
-    fn log_mode_insecure() {
-        BtspConfig {
-            socket_dir: "/tmp/biomeos".into(),
-            family_id: None,
-            insecure: true,
-        }
-        .log_mode();
-    }
-
-    #[test]
-    fn log_mode_family() {
-        BtspConfig {
-            socket_dir: "/tmp/biomeos".into(),
-            family_id: Some("prod".into()),
-            insecure: false,
-        }
-        .log_mode();
-    }
-
-    #[test]
-    fn proc_uid_returns_real_value() {
-        assert!(proc_uid() > 0);
-    }
-
-    #[test]
-    fn uid_fallback_returns_value() {
-        assert!(uid_fallback() > 0);
-    }
 
     #[tokio::test]
     async fn frame_roundtrip() {
@@ -717,7 +473,7 @@ mod tests {
             }
         });
 
-        let config = BtspHandshakeConfig {
+        let config = crate::ipc::transport::config::BtspHandshakeConfig {
             provider_socket: sock.clone(),
             family_id: "test-fam".into(),
         };
@@ -805,7 +561,7 @@ mod tests {
             }
         });
 
-        let config = BtspHandshakeConfig {
+        let config = crate::ipc::transport::config::BtspHandshakeConfig {
             provider_socket: sock.clone(),
             family_id: "test-fam".into(),
         };

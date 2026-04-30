@@ -367,4 +367,34 @@ mod tests {
             .await;
         assert!(result.is_err(), "Should error when not connected");
     }
+
+    #[tokio::test]
+    async fn test_subscribe_without_connect() {
+        let client = FederationClient::new(String::new(), "skunkbat".into());
+        let result = client.subscribe_threats().await;
+        assert!(result.is_err(), "Should error when not connected");
+    }
+
+    #[tokio::test]
+    async fn test_is_connected_default() {
+        let client = FederationClient::new("127.0.0.1:1".into(), "test".into());
+        assert!(!client.is_connected().await);
+    }
+
+    #[tokio::test]
+    async fn test_from_env_construction() {
+        let client = FederationClient::from_env();
+        assert!(!client.is_connected().await);
+        assert_eq!(
+            client.node_id,
+            std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| "skunkbat".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_broadcaster_is_connected() {
+        let client = FederationClient::new(String::new(), "test".into());
+        let broadcaster = FederationThreatBroadcaster::new(client);
+        assert!(!broadcaster.is_connected().await);
+    }
 }

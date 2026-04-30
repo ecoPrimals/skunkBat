@@ -89,4 +89,3 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }

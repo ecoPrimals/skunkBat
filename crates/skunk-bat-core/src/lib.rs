@@ -236,8 +236,10 @@ impl PrimalHealth for SkunkBat {
     }
 
     async fn health_check(&self) -> Result<HealthReport, PrimalError> {
-        Ok(HealthReport::new("skunkBat", env!("CARGO_PKG_VERSION"))
-            .with_status(self.health_status()))
+        Ok(
+            HealthReport::new(&self.config.common.name, env!("CARGO_PKG_VERSION"))
+                .with_status(self.health_status()),
+        )
     }
 }
 
