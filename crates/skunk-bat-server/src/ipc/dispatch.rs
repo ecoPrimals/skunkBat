@@ -30,7 +30,6 @@ const METHODS: &[&str] = &[
     "identity.get",
 ];
 
-const PRIMAL_NAME: &str = "skunkbat";
 const PRIMAL_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PRIMAL_DOMAIN: &str = "security";
 const PRIMAL_LICENSE: &str = "AGPL-3.0-or-later";
@@ -91,7 +90,7 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
         "capabilities.list" | "capability.list" => Response::success(
             id,
             serde_json::json!({
-                "primal": PRIMAL_NAME,
+                "primal": skunk_bat_core::PRIMAL_ID,
                 "version": PRIMAL_VERSION,
                 "methods": METHODS,
                 "provided_capabilities": [
@@ -123,7 +122,7 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
         "identity.get" => Response::success(
             id,
             serde_json::json!({
-                "primal": PRIMAL_NAME,
+                "primal": skunk_bat_core::PRIMAL_ID,
                 "version": PRIMAL_VERSION,
                 "domain": PRIMAL_DOMAIN,
                 "license": PRIMAL_LICENSE

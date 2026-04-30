@@ -34,10 +34,11 @@ use super::server::handle_connection;
 /// (biomeOS composition), otherwise BTSP framed handshake.
 pub async fn serve_tcp(
     state: Arc<RwLock<SkunkBat>>,
+    addr: String,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-    let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-    tracing::info!("TCP JSON-RPC listening on 0.0.0.0:{port}");
+    let listener = TcpListener::bind((&*addr, port)).await?;
+    tracing::info!("TCP JSON-RPC listening on {addr}:{port}");
 
     let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
     if let Some(ref cfg) = btsp_config {

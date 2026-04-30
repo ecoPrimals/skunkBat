@@ -44,6 +44,7 @@ pub mod config;
 pub mod defense;
 pub mod error;
 pub mod observability;
+pub mod platform;
 pub mod primal_foundation;
 pub mod reconnaissance;
 pub mod threats;
@@ -59,6 +60,23 @@ pub use config::SkunkBatConfig;
 
 /// skunkBat errors.
 pub use error::SkunkBatError;
+
+/// Primal self-knowledge — the single source of truth for identity and capabilities.
+///
+/// These are used by local discovery, capability-based integration clients,
+/// dispatch, and IPC identity responses. No other primal names appear here.
+pub const PRIMAL_NAME: &str = "skunkBat";
+
+/// Binary/IPC name (lowercase, no punctuation — matches the `UniBin` binary name).
+pub const PRIMAL_ID: &str = "skunkbat";
+
+/// Capabilities this primal advertises for runtime discovery.
+pub const CAPABILITIES: &[&str] = &[
+    "reconnaissance",
+    "threat-detection",
+    "defense",
+    "observability",
+];
 
 /// Reconnaissance capabilities.
 pub use reconnaissance::ReconnaissanceEngine;

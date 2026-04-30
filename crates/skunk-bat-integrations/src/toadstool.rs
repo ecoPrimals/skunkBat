@@ -259,19 +259,17 @@ impl CapabilityPrimalDiscovery {
             .collect()
     }
 
-    /// Build the self-knowledge node.
+    /// Build the self-knowledge node from crate-level identity constants.
     fn create_self_node(&self) -> Node {
         Node {
             id: self.self_id.clone(),
-            address: "local".to_string(),
-            node_type: "skunkBat".to_string(),
+            address: "local".to_owned(),
+            node_type: skunk_bat_core::PRIMAL_NAME.to_owned(),
             status: NodeStatus::Healthy,
-            capabilities: vec![
-                "reconnaissance".to_string(),
-                "threat-detection".to_string(),
-                "defense".to_string(),
-                "observability".to_string(),
-            ],
+            capabilities: skunk_bat_core::CAPABILITIES
+                .iter()
+                .map(|&c| c.to_owned())
+                .collect(),
             last_seen: Some(SystemTime::now()),
         }
     }

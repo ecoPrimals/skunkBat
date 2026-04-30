@@ -75,7 +75,8 @@ impl FederationClient {
     #[must_use]
     pub fn from_env() -> Self {
         let endpoint = std::env::var("FEDERATION_ENDPOINT").unwrap_or_default();
-        let node_id = std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| "skunkbat".to_string());
+        let node_id =
+            std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| skunk_bat_core::PRIMAL_ID.to_owned());
         let uds_path = {
             let path = crate::rpc::capability_socket("federation");
             std::path::Path::new(&path).exists().then_some(path)

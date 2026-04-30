@@ -55,7 +55,7 @@ impl Default for SkunkBatConfig {
     fn default() -> Self {
         Self {
             common: CommonConfig {
-                name: "skunkBat".to_string(),
+                name: crate::PRIMAL_NAME.to_owned(),
                 ..CommonConfig::default()
             },
             features: FeatureFlags::default(),

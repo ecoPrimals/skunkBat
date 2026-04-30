@@ -84,12 +84,13 @@ async fn main() -> Result<(), BoxError> {
 
 async fn run_server(port: u16, no_uds: bool) -> Result<(), BoxError> {
     let config = SkunkBatConfig::default();
+    let listen_addr = config.common.listen_addr.clone();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
 
-    tracing::info!("skunkBat server starting on port {port}");
+    tracing::info!("skunkBat server starting on {listen_addr}:{port}");
 
-    ipc::serve(skunkbat, port, no_uds).await
+    ipc::serve(skunkbat, listen_addr, port, no_uds).await
 }
 
 async fn run_health() -> Result<(), BoxError> {

@@ -28,23 +28,14 @@ impl PrimalDiscovery for LocalDiscovery {
 }
 
 impl LocalDiscovery {
-    /// Primal identity for self-knowledge.
-    const PRIMAL_NAME: &str = "skunkBat";
-    const CAPABILITIES: &[&str] = &[
-        "reconnaissance",
-        "threat-detection",
-        "defense",
-        "observability",
-    ];
-
     /// Build self-knowledge node from system environment.
     pub(crate) fn local_node() -> Node {
         Node {
             id: Self::discover_self_id(),
             address: Self::discover_self_address(),
-            node_type: Self::PRIMAL_NAME.to_owned(),
+            node_type: crate::PRIMAL_NAME.to_owned(),
             status: NodeStatus::Healthy,
-            capabilities: Self::CAPABILITIES.iter().map(|&c| c.to_owned()).collect(),
+            capabilities: crate::CAPABILITIES.iter().map(|&c| c.to_owned()).collect(),
             last_seen: Some(SystemTime::now()),
         }
     }

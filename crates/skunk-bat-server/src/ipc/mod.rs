@@ -27,6 +27,7 @@ use tokio::sync::RwLock;
 /// Traps `SIGINT`/`SIGTERM` for graceful lifecycle stop and UDS socket cleanup.
 pub async fn serve(
     skunkbat: SkunkBat,
+    addr: String,
     port: u16,
     no_uds: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -40,7 +41,7 @@ pub async fn serve(
             .map(|c| c.socket_path())
     };
 
-    let tcp_handle = tokio::spawn(transport::serve_tcp(Arc::clone(&state), port));
+    let tcp_handle = tokio::spawn(transport::serve_tcp(Arc::clone(&state), addr, port));
 
     let uds_handle = if no_uds {
         None
