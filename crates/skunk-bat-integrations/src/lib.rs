@@ -9,6 +9,7 @@
 //!
 //! | Module | Capability | Runtime Discovery |
 //! |--------|-----------|-------------------|
+//! | [`beardog`] | `lineage-verification` | `LINEAGE_ENDPOINT` env var |
 //! | [`songbird`] | `federation` | `FEDERATION_ENDPOINT` env var |
 //! | [`toadstool`] | `discovery` | `DISCOVERY_ENDPOINT` env var |
 //!
@@ -23,6 +24,7 @@
 //! let primals = discovery.discover_all().await?;
 //! ```
 
+pub mod beardog;
 pub mod rpc;
 pub mod songbird;
 pub mod toadstool;

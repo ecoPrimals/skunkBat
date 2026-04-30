@@ -167,9 +167,9 @@ impl DefenseEngine {
     fn quarantine_connection(&self, source: &str, threat: &Threat) {
         if let Ok(mut map) = self.quarantine_map.lock() {
             map.insert(
-                source.to_string(),
+                source.to_owned(),
                 QuarantineRecord {
-                    source: source.to_string(),
+                    source: source.to_owned(),
                     started_at: SystemTime::now(),
                     reason: threat.description.clone(),
                     threat_id: threat.id.clone(),

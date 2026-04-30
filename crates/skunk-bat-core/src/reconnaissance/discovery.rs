@@ -58,7 +58,7 @@ impl LocalDiscovery {
     ///
     /// Priority: `SKUNKBAT_ADDRESS` env → loopback fallback.
     fn discover_self_address() -> String {
-        std::env::var("SKUNKBAT_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string())
+        std::env::var("SKUNKBAT_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_owned())
     }
 }
 

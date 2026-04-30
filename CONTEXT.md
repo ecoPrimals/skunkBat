@@ -31,7 +31,7 @@ observability — all metadata-only, no content inspection by architecture.
 
 ## Ecosystem Integration
 
-- **BearDog**: Genetic lineage verification (WHO) — `btsp.server.*` and `genetic.verify_lineage` via `crypto.sock` or `DISCOVERY_ENDPOINT`
+- **BearDog**: Genetic lineage verification (WHO) — `lineage.verify` + `lineage.list` via `lineage-verification.sock` or `LINEAGE_ENDPOINT`
 - **ToadStool**: Capability-based primal discovery (WHERE) — JSON-RPC via `discovery.sock` or `DISCOVERY_ENDPOINT`
 - **Songbird**: Federated threat intelligence (COORDINATION) — JSON-RPC via `federation.sock` or `FEDERATION_ENDPOINT`
 - **NestGate**: Protected application platform (HOME)
@@ -74,9 +74,9 @@ Full spec compliance including:
 
 ## Tests
 
-217 tests passing (127 core + 42 integrations + 48 server + 7 binary + 9 chaos + 3 e2e + doctests),
-15 ignored (gated behind external primals). 12 working examples. 90%+ function coverage
-(llvm-cov, 88% line overall — 93% testable code); core ~96%, btsp ~94%, threats ~95%, rpc ~93%.
+225 tests passing (127 core + 48 integrations + 50 server + 7 binary + 9 chaos + 3 e2e + doctests),
+15 ignored (gated behind external primals). 12 working examples. 90.6% function coverage
+(llvm-cov, 89% line overall — 93%+ testable code); core ~96%, btsp ~94%, dispatch ~97%, threats ~95%.
 
 ## Status
 
@@ -86,5 +86,5 @@ BTSP Phase 1/2 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned w
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `genetic.verify_lineage`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 37 source files, 8,102 lines, max 672 lines/file.
+No magic numbers — all thresholds named. 38 source files, 8,317 lines, max 672 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.

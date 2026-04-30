@@ -14,8 +14,8 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 217 passing / 0 failures / 15 ignored (external-primal-gated) |
-| Coverage | 90.1% function, 88.3% line overall / 93.2% testable (cargo-llvm-cov) |
+| Tests | 225 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Coverage | 90.6% function, 89% line overall / 93%+ testable (cargo-llvm-cov) |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
 | Docs | CLEAN — `cargo doc --no-deps`, zero warnings |
@@ -23,7 +23,7 @@
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
 | sourdough-core | **INTERNALIZED** — zero cross-repo path deps, `primal_foundation` module |
-| Max file | 672 lines (`threats/mod.rs`); limit 1000 |
+| Max file | 672 lines (`threats/mod.rs`); limit 1000; 38 source files |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)
@@ -64,6 +64,7 @@
 
 **Integrations (JSON-RPC clients):**
 - `RpcClient` — full JSON-RPC 2.0 client with BTSP handshake
+- `RemoteLineageVerifier` — BearDog lineage verification (`lineage.verify`, `lineage.list`)
 - `DiscoveryClient` — capability-based ToadStool discovery
 - `FederationClient` — Songbird federation broadcast
 
@@ -83,7 +84,7 @@ ecosystem primals.
 
 | Gap | Status | Notes |
 |-----|--------|-------|
-| **BearDog live integration** | BTSP handshake aligned with v0.9.0, integration test wired | Need live `crypto.sock` peer for E2E validation |
+| **BearDog live integration** | `RemoteLineageVerifier` complete, BTSP handshake aligned with v0.9.0 | Need BearDog to expose `lineage.list` + `btsp.session.verify` IPC |
 | **Network layer defense execution** | Actions logged, not enforced | Need OS/firewall abstraction |
 
 ### HIGH — Significantly limits functionality

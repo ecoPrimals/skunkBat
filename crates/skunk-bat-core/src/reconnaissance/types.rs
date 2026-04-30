@@ -101,7 +101,7 @@ impl NetworkScope {
     /// (zero-knowledge default).
     fn discover_owned_networks() -> Vec<String> {
         if let Ok(networks) = std::env::var("SKUNKBAT_OWNED_NETWORKS") {
-            return networks.split(',').map(|s| s.trim().to_string()).collect();
+            return networks.split(',').map(|s| s.trim().to_owned()).collect();
         }
         Vec::new()
     }

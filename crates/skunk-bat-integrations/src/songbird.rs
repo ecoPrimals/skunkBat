@@ -388,7 +388,7 @@ mod tests {
         assert!(!client.is_connected().await);
         assert_eq!(
             client.node_id,
-            std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| "skunkbat".into())
+            std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| skunk_bat_core::PRIMAL_ID.to_owned())
         );
     }
 

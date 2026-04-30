@@ -156,8 +156,8 @@ fn create_capability_symlink(btsp: &BtspConfig) {
     let socket_name = std::path::Path::new(&btsp.socket_path())
         .file_name()
         .map_or_else(
-            || "skunkbat.sock".to_string(),
-            |n| n.to_string_lossy().to_string(),
+            || "skunkbat.sock".to_owned(),
+            |n| n.to_string_lossy().into_owned(),
         );
 
     std::fs::remove_file(&symlink_path).ok();

@@ -34,6 +34,16 @@ const PRIMAL_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PRIMAL_DOMAIN: &str = "security";
 const PRIMAL_LICENSE: &str = "AGPL-3.0-or-later";
 
+/// IPC methods this primal calls on other primals (runtime-discovered).
+const CONSUMED_CAPABILITIES: &[&str] = &[
+    "btsp.server.verify",
+    "lineage.verify",
+    "lineage.list",
+    "capabilities.list",
+    "federation.broadcast",
+    "discovery.find_by_capability",
+];
+
 /// Serialize a fallible operation result into a JSON-RPC response.
 fn try_serialize<T: Serialize, E: std::fmt::Display>(
     id: serde_json::Value,
@@ -107,13 +117,7 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
                         "description": "Health monitoring endpoints"
                     }
                 ],
-                "consumed_capabilities": [
-                    "btsp.server.verify",
-                    "genetic.verify_lineage",
-                    "capabilities.list",
-                    "federation.broadcast",
-                    "discovery.find_by_capability"
-                ],
+                "consumed_capabilities": CONSUMED_CAPABILITIES,
                 "protocol": "jsonrpc-2.0",
                 "transport": ["uds", "tcp"]
             }),
@@ -331,5 +335,43 @@ mod tests {
             .as_array()
             .expect("consumed_capabilities");
         assert!(!consumed.is_empty());
+        assert!(consumed.iter().any(|c| c == "lineage.verify"));
+    }
+
+    #[tokio::test]
+    async fn test_security_respond_valid_threat() {
+        let state = make_state();
+        let req = Request {
+            jsonrpc: "2.0".to_string(),
+            method: "security.respond".to_string(),
+            params: Some(serde_json::json!({
+                "id": "threat-test-1",
+                "threat_type": {"IntrusionAttempt": {"attack_type": "scan", "signature": "rapid"}},
+                "severity": "High",
+                "source": "192.168.1.100",
+                "target": "192.168.1.1",
+                "detected_at": {"secs_since_epoch": 0, "nanos_since_epoch": 0},
+                "description": "Test intrusion",
+                "confidence": 0.85
+            })),
+            id: Some(serde_json::json!(42)),
+        };
+        let resp = dispatch(&state, req).await;
+        assert!(resp.error.is_none());
+        let result = resp.result.expect("result");
+        assert_eq!(result["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn test_security_respond_invalid_params() {
+        let state = make_state();
+        let req = Request {
+            jsonrpc: "2.0".to_string(),
+            method: "security.respond".to_string(),
+            params: Some(serde_json::json!({"not": "a threat"})),
+            id: Some(serde_json::json!(43)),
+        };
+        let resp = dispatch(&state, req).await;
+        assert!(resp.error.is_some());
     }
 }
