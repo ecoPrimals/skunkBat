@@ -6,11 +6,11 @@
 //! Shows two skunkBat instances coordinating defense while maintaining
 //! independent authority and sovereignty.
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{
     SkunkBat, SkunkBatConfig,
     threats::{Severity, Threat, ThreatType},
 };
-use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
 #[expect(clippy::too_many_lines, reason = "self-contained demo")]

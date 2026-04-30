@@ -9,6 +9,7 @@
 //! 3. Intrusion attempts (attack patterns)
 //! 4. Resource exhaustion (`DoS`)
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{
     SkunkBat, SkunkBatConfig,
     threats::{
@@ -16,7 +17,6 @@ use skunk_bat_core::{
         Threat, ThreatType, TopologyValidator,
     },
 };
-use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
 #[expect(clippy::too_many_lines, reason = "self-contained demo")]

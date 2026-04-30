@@ -14,7 +14,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 178 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Tests | 205 passing / 0 failures / 15 ignored (external-primal-gated) |
 | Coverage | 90.0% line (cargo-llvm-cov; CI gate: 85%) |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
@@ -22,6 +22,7 @@
 | Deny | CLEAN — `cargo deny check` (advisory/ban/license/source); `async-trait` banned |
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
+| sourdough-core | **INTERNALIZED** — zero cross-repo path deps, `primal_foundation` module |
 | Max file | 623 lines (`btsp.rs`); limit 1000 |
 | Edition | 2024 |
 
@@ -113,11 +114,11 @@ ecosystem primals.
 
 | Item | Status | Notes |
 |------|--------|-------|
-| **sources.toml entry** | DONE | `needs_sibling = "ecoPrimals/sourDough"`, `private = true` |
+| **sources.toml entry** | DONE | `private = true` (`needs_sibling` removed — standalone) |
 | **manifest.toml** | DONE | Binary, arch, capabilities updated |
 | **checksums.toml** | READY | Awaiting harvest pipeline execution |
 | **CI release workflow** | DONE | `ci.yml` release job: musl-static x86_64 + aarch64 on tag push |
-| **sourDough sibling in CI** | DONE | `actions/checkout@v4` clones sourDough in check/coverage/release jobs |
+| **sourDough sibling in CI** | **REMOVED** | No longer needed — build is standalone |
 | **Tag + GitHub Release** | PENDING | First `v0.2.0` tag needed to trigger release pipeline |
 
 ---

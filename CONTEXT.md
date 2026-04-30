@@ -17,7 +17,7 @@ observability — all metadata-only, no content inspection by architecture.
 - **5 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion)
 - **Graduated Response**: Monitor, Quarantine, Block — always preserving user authority
 - **Statistical Baselines**: Learns the owner's network normal via `VecDeque` rolling window profiler
-- **Universal Adapter**: Capability-based discovery and announcement via `sourdough-core` traits
+- **Universal Adapter**: Capability-based discovery and announcement via `primal_foundation` traits
 - **JSON-RPC 2.0**: Newline-delimited protocol on TCP and UDS, from-scratch implementation
 
 ## IPC Surface
@@ -59,7 +59,8 @@ without signature databases. See `specs/THYMIC_SELECTION_SPEC.md`.
 
 ## Dependencies
 
-Pure Rust. Depends on `sourdough-core` for primal lifecycle traits. All async traits
+Pure Rust. Zero cross-repo path dependencies — primal lifecycle traits internalized
+from `sourdough-core` (same AGPL-3.0-or-later license) as `primal_foundation`. All async traits
 use native RPITIT (Edition 2024) — `async-trait` eliminated and banned. No C
 dependencies in application code.
 
@@ -73,8 +74,8 @@ Full spec compliance including:
 
 ## Tests
 
-178 tests passing (84 core + 26 integrations + 48 server + 7 binary + 9 chaos + 3 e2e + doctests),
-15 ignored (gated behind external primals). 12 working examples. 90.0% line coverage
+205 tests passing (111 core + 26 integrations + 48 server + 7 binary + 9 chaos + 3 e2e + doctests),
+15 ignored (gated behind external primals). 12 working examples. >90% line coverage
 (llvm-cov); core crate ~96%, btsp ~90%, dispatch ~96%, rpc ~93%.
 
 ## Status
@@ -85,4 +86,5 @@ BTSP Phase 1/2 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned w
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `genetic.verify_lineage`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 30 source files, 6,749 lines, max 623 lines/file.
+No magic numbers — all thresholds named. 36 source files, 7,710 lines, max 623 lines/file.
+Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.

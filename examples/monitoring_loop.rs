@@ -9,8 +9,8 @@
 //! - Responds to threats
 //! - Reports metrics
 
+use skunk_bat_core::{PrimalHealth, PrimalLifecycle};
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-use sourdough_core::{PrimalHealth, PrimalLifecycle};
 use std::time::Duration;
 use tokio::time;
 

@@ -6,8 +6,8 @@
 //! Architectural proof that skunkBat is defensive reconnaissance, NOT surveillance.
 //! This demo shows what skunkBat CAN'T do by design.
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-use sourdough_core::PrimalLifecycle;
 
 #[expect(clippy::too_many_lines, reason = "self-contained demo")]
 #[tokio::main]

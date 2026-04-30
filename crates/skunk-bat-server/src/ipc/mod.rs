@@ -17,8 +17,8 @@ mod jsonrpc;
 mod server;
 pub mod transport;
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::SkunkBat;
-use sourdough_core::PrimalLifecycle;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

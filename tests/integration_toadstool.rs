@@ -7,8 +7,8 @@
 
 #[cfg(test)]
 mod toadstool_integration {
+    use skunk_bat_core::PrimalLifecycle;
     use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-    use sourdough_core::PrimalLifecycle;
 
     #[tokio::test]
     #[ignore = "requires toadstool integration"]

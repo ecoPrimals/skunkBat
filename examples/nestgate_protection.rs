@@ -6,11 +6,11 @@
 //! THE GRAND FINALE: All integrations working together to protect a Nestgate instance.
 //! This demo shows the complete ecosystem in action.
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{
     SkunkBat, SkunkBatConfig,
     threats::{Severity, Threat, ThreatType},
 };
-use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
 #[expect(clippy::too_many_lines, reason = "self-contained demo")]

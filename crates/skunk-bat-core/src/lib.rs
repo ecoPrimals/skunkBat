@@ -44,13 +44,14 @@ pub mod config;
 pub mod defense;
 pub mod error;
 pub mod observability;
+pub mod primal_foundation;
 pub mod reconnaissance;
 pub mod threats;
 pub mod universal_adapter;
 
-use sourdough_core::{
-    PrimalError, PrimalHealth, PrimalLifecycle, PrimalState,
-    health::{HealthReport, HealthStatus},
+pub use primal_foundation::{
+    CommonConfig, DependencyHealth, HealthReport, HealthStatus, PrimalError, PrimalHealth,
+    PrimalLifecycle, PrimalResult, PrimalState, Timestamp,
 };
 
 /// skunkBat configuration.

@@ -15,8 +15,8 @@
 
 #[cfg(test)]
 mod chaos_tests {
+    use skunk_bat_core::PrimalLifecycle;
     use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-    use sourdough_core::PrimalLifecycle;
     use std::time::Duration;
     use tokio::time::sleep;
 

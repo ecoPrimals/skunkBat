@@ -7,8 +7,8 @@
 
 #[cfg(test)]
 mod e2e_tests {
+    use skunk_bat_core::PrimalLifecycle;
     use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-    use sourdough_core::PrimalLifecycle;
 
     #[tokio::test]
     async fn test_full_lifecycle_workflow() {

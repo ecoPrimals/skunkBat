@@ -9,11 +9,11 @@
 //! 3. Immediate Quarantine (Critical, no approval)
 //! 4. Block (Explicit blocking)
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{
     SkunkBat, SkunkBatConfig,
     threats::{Severity, Threat, ThreatType},
 };
-use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
 #[expect(clippy::too_many_lines, reason = "self-contained demo")]

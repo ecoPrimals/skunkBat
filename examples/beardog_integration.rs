@@ -7,11 +7,11 @@
 //! `LocalLineageVerifier` stub to demonstrate the integration pattern.
 //! For production use with real Beardog, enable the "beardog-integration" feature.
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{
     SkunkBat, SkunkBatConfig,
     threats::{LineageVerifier, LocalLineageVerifier, Severity, Threat, ThreatType},
 };
-use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
 #[expect(clippy::too_many_lines, reason = "self-contained demo")]

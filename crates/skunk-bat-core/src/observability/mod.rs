@@ -139,7 +139,7 @@ pub struct SecurityMetrics {
 mod tests {
     use super::*;
     use crate::config::{FeatureFlags, SkunkBatConfig};
-    use sourdough_core::config::CommonConfig;
+    use crate::primal_foundation::config::CommonConfig;
 
     fn test_config() -> SkunkBatConfig {
         SkunkBatConfig {

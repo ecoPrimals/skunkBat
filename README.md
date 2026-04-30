@@ -82,7 +82,7 @@ cargo run -p skunk-bat-server -- detect
 
 ```rust
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-use sourdough_core::PrimalLifecycle;
+use skunk_bat_core::PrimalLifecycle;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -171,8 +171,8 @@ No primal names are hardcoded in production code.
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
-- Pure Rust — no C dependencies in application code
-- 178 tests passing, 90.0% line coverage (llvm-cov)
+- Pure Rust — zero cross-repo path dependencies, no C dependencies
+- 205 tests passing, line coverage > 90% (llvm-cov)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test/coverage gates
 
 ---

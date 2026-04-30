@@ -8,10 +8,7 @@ all-features = true
 
 [advisories]
 yanked = "deny"
-ignore = [
-    # Transitive from sourdough-core → tarpc 0.34 → opentelemetry_api merged into opentelemetry crate.
-    { id = "RUSTSEC-2024-0387", reason = "opentelemetry_api is transitive via tarpc; awaiting tarpc upgrade" },
-]
+ignore = []
 
 [licenses]
 allow = [
@@ -40,18 +37,15 @@ wildcards = "warn"
 highlight = "all"
 allow-wildcard-paths = true
 
-# ecoBin v3.0 compliance: C-backed crates banned from application builds.
-# blake3 uses cc as a build-dep for optional SIMD backends; sourdough-core builds
-# with features = ["pure"] so no C code is compiled, but cc remains in the
-# resolved graph. iana-time-zone-haiku uses cc only on Haiku OS (not our targets).
+# ecoBin v3.0 compliance: C-backed and eliminated crates banned.
 deny = [
-    { crate = "async-trait", wrappers = ["opentelemetry_sdk"] },
+    { crate = "async-trait", wrappers = [] },
     { crate = "openssl-sys", wrappers = [] },
     { crate = "openssl-src", wrappers = [] },
     { crate = "native-tls", wrappers = [] },
     { crate = "aws-lc-sys", wrappers = [] },
     { crate = "cmake", wrappers = [] },
-    { crate = "cc", wrappers = ["blake3"] },
+    { crate = "cc", wrappers = [] },
     { crate = "bindgen", wrappers = [] },
     { crate = "bzip2-sys", wrappers = [] },
     { crate = "curl-sys", wrappers = [] },

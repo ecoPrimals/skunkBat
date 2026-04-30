@@ -10,8 +10,8 @@
 //! - Responding to threats
 //! - Observing security metrics
 
+use skunk_bat_core::{PrimalHealth, PrimalLifecycle};
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-use sourdough_core::{PrimalHealth, PrimalLifecycle};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

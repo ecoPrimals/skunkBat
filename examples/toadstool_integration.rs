@@ -6,8 +6,8 @@
 //! Shows capability-based primal discovery. Demonstrates how skunkBat discovers
 //! other primals by CAPABILITY rather than by name (zero-coupling).
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-use sourdough_core::PrimalLifecycle;
 
 #[expect(clippy::too_many_lines, reason = "self-contained demo")]
 #[tokio::main]

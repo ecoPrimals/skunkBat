@@ -15,8 +15,8 @@
 
 #[cfg(test)]
 mod beardog_integration {
+    use skunk_bat_core::PrimalLifecycle;
     use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-    use sourdough_core::PrimalLifecycle;
     use std::path::PathBuf;
 
     fn beardog_bin() -> Option<PathBuf> {

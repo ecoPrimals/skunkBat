@@ -7,11 +7,11 @@
 
 #[cfg(test)]
 mod songbird_integration {
+    use skunk_bat_core::PrimalLifecycle;
     use skunk_bat_core::{
         SkunkBat, SkunkBatConfig,
         threats::{Severity, Threat, ThreatType},
     };
-    use sourdough_core::PrimalLifecycle;
     use std::time::SystemTime;
 
     #[tokio::test]

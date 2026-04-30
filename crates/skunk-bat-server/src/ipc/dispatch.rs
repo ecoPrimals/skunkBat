@@ -7,8 +7,8 @@
 //! and Primal IPC Protocol v3.1 semantic method naming.
 
 use serde::Serialize;
+use skunk_bat_core::PrimalHealth;
 use skunk_bat_core::SkunkBat;
-use sourdough_core::PrimalHealth;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -167,7 +167,7 @@ mod tests {
     use super::*;
     use skunk_bat_core::SkunkBatConfig;
 
-    use sourdough_core::PrimalLifecycle;
+    use skunk_bat_core::PrimalLifecycle;
 
     fn make_state() -> Arc<RwLock<SkunkBat>> {
         Arc::new(RwLock::new(SkunkBat::new(SkunkBatConfig::default())))

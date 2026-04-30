@@ -261,8 +261,8 @@ pub struct QuarantineRecord {
 mod tests {
     use super::*;
     use crate::config::{FeatureFlags, SkunkBatConfig};
+    use crate::primal_foundation::config::CommonConfig;
     use crate::threats::{Severity, Threat, ThreatType};
-    use sourdough_core::config::CommonConfig;
 
     fn test_config() -> SkunkBatConfig {
         SkunkBatConfig {

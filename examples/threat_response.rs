@@ -6,11 +6,11 @@
 //! Demonstrates how skunkBat responds to various threat types
 //! with different severity levels.
 
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{
     SkunkBat, SkunkBatConfig,
     threats::{Severity, Threat, ThreatType},
 };
-use sourdough_core::PrimalLifecycle;
 use std::time::SystemTime;
 
 #[tokio::main]

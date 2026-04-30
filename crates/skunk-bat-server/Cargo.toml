@@ -17,7 +17,6 @@ path = "src/main.rs"
 [dependencies]
 skunk-bat-core = { path = "../skunk-bat-core" }
 skunk-bat-integrations = { path = "../skunk-bat-integrations" }
-sourdough-core = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
 serde = { workspace = true }

@@ -3,8 +3,8 @@
 
 //! skunkBat configuration.
 
+use crate::primal_foundation::config::CommonConfig;
 use serde::{Deserialize, Serialize};
-use sourdough_core::config::CommonConfig;
 
 /// Feature flags for skunkBat capabilities.
 #[derive(Clone, Debug, Serialize, Deserialize)]

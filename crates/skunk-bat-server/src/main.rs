@@ -9,8 +9,8 @@
 mod ipc;
 
 use clap::{Parser, Subcommand};
+use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
-use sourdough_core::PrimalLifecycle;
 use tracing_subscriber::EnvFilter;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -93,7 +93,7 @@ async fn run_server(port: u16, no_uds: bool) -> Result<(), BoxError> {
 }
 
 async fn run_health() -> Result<(), BoxError> {
-    use sourdough_core::PrimalHealth;
+    use skunk_bat_core::PrimalHealth;
 
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
