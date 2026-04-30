@@ -363,4 +363,49 @@ mod tests {
     fn test_proc_uid_returns_real_value() {
         assert!(proc_uid() > 0);
     }
+
+    #[tokio::test]
+    async fn test_call_tcp_with_http_prefix() {
+        let result = call(
+            None,
+            Some("http://127.0.0.1:1"),
+            "test.method",
+            None,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_call_tcp_with_https_prefix() {
+        let result = call(
+            None,
+            Some("https://127.0.0.1:1"),
+            "test.method",
+            None,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_call_stream_malformed_json() {
+        let (client, mut server) = tokio::io::duplex(1024);
+
+        let handle = tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(&mut server);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            server.write_all(b"not json\n").await.unwrap();
+            server.flush().await.unwrap();
+        });
+
+        let result = call_stream(client, "test.bad", None, Duration::from_secs(5)).await;
+        handle.await.unwrap();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("parse response"));
+    }
 }

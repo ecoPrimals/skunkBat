@@ -227,6 +227,28 @@ mod tests {
     }
 
     #[test]
+    fn handshake_config_debug_and_clone() {
+        let cfg = BtspHandshakeConfig {
+            provider_socket: "/tmp/beardog.sock".into(),
+            family_id: "test-family".into(),
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.provider_socket, cfg.provider_socket);
+        assert!(!format!("{cfg:?}").is_empty());
+    }
+
+    #[test]
+    fn btsp_config_insecure_mode() {
+        let cfg = BtspConfig {
+            socket_dir: "/tmp/biomeos".into(),
+            family_id: None,
+            insecure: true,
+        };
+        assert!(cfg.insecure);
+        assert!(cfg.socket_path().ends_with("skunkbat.sock"));
+    }
+
+    #[test]
     fn btsp_config_from_env_standalone() {
         let result = BtspConfig::from_env();
         assert!(result.is_ok());

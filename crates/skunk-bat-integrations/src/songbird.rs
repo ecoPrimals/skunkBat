@@ -398,4 +398,51 @@ mod tests {
         let broadcaster = FederationThreatBroadcaster::new(client);
         assert!(!broadcaster.is_connected().await);
     }
+
+    #[test]
+    fn test_threat_intelligence_serde_roundtrip() {
+        let intel = ThreatIntelligence {
+            source_node: "sb-01".into(),
+            threat_type: "PortScan".into(),
+            threat_source: "10.0.0.99".into(),
+            severity: "Medium".into(),
+            description: "Sequential port probing".into(),
+            detected_at: SystemTime::now(),
+            evidence: Some("ports 22,80,443 in 200ms".into()),
+        };
+        let json = serde_json::to_string(&intel).expect("serialize");
+        let parsed: ThreatIntelligence = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.source_node, "sb-01");
+        assert_eq!(parsed.evidence, Some("ports 22,80,443 in 200ms".into()));
+    }
+
+    #[test]
+    fn test_tcp_endpoint_empty() {
+        let client = FederationClient::new(String::new(), "x".into());
+        assert!(client.tcp_endpoint().is_none());
+        assert!(client.endpoint().is_empty());
+    }
+
+    #[test]
+    fn test_tcp_endpoint_present() {
+        let client = FederationClient::new("10.0.0.1:5000".into(), "x".into());
+        assert_eq!(client.tcp_endpoint(), Some("10.0.0.1:5000"));
+        assert_eq!(client.endpoint(), "10.0.0.1:5000");
+    }
+
+    #[test]
+    fn test_create_intel_all_fields() {
+        let client = FederationClient::new(String::new(), "node-abc".into());
+        let broadcaster = FederationThreatBroadcaster::new(client);
+        let intel = broadcaster.create_intel(
+            "GeneticViolation",
+            "attacker",
+            "Critical",
+            "Identity mismatch",
+        );
+        assert_eq!(intel.source_node, "node-abc");
+        assert_eq!(intel.threat_type, "GeneticViolation");
+        assert_eq!(intel.severity, "Critical");
+        assert!(intel.evidence.is_none());
+    }
 }

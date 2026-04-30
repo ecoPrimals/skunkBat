@@ -74,9 +74,9 @@ Full spec compliance including:
 
 ## Tests
 
-205 tests passing (111 core + 26 integrations + 48 server + 7 binary + 9 chaos + 3 e2e + doctests),
-15 ignored (gated behind external primals). 12 working examples. >90% line coverage
-(llvm-cov); core crate ~96%, btsp ~90%, dispatch ~96%, rpc ~93%.
+217 tests passing (127 core + 42 integrations + 48 server + 7 binary + 9 chaos + 3 e2e + doctests),
+15 ignored (gated behind external primals). 12 working examples. 90%+ function coverage
+(llvm-cov, 88% line overall — 93% testable code); core ~96%, btsp ~94%, threats ~95%, rpc ~93%.
 
 ## Status
 
@@ -86,5 +86,5 @@ BTSP Phase 1/2 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned w
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `genetic.verify_lineage`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 37 source files, 7,710 lines, max 623 lines/file.
+No magic numbers — all thresholds named. 37 source files, 8,102 lines, max 672 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.

@@ -360,4 +360,81 @@ mod tests {
         let result = client.discover_local().await;
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_client_builder() {
+        let client = DiscoveryClient::new("host:1234".into()).with_timeout(5000);
+        assert_eq!(client.endpoint(), "host:1234");
+    }
+
+    #[test]
+    fn test_client_tcp_endpoint_empty() {
+        let client = DiscoveryClient::new(String::new());
+        assert!(client.tcp_endpoint().is_none());
+    }
+
+    #[test]
+    fn test_client_tcp_endpoint_present() {
+        let client = DiscoveryClient::new("10.0.0.1:3000".into());
+        assert_eq!(client.tcp_endpoint(), Some("10.0.0.1:3000"));
+    }
+
+    #[test]
+    fn test_from_env_construction() {
+        let client = DiscoveryClient::from_env();
+        let _ = client.endpoint();
+    }
+
+    #[tokio::test]
+    async fn test_discover_all_unreachable() {
+        let client = DiscoveryClient::new("unreachable.invalid:9999".into());
+        let result = client.discover_all().await;
+        assert!(result.is_ok());
+        assert!(result.expect("ok").is_empty());
+    }
+
+    #[test]
+    fn test_convert_to_nodes_empty() {
+        let nodes = CapabilityPrimalDiscovery::convert_to_nodes(Vec::new());
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn test_convert_to_nodes_populates() {
+        let discovered = vec![DiscoveredPrimal {
+            service_id: "svc-1".into(),
+            capabilities: vec!["cap-a".into()],
+            endpoint: "127.0.0.1:5000".into(),
+            version: "1.0.0".into(),
+        }];
+        let nodes = CapabilityPrimalDiscovery::convert_to_nodes(discovered);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].id, "svc-1");
+        assert_eq!(nodes[0].capabilities, vec!["cap-a"]);
+    }
+
+    #[test]
+    fn test_discovered_primal_serde() {
+        let p = DiscoveredPrimal {
+            service_id: "test".into(),
+            capabilities: vec!["a".into(), "b".into()],
+            endpoint: "localhost:3000".into(),
+            version: "0.1.0".into(),
+        };
+        let json = serde_json::to_string(&p).expect("serialize");
+        let parsed: DiscoveredPrimal = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.service_id, "test");
+        assert_eq!(parsed.capabilities.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_capability_discovery_by_cap_graceful() {
+        let client = DiscoveryClient::new("unreachable.invalid:9999".into());
+        let discovery = CapabilityPrimalDiscovery::new(client, "sb".into());
+        let nodes = discovery
+            .discover_by_capability("defense")
+            .await
+            .expect("graceful");
+        assert!(nodes.is_empty());
+    }
 }

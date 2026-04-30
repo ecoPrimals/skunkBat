@@ -106,3 +106,78 @@ impl NetworkScope {
         Vec::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_scan_default() {
+        let scan = NetworkScan::default();
+        assert!(scan.nodes.is_empty());
+        assert!(scan.topology.is_empty());
+        assert!(scan.scan_time.is_none());
+    }
+
+    #[test]
+    fn network_scope_default() {
+        let scope = NetworkScope::default();
+        assert!(scope.managed_systems.is_empty());
+        assert!(scope.excluded.is_empty());
+    }
+
+    #[test]
+    fn node_status_variants() {
+        let statuses = [
+            NodeStatus::Healthy,
+            NodeStatus::Degraded,
+            NodeStatus::Unhealthy,
+            NodeStatus::Unknown,
+        ];
+        for s in &statuses {
+            let json = serde_json::to_string(s).expect("serialize");
+            let _: NodeStatus = serde_json::from_str(&json).expect("deserialize");
+        }
+    }
+
+    #[test]
+    fn connection_status_variants() {
+        let statuses = [
+            ConnectionStatus::Active,
+            ConnectionStatus::Idle,
+            ConnectionStatus::Closed,
+        ];
+        for s in &statuses {
+            let json = serde_json::to_string(s).expect("serialize");
+            let _: ConnectionStatus = serde_json::from_str(&json).expect("deserialize");
+        }
+    }
+
+    #[test]
+    fn node_serde_roundtrip() {
+        let node = Node {
+            id: "node-1".into(),
+            address: "10.0.0.1".into(),
+            node_type: "skunkBat".into(),
+            status: NodeStatus::Healthy,
+            capabilities: vec!["defense".into()],
+            last_seen: Some(SystemTime::now()),
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        let parsed: Node = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.id, "node-1");
+    }
+
+    #[test]
+    fn connection_serde_roundtrip() {
+        let conn = Connection {
+            from: "a".into(),
+            to: "b".into(),
+            protocol: "jsonrpc".into(),
+            status: ConnectionStatus::Active,
+        };
+        let json = serde_json::to_string(&conn).expect("serialize");
+        let parsed: Connection = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.protocol, "jsonrpc");
+    }
+}

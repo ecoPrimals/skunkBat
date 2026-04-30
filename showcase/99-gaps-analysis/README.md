@@ -14,8 +14,8 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 205 passing / 0 failures / 15 ignored (external-primal-gated) |
-| Coverage | 90.0% line (cargo-llvm-cov; CI gate: 85%) |
+| Tests | 217 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Coverage | 90.1% function, 88.3% line overall / 93.2% testable (cargo-llvm-cov) |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
 | Docs | CLEAN — `cargo doc --no-deps`, zero warnings |
@@ -23,7 +23,7 @@
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
 | sourdough-core | **INTERNALIZED** — zero cross-repo path deps, `primal_foundation` module |
-| Max file | 623 lines (`btsp.rs`); limit 1000 |
+| Max file | 672 lines (`threats/mod.rs`); limit 1000 |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)

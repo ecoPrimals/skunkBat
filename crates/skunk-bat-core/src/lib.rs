@@ -489,4 +489,41 @@ mod tests {
 
         skunkbat.stop().await.unwrap();
     }
+
+    #[tokio::test]
+    async fn test_health_status_degraded() {
+        use crate::config::FeatureFlags;
+
+        let config = SkunkBatConfig {
+            common: CommonConfig::default(),
+            features: FeatureFlags {
+                reconnaissance: true,
+                threat_detection: false,
+                auto_defense: true,
+                observability: true,
+            },
+            lineage_id: None,
+        };
+        let mut skunkbat = SkunkBat::new(config);
+        skunkbat.start().await.unwrap();
+
+        let status = skunkbat.health_status();
+        assert!(matches!(status, HealthStatus::Degraded { .. }));
+    }
+
+    #[test]
+    fn test_config_access() {
+        let config = SkunkBatConfig::default();
+        let skunkbat = SkunkBat::new(config);
+        assert_eq!(skunkbat.config().common.name, PRIMAL_NAME);
+    }
+
+    #[test]
+    fn test_primal_constants() {
+        assert_eq!(PRIMAL_NAME, "skunkBat");
+        assert_eq!(PRIMAL_ID, "skunkbat");
+        assert_eq!(CAPABILITIES.len(), 4);
+        assert!(CAPABILITIES.contains(&"reconnaissance"));
+        assert!(CAPABILITIES.contains(&"defense"));
+    }
 }

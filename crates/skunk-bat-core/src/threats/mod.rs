@@ -580,4 +580,93 @@ mod tests {
         let validator = LayerTopologyValidator::new(vec![1, 2, 3]);
         assert_eq!(validator.expected_path(), vec![1, 2, 3]);
     }
+
+    #[tokio::test]
+    async fn test_detect_behavioral_anomaly_triggers() {
+        let config = test_config();
+        let mut profiler = StatisticalProfiler::new(2.5);
+
+        for _ in 0..15 {
+            let obs = Observation {
+                connection_rate: 5.0,
+                traffic_volume: 1000,
+                ports_accessed: vec![80],
+                timestamp: SystemTime::now(),
+            };
+            profiler.update(&obs).await.expect("update");
+        }
+
+        let spike = Observation {
+            connection_rate: 500.0,
+            traffic_volume: 1000,
+            ports_accessed: vec![80],
+            timestamp: SystemTime::now(),
+        };
+        profiler.update(&spike).await.expect("update");
+
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+        let threats = detector.detect().await.expect("detect");
+        assert!(
+            !threats.is_empty(),
+            "Should detect the connection rate spike as anomaly"
+        );
+        assert!(matches!(
+            threats[0].threat_type,
+            ThreatType::BehaviorAnomaly { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_detect_disabled() {
+        let config = SkunkBatConfig {
+            common: CommonConfig::default(),
+            features: FeatureFlags {
+                reconnaissance: false,
+                threat_detection: false,
+                auto_defense: false,
+                observability: false,
+            },
+            lineage_id: None,
+        };
+        let detector = ThreatDetector::new(&config);
+        assert!(!detector.is_healthy());
+        let threats = detector.detect().await.expect("detect");
+        assert!(threats.is_empty());
+    }
+
+    #[test]
+    fn test_start_disabled() {
+        let config = SkunkBatConfig {
+            common: CommonConfig::default(),
+            features: FeatureFlags {
+                reconnaissance: false,
+                threat_detection: false,
+                auto_defense: false,
+                observability: false,
+            },
+            lineage_id: None,
+        };
+        let detector = ThreatDetector::new(&config);
+        assert!(detector.start().is_ok());
+    }
+
+    #[test]
+    fn test_lineage_verifier_access() {
+        let config = test_config();
+        let detector = ThreatDetector::new(&config);
+        let _verifier = detector.lineage_verifier();
+    }
+
+    #[test]
+    fn test_severity_display_all_variants() {
+        let variants = [
+            Severity::Low,
+            Severity::Medium,
+            Severity::High,
+            Severity::Critical,
+        ];
+        for v in &variants {
+            assert!(!format!("{v:?}").is_empty());
+        }
+    }
 }
