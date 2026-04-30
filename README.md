@@ -2,7 +2,7 @@
 
 Defensive network security primal for sovereign computing environments.
 
-**Version**: 0.1.0
+**Version**: 0.2.0-dev
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 ---
@@ -55,7 +55,7 @@ skunkBat/
 | Crate | Role | Type |
 |-------|------|------|
 | `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
-| `skunk-bat-integrations` | JSON-RPC 2.0 client, ToadStool discovery, Songbird federation | library |
+| `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin CLI with `server`, `health`, `scan`, `detect` subcommands | binary |
 
 ---
@@ -138,6 +138,7 @@ export BIOMEOS_SOCKET_DIR=/run/biomeos
 export BIOMEOS_INSECURE=1          # Required when FAMILY_ID is unset
 
 # Capability-based discovery (runtime, not hardcoded)
+export LINEAGE_ENDPOINT=127.0.0.1:9300
 export DISCOVERY_ENDPOINT=127.0.0.1:3000
 export FEDERATION_ENDPOINT=127.0.0.1:8080
 ```
@@ -149,14 +150,14 @@ export FEDERATION_ENDPOINT=127.0.0.1:8080
 skunkBat discovers other primals at runtime via capability-based JSON-RPC.
 No primal names are hardcoded in production code.
 
-- **BearDog**: Genetic lineage verification (WHO) — `btsp.server.*`, `genetic.verify_lineage` via `crypto.sock`
-- **ToadStool**: Capability-based primal discovery (WHERE) — via `discovery.sock`
-- **Songbird**: Federated threat intelligence (COORDINATION) — via `federation.sock`
+- **BearDog**: Genetic lineage verification (WHO) — `lineage.verify` + `lineage.list` via `lineage-verification.sock` or `LINEAGE_ENDPOINT`
+- **ToadStool**: Capability-based primal discovery (WHERE) — via `discovery.sock` or `DISCOVERY_ENDPOINT`
+- **Songbird**: Federated threat intelligence (COORDINATION) — via `federation.sock` or `FEDERATION_ENDPOINT`
 - **NestGate**: Protected application platform (HOME)
 
 ### Consumed Capabilities
 
-`btsp.server.verify`, `genetic.verify_lineage`, `capabilities.list`,
+`btsp.server.verify`, `lineage.verify`, `lineage.list`, `capabilities.list`,
 `federation.broadcast`, `discovery.find_by_capability`
 
 ---
@@ -167,13 +168,14 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - All `#[allow]` migrated to `#[expect(reason)]`
 - `cargo deny` advisory/ban/license/source checks pass
-- All files under 1000 lines (largest: 623)
+- 38 source files, all under 1000 lines (largest: 672)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — zero cross-repo path dependencies, no C dependencies
-- 205 tests passing, line coverage > 90% (llvm-cov)
-- CI: GitHub Actions with fmt/clippy/doc/deny/test/coverage gates
+- 225 tests passing, 90.6% function / 89% line coverage (llvm-cov)
+- CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
+- `async-trait` eliminated and banned — native RPITIT throughout
 
 ---
 

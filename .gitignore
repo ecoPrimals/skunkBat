@@ -3,8 +3,7 @@
 **/*.rs.bk
 *.pdb
 
-# Cargo
-Cargo.lock
+# Cargo (Cargo.lock is committed — this is a binary project)
 
 # Coverage
 lcov.info

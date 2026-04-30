@@ -84,7 +84,9 @@ v0.2.0-dev — Edition 2024, clippy pedantic+nursery clean (zero warnings), `for
 workspace-wide. All `#[allow]` migrated to `#[expect(reason)]`. JSON-RPC IPC server with
 BTSP Phase 1/2 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned with v0.9.0)
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
-`genetic.verify_lineage`, `capabilities.list`, `federation.broadcast`,
+`lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
 No magic numbers — all thresholds named. 38 source files, 8,317 lines, max 672 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
+`async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
+integration ready (awaiting BearDog IPC surface).
