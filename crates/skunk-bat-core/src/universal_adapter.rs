@@ -47,9 +47,9 @@
 //! # }
 //! ```
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -114,7 +114,6 @@ pub struct DiscoveredPrimal {
 ///
 /// - `LocalUniversalAdapter` - In-memory registry (single node)
 /// - Future: Distributed adapter (consensus-based, federated)
-#[async_trait]
 pub trait UniversalAdapter: Send + Sync {
     /// Announce capabilities
     ///
@@ -128,7 +127,10 @@ pub trait UniversalAdapter: Send + Sync {
     /// # Errors
     ///
     /// Returns error if announcement fails
-    async fn announce(&self, capability: Capability) -> Result<(), SkunkBatError>;
+    fn announce(
+        &self,
+        capability: Capability,
+    ) -> impl Future<Output = Result<(), SkunkBatError>> + Send;
 
     /// Discover primals by capability
     ///
@@ -145,10 +147,10 @@ pub trait UniversalAdapter: Send + Sync {
     /// # Errors
     ///
     /// Returns error if discovery fails
-    async fn discover_capability(
+    fn discover_capability(
         &self,
         capability: &str,
-    ) -> Result<Vec<DiscoveredPrimal>, SkunkBatError>;
+    ) -> impl Future<Output = Result<Vec<DiscoveredPrimal>, SkunkBatError>> + Send;
 
     /// Discover all announced primals
     ///
@@ -157,7 +159,9 @@ pub trait UniversalAdapter: Send + Sync {
     /// # Errors
     ///
     /// Returns error if discovery fails
-    async fn discover_all(&self) -> Result<Vec<DiscoveredPrimal>, SkunkBatError>;
+    fn discover_all(
+        &self,
+    ) -> impl Future<Output = Result<Vec<DiscoveredPrimal>, SkunkBatError>> + Send;
 
     /// Remove announcement
     ///
@@ -170,7 +174,7 @@ pub trait UniversalAdapter: Send + Sync {
     /// # Errors
     ///
     /// Returns error if removal fails
-    async fn remove(&self, primal_id: &str) -> Result<(), SkunkBatError>;
+    fn remove(&self, primal_id: &str) -> impl Future<Output = Result<(), SkunkBatError>> + Send;
 }
 
 /// Local in-memory universal adapter
@@ -252,7 +256,6 @@ pub struct AdapterStats {
     pub capabilities_per_primal: f64,
 }
 
-#[async_trait]
 #[expect(
     clippy::significant_drop_tightening,
     reason = "registry mutations require both locks held"

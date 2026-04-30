@@ -4,9 +4,10 @@
 //! Reconnaissance trait abstractions.
 //!
 //! Discovery and topology mapping are injected at runtime via these
-//! traits — no primal names are embedded.
+//! traits — no primal names are embedded. All traits use native
+//! `async fn` (RPITIT) — no `#[async_trait]` or `dyn` dispatch.
 
-use async_trait::async_trait;
+use std::future::Future;
 
 use super::types::{Connection, NetworkScan, Node};
 use crate::error::SkunkBatError;
@@ -15,24 +16,31 @@ use crate::error::SkunkBatError;
 ///
 /// Implementations may use toadstool, mDNS, filesystem sockets, or any
 /// discovery mechanism announced at runtime.
-#[async_trait]
 pub trait PrimalDiscovery: Send + Sync {
     /// Discover primals with specified capabilities.
-    async fn discover_by_capability(&self, capability: &str) -> Result<Vec<Node>, SkunkBatError>;
+    fn discover_by_capability(
+        &self,
+        capability: &str,
+    ) -> impl Future<Output = Result<Vec<Node>, SkunkBatError>> + Send;
 
     /// Discover all primals on the network.
-    async fn discover_all(&self) -> Result<Vec<Node>, SkunkBatError>;
+    fn discover_all(&self) -> impl Future<Output = Result<Vec<Node>, SkunkBatError>> + Send;
 }
 
 /// Topology mapping between nodes.
 ///
 /// Abstracts connection mapping for different network topologies and
 /// communication patterns.
-#[async_trait]
 pub trait TopologyMapper: Send + Sync {
     /// Map connections between discovered nodes.
-    async fn map_connections(&self, nodes: &[Node]) -> Result<Vec<Connection>, SkunkBatError>;
+    fn map_connections(
+        &self,
+        nodes: &[Node],
+    ) -> impl Future<Output = Result<Vec<Connection>, SkunkBatError>> + Send;
 
     /// Update existing topology with new information.
-    async fn update_topology(&self, current: &mut NetworkScan) -> Result<(), SkunkBatError>;
+    fn update_topology(
+        &self,
+        current: &mut NetworkScan,
+    ) -> impl Future<Output = Result<(), SkunkBatError>> + Send;
 }

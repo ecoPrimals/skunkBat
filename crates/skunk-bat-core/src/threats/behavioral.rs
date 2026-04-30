@@ -3,7 +3,6 @@
 
 //! Statistical behavioral analysis for anomaly detection.
 
-use async_trait::async_trait;
 use std::collections::VecDeque;
 
 use super::traits::BaselineProfiler;
@@ -46,7 +45,6 @@ impl StatisticalProfiler {
     }
 }
 
-#[async_trait]
 impl BaselineProfiler for StatisticalProfiler {
     fn is_established(&self) -> bool {
         self.observations.len() >= 10

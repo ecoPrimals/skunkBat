@@ -10,7 +10,6 @@
 //! Gracefully degrades to standalone mode when no discovery provider is
 //! available — the primal retains self-knowledge only.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::reconnaissance::{Node, NodeStatus, PrimalDiscovery};
@@ -278,7 +277,6 @@ impl CapabilityPrimalDiscovery {
     }
 }
 
-#[async_trait]
 impl PrimalDiscovery for CapabilityPrimalDiscovery {
     async fn discover_by_capability(&self, capability: &str) -> Result<Vec<Node>, SkunkBatError> {
         tracing::info!("Discovering primals with capability: {capability}");

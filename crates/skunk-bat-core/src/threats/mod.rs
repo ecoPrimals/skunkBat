@@ -42,11 +42,18 @@ const DOS_LOAD_THRESHOLD: f64 = 0.9;
 const DOS_CONFIDENCE: f64 = 0.8;
 
 /// Threat detector — orchestrates all five detection categories.
-pub struct ThreatDetector {
+///
+/// Generic over verifier and profiler types — no dyn dispatch.
+/// Use [`ThreatDetector::new`] for default types, or
+/// [`ThreatDetector::with_verifiers`] for custom injection.
+pub struct ThreatDetector<
+    L: LineageVerifier = LocalLineageVerifier,
+    B: BaselineProfiler = StatisticalProfiler,
+> {
     enabled: bool,
     lineage_id: Option<String>,
-    lineage_verifier: Box<dyn LineageVerifier>,
-    baseline_profiler: Box<dyn BaselineProfiler>,
+    lineage_verifier: L,
+    baseline_profiler: B,
 }
 
 impl ThreatDetector {
@@ -55,17 +62,19 @@ impl ThreatDetector {
     pub fn new(config: &SkunkBatConfig) -> Self {
         Self::with_verifiers(
             config,
-            Box::new(LocalLineageVerifier),
-            Box::new(StatisticalProfiler::new(DEFAULT_SIGMA_THRESHOLD)),
+            LocalLineageVerifier,
+            StatisticalProfiler::new(DEFAULT_SIGMA_THRESHOLD),
         )
     }
+}
 
+impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
     /// Create a threat detector with custom verifiers injected at runtime.
     #[must_use]
     pub fn with_verifiers(
         config: &SkunkBatConfig,
-        lineage_verifier: Box<dyn LineageVerifier>,
-        baseline_profiler: Box<dyn BaselineProfiler>,
+        lineage_verifier: L,
+        baseline_profiler: B,
     ) -> Self {
         Self {
             enabled: config.features.threat_detection,
@@ -136,8 +145,8 @@ impl ThreatDetector {
 
     /// Access the lineage verifier.
     #[must_use]
-    pub fn lineage_verifier(&self) -> &dyn LineageVerifier {
-        &*self.lineage_verifier
+    pub const fn lineage_verifier(&self) -> &L {
+        &self.lineage_verifier
     }
 
     #[expect(
@@ -400,8 +409,8 @@ mod tests {
         let config = test_config();
         let detector = ThreatDetector::with_verifiers(
             &config,
-            Box::new(LocalLineageVerifier),
-            Box::new(StatisticalProfiler::new(2.5)),
+            LocalLineageVerifier,
+            StatisticalProfiler::new(2.5),
         );
         assert!(detector.is_healthy());
         let result = detector.detect().await;
@@ -494,11 +503,7 @@ mod tests {
             profiler.update(&obs).await.expect("update should succeed");
         }
 
-        let detector = ThreatDetector::with_verifiers(
-            &config,
-            Box::new(LocalLineageVerifier),
-            Box::new(profiler),
-        );
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
 
         let threats = detector.detect().await.expect("detect should succeed");
         assert!(

@@ -21,32 +21,31 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 /// Reconnaissance engine — orchestrates scanning and topology mapping.
-pub struct ReconnaissanceEngine {
+///
+/// Generic over discovery and mapper types — no dyn dispatch.
+pub struct ReconnaissanceEngine<
+    D: PrimalDiscovery = LocalDiscovery,
+    M: TopologyMapper = SimpleTopologyMapper,
+> {
     enabled: bool,
     scope: NetworkScope,
     discovered_assets: HashMap<String, Node>,
-    discovery: Box<dyn PrimalDiscovery>,
-    topology_mapper: Box<dyn TopologyMapper>,
+    discovery: D,
+    topology_mapper: M,
 }
 
 impl ReconnaissanceEngine {
     /// Create with default local discovery (self-knowledge only).
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
-        Self::with_discovery(
-            config,
-            Box::new(LocalDiscovery),
-            Box::new(SimpleTopologyMapper),
-        )
+        Self::with_discovery(config, LocalDiscovery, SimpleTopologyMapper)
     }
+}
 
+impl<D: PrimalDiscovery, M: TopologyMapper> ReconnaissanceEngine<D, M> {
     /// Create with custom discovery mechanisms injected at runtime.
     #[must_use]
-    pub fn with_discovery(
-        config: &SkunkBatConfig,
-        discovery: Box<dyn PrimalDiscovery>,
-        topology_mapper: Box<dyn TopologyMapper>,
-    ) -> Self {
+    pub fn with_discovery(config: &SkunkBatConfig, discovery: D, topology_mapper: M) -> Self {
         Self {
             enabled: config.features.reconnaissance,
             scope: NetworkScope::default(),

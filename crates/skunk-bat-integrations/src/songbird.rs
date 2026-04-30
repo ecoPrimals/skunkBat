@@ -10,7 +10,6 @@
 //! Gracefully degrades when no federation provider is available — threats
 //! are handled locally without broadcasting.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use skunk_bat_core::error::SkunkBatError;
 use std::sync::Arc;
@@ -214,23 +213,22 @@ impl FederationClient {
 }
 
 /// Trait for broadcasting threats to federation.
-#[async_trait]
 pub trait ThreatBroadcaster: Send + Sync {
     /// Broadcast threat to federation.
     ///
     /// # Errors
     ///
     /// Returns error if broadcast fails.
-    async fn broadcast(
+    fn broadcast(
         &self,
         threat_type: &str,
         source: &str,
         severity: &str,
         description: &str,
-    ) -> Result<(), SkunkBatError>;
+    ) -> impl std::future::Future<Output = Result<(), SkunkBatError>> + Send;
 
     /// Check if connected.
-    async fn is_connected(&self) -> bool;
+    fn is_connected(&self) -> impl std::future::Future<Output = bool> + Send;
 }
 
 /// Federation-backed threat broadcaster.
@@ -268,7 +266,6 @@ impl FederationThreatBroadcaster {
     }
 }
 
-#[async_trait]
 impl ThreatBroadcaster for FederationThreatBroadcaster {
     async fn broadcast(
         &self,

@@ -59,8 +59,9 @@ without signature databases. See `specs/THYMIC_SELECTION_SPEC.md`.
 
 ## Dependencies
 
-Pure Rust. Depends on `sourdough-core` for primal lifecycle traits, `async-trait`
-for dyn-dispatch async methods. No C dependencies in application code.
+Pure Rust. Depends on `sourdough-core` for primal lifecycle traits. All async traits
+use native RPITIT (Edition 2024) — `async-trait` eliminated and banned. No C
+dependencies in application code.
 
 ## JSON-RPC 2.0
 

@@ -6,7 +6,6 @@
 //! These are the standalone defaults — a primal starts with self-knowledge
 //! only and discovers others at runtime via capability-based patterns.
 
-use async_trait::async_trait;
 use std::time::SystemTime;
 
 use super::traits::{PrimalDiscovery, TopologyMapper};
@@ -18,7 +17,6 @@ use crate::error::SkunkBatError;
 /// A primal only knows about itself until it discovers others at runtime.
 pub struct LocalDiscovery;
 
-#[async_trait]
 impl PrimalDiscovery for LocalDiscovery {
     async fn discover_by_capability(&self, _capability: &str) -> Result<Vec<Node>, SkunkBatError> {
         Ok(vec![Self::local_node()])
@@ -72,7 +70,6 @@ impl LocalDiscovery {
 /// Simple topology mapper for local-only scenarios.
 pub struct SimpleTopologyMapper;
 
-#[async_trait]
 impl TopologyMapper for SimpleTopologyMapper {
     async fn map_connections(&self, _nodes: &[Node]) -> Result<Vec<Connection>, SkunkBatError> {
         Ok(Vec::new())

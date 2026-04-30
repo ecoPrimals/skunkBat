@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 skunk-bat-core = { path = "../skunk-bat-core" }
 tokio = { workspace = true }
-async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

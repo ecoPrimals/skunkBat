@@ -19,8 +19,9 @@
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
 | Docs | CLEAN — `cargo doc --no-deps`, zero warnings |
-| Deny | CLEAN — `cargo deny check` (advisory/ban/license/source) |
+| Deny | CLEAN — `cargo deny check` (advisory/ban/license/source); `async-trait` banned |
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
+| async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
 | Max file | 867 lines (`btsp.rs`); limit 1000 |
 | Edition | 2024 |
 
@@ -107,6 +108,17 @@ ecosystem primals.
 |-----|--------|-------|
 | **Configurable per-deployment thresholds** | Constants, not yet runtime-configurable | Config struct evolution |
 | **Bandwidth monitoring** | Not started | Per-connection tracking |
+
+### plasmidBin Publishing
+
+| Item | Status | Notes |
+|------|--------|-------|
+| **sources.toml entry** | DONE | `needs_sibling = "ecoPrimals/sourDough"`, `private = true` |
+| **manifest.toml** | DONE | Binary, arch, capabilities updated |
+| **checksums.toml** | READY | Awaiting harvest pipeline execution |
+| **CI release workflow** | DONE | `ci.yml` release job: musl-static x86_64 + aarch64 on tag push |
+| **sourDough sibling in CI** | DONE | `actions/checkout@v4` clones sourDough in check/coverage/release jobs |
+| **Tag + GitHub Release** | PENDING | First `v0.2.0` tag needed to trigger release pipeline |
 
 ---
 

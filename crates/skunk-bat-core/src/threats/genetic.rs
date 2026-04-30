@@ -7,8 +7,6 @@
 //! replaced at runtime by capability-discovered verifiers (e.g. a primal
 //! that announces `lineage-verification`).
 
-use async_trait::async_trait;
-
 use super::traits::{LineageVerifier, TopologyValidator};
 use super::types::PathValidation;
 use crate::error::SkunkBatError;
@@ -20,7 +18,6 @@ use crate::error::SkunkBatError;
 /// capability provider.
 pub struct LocalLineageVerifier;
 
-#[async_trait]
 impl LineageVerifier for LocalLineageVerifier {
     async fn is_family(&self, _peer_id: &str) -> Result<bool, SkunkBatError> {
         Ok(false)
@@ -47,7 +44,6 @@ impl LayerTopologyValidator {
     }
 }
 
-#[async_trait]
 impl TopologyValidator for LayerTopologyValidator {
     async fn validate_path(&self, actual_path: &[u8]) -> Result<PathValidation, SkunkBatError> {
         let is_valid = actual_path == self.expected_path.as_slice();

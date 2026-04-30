@@ -45,12 +45,13 @@ allow-wildcard-paths = true
 # with features = ["pure"] so no C code is compiled, but cc remains in the
 # resolved graph. iana-time-zone-haiku uses cc only on Haiku OS (not our targets).
 deny = [
+    { crate = "async-trait", wrappers = ["opentelemetry_sdk"] },
     { crate = "openssl-sys", wrappers = [] },
     { crate = "openssl-src", wrappers = [] },
     { crate = "native-tls", wrappers = [] },
     { crate = "aws-lc-sys", wrappers = [] },
     { crate = "cmake", wrappers = [] },
-    { crate = "cc", wrappers = ["blake3", "iana-time-zone-haiku"] },
+    { crate = "cc", wrappers = ["blake3"] },
     { crate = "bindgen", wrappers = [] },
     { crate = "bzip2-sys", wrappers = [] },
     { crate = "curl-sys", wrappers = [] },
