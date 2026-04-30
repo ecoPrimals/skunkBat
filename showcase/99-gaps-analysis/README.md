@@ -29,7 +29,7 @@
 ### What's Implemented (Production Code)
 
 **Core Architecture:**
-- Trait-based dependency injection (sourdough-core `PrimalLifecycle`)
+- Trait-based dependency injection (`PrimalLifecycle` via `primal_foundation`)
 - Async/await throughout on Tokio
 - Zero unsafe code, `forbid(unsafe_code)`
 - All `#[allow]` migrated to `#[expect(reason)]`

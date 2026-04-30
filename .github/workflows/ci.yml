@@ -42,5 +42,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Docs
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+      - name: Deny
+        run: |
+          cargo install --locked cargo-deny 2>/dev/null || true
+          cargo deny check
+
       - name: Test
-        run: cargo test --workspace --lib
+        run: cargo test --workspace --lib --bins
