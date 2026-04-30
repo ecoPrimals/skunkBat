@@ -50,7 +50,7 @@ skunkBat follows the same ethical pattern as BearDog:
 
 ---
 
-## 📜 Ethical Foundations (from whitePaper/ethics/)
+## Ethical Foundations (from ecoPrimals whitePaper)
 
 ### 1. The Inviolable Individual
 
@@ -665,13 +665,13 @@ Before implementing ANY feature in skunkBat, ask:
 
 ---
 
-## 📚 Related Reading
+## Related Reading
 
-### Ethics Documents
-- `whitePaper/ethics/THE_INVIOLABLE_INDIVIDUAL.md` - Rights at the edge
-- `whitePaper/ethics/AUTONOMY_AND_THE_CAGE.md` - Build exits, not walls
-- `whitePaper/ethics/THE_RETURN_TO_OMELAS.md` - No hidden sacrifices
-- `whitePaper/ethics/THE_PRIMAL_ETHOS.md` - Rights to the edge
+### Ethics Documents (in ecoPrimals/infra/whitePaper/)
+- `ethics/THE_INVIOLABLE_INDIVIDUAL.md` — Rights at the edge
+- `ethics/AUTONOMY_AND_THE_CAGE.md` — Build exits, not walls
+- `ethics/THE_RETURN_TO_OMELAS.md` — No hidden sacrifices
+- `ethics/THE_PRIMAL_ETHOS.md` — Rights to the edge
 
 ---
 

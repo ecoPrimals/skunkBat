@@ -501,7 +501,7 @@ calibrated to the current self-model.
 > **Status: DESIGN PHASE** — maps the ecosystem bonding model to immune
 > categories for threat assessment.
 
-The chemistry bonding model from `ECOSYSTEM_ARCHITECTURE.md` maps to
+The chemistry bonding model from the ecoPrimals ecosystem architecture maps to
 immunological categories that determine skunkBat's default response:
 
 | Bond Type | Immune Analog | Default Response |
