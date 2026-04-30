@@ -34,7 +34,9 @@
 - Zero unsafe code, `forbid(unsafe_code)`
 - All `#[allow]` migrated to `#[expect(reason)]`
 - Named constants for all thresholds (no magic numbers)
-- Cross-platform implementations (`proc_uid`, `check_system_load`)
+- Cross-platform implementations (`platform::proc_uid`, `check_system_load`)
+- Crate-level self-knowledge constants (`PRIMAL_NAME`, `PRIMAL_ID`, `CAPABILITIES`)
+- Config-driven TCP bind address (no hardcoded `"0.0.0.0"`)
 
 **JSON-RPC 2.0 Server (from scratch):**
 - Single requests with standard error codes (-32700 through -32603)
