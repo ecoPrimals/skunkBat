@@ -28,6 +28,7 @@ const METHODS: &[&str] = &[
     "lifecycle.capabilities",
     "capabilities.list",
     "identity.get",
+    "btsp.negotiate",
 ];
 
 const PRIMAL_VERSION: &str = env!("CARGO_PKG_VERSION");

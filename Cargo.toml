@@ -50,6 +50,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # CLI
 clap = { version = "4", features = ["derive"] }
 
+# Cryptography (BTSP Phase 3 — ChaCha20-Poly1305 encrypted framing)
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+hex = "0.4"
+
 # Virtual workspace integration tests
 [package]
 name = "skunk-bat-tests"

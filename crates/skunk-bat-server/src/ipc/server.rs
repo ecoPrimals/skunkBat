@@ -5,6 +5,7 @@
 //!
 //! Supports single requests, batch requests (JSON arrays), and
 //! notifications (requests without `id` — no response sent).
+//! Routes `btsp.negotiate` to the Phase 3 cipher negotiation handler.
 
 use skunk_bat_core::SkunkBat;
 use std::sync::Arc;
@@ -13,10 +14,14 @@ use tokio::sync::RwLock;
 
 use super::dispatch;
 use super::jsonrpc::{self, Response};
+use super::transport::negotiate::{self, SessionRegistry};
 
 /// Handle a single newline-delimited JSON-RPC connection.
-pub(super) async fn handle_connection<S>(state: Arc<RwLock<SkunkBat>>, stream: S)
-where
+pub(super) async fn handle_connection<S>(
+    state: Arc<RwLock<SkunkBat>>,
+    sessions: Arc<SessionRegistry>,
+    stream: S,
+) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
 {
     let (reader, mut writer) = tokio::io::split(stream);
@@ -30,8 +35,8 @@ where
 
         let first_byte = trimmed.as_bytes().first().copied();
         let response_bytes = match first_byte {
-            Some(b'[') => handle_batch(&state, trimmed).await,
-            _ => handle_single(&state, trimmed).await,
+            Some(b'[') => handle_batch(&state, &sessions, trimmed).await,
+            _ => handle_single(&state, &sessions, trimmed).await,
         };
 
         let Some(mut bytes) = response_bytes else {
@@ -49,9 +54,27 @@ where
 }
 
 /// Handle a single JSON-RPC request. Returns `None` for notifications.
-async fn handle_single(state: &Arc<RwLock<SkunkBat>>, line: &str) -> Option<Vec<u8>> {
+async fn handle_single(
+    state: &Arc<RwLock<SkunkBat>>,
+    sessions: &Arc<SessionRegistry>,
+    line: &str,
+) -> Option<Vec<u8>> {
     match serde_json::from_str::<jsonrpc::Request>(line) {
         Ok(request) => {
+            if request.method == "btsp.negotiate" {
+                let id = request.id_or_null();
+                let result = negotiate::handle_negotiate(sessions, request.params).await;
+                let response = if result.get("error").is_some() {
+                    Response::error(
+                        id,
+                        jsonrpc::INVALID_PARAMS,
+                        result["message"].as_str().unwrap_or("negotiate failed"),
+                    )
+                } else {
+                    Response::success(id, result)
+                };
+                return Some(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()));
+            }
             if request.is_notification() {
                 dispatch::dispatch(state, request).await;
                 return None;
@@ -75,7 +98,11 @@ async fn handle_single(state: &Arc<RwLock<SkunkBat>>, line: &str) -> Option<Vec<
 /// Per JSON-RPC 2.0 spec: responses are collected and returned as a JSON
 /// array. Notification responses are omitted. An empty batch returns an
 /// invalid-request error.
-async fn handle_batch(state: &Arc<RwLock<SkunkBat>>, line: &str) -> Option<Vec<u8>> {
+async fn handle_batch(
+    state: &Arc<RwLock<SkunkBat>>,
+    sessions: &Arc<SessionRegistry>,
+    line: &str,
+) -> Option<Vec<u8>> {
     let requests: Vec<serde_json::Value> = match serde_json::from_str(line) {
         Ok(arr) => arr,
         Err(e) => {
@@ -106,6 +133,21 @@ async fn handle_batch(state: &Arc<RwLock<SkunkBat>>, line: &str) -> Option<Vec<u
     for raw in requests {
         match serde_json::from_value::<jsonrpc::Request>(raw) {
             Ok(request) => {
+                if request.method == "btsp.negotiate" {
+                    let id = request.id_or_null();
+                    let result = negotiate::handle_negotiate(sessions, request.params).await;
+                    let response = if result.get("error").is_some() {
+                        Response::error(
+                            id,
+                            jsonrpc::INVALID_PARAMS,
+                            result["message"].as_str().unwrap_or("negotiate failed"),
+                        )
+                    } else {
+                        Response::success(id, result)
+                    };
+                    responses.push(response);
+                    continue;
+                }
                 let is_notification = request.is_notification();
                 let response = dispatch::dispatch(state, request).await;
                 if !is_notification {
@@ -139,11 +181,16 @@ mod tests {
         Arc::new(RwLock::new(SkunkBat::new(SkunkBatConfig::default())))
     }
 
+    fn make_sessions() -> Arc<SessionRegistry> {
+        Arc::new(SessionRegistry::new())
+    }
+
     async fn roundtrip(input: &str) -> String {
         let state = make_state();
+        let sessions = make_sessions();
         let (client, server) = tokio::io::duplex(4096);
 
-        let handle = tokio::spawn(handle_connection(state, server));
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
 
         let (client_reader, mut client_writer) = tokio::io::split(client);
         client_writer
@@ -194,9 +241,10 @@ mod tests {
     #[tokio::test]
     async fn test_notification_no_response() {
         let state = make_state();
+        let sessions = make_sessions();
         let (client, server) = tokio::io::duplex(4096);
 
-        let handle = tokio::spawn(handle_connection(state, server));
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
 
         let (client_reader, mut client_writer) = tokio::io::split(client);
         client_writer
@@ -220,5 +268,47 @@ mod tests {
     async fn test_unknown_method() {
         let line = roundtrip(r#"{"jsonrpc":"2.0","method":"bogus.call","id":99}"#).await;
         assert!(line.contains("-32601"));
+    }
+
+    #[tokio::test]
+    async fn test_btsp_negotiate_no_session() {
+        let line = roundtrip(
+            r#"{"jsonrpc":"2.0","method":"btsp.negotiate","params":{"session_id":"fake","preferred_cipher":"chacha20-poly1305","bond_type":"Covalent"},"id":10}"#,
+        ).await;
+        let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert!(resp["error"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_btsp_negotiate_with_session() {
+        let state = make_state();
+        let sessions = make_sessions();
+        sessions.insert("test-session-1".into(), None).await;
+
+        let (client, server) = tokio::io::duplex(4096);
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
+
+        let (client_reader, mut client_writer) = tokio::io::split(client);
+        let req = r#"{"jsonrpc":"2.0","method":"btsp.negotiate","params":{"session_id":"test-session-1","preferred_cipher":"chacha20-poly1305","bond_type":"Covalent"},"id":10}"#;
+        client_writer
+            .write_all(format!("{req}\n").as_bytes())
+            .await
+            .unwrap();
+        client_writer.shutdown().await.unwrap();
+
+        let mut reader = BufReader::new(client_reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout")
+            .unwrap();
+
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+
+        let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert!(resp["error"].is_null());
+        let result = &resp["result"];
+        assert_eq!(result["cipher"], "null");
+        assert!(result["server_nonce"].is_string());
     }
 }

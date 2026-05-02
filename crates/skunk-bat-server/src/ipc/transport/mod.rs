@@ -14,12 +14,15 @@
 
 mod btsp;
 mod config;
+pub mod negotiate;
 mod peek;
 mod sys;
 
 pub use config::{BtspConfig, BtspHandshakeConfig};
+pub use negotiate::SessionRegistry;
 
 use btsp::perform_server_handshake;
+use negotiate::SessionRegistry as BtspSessionRegistry;
 use peek::PeekedStream;
 use skunk_bat_core::SkunkBat;
 use std::sync::Arc;
@@ -34,6 +37,7 @@ use super::server::handle_connection;
 /// (biomeOS composition), otherwise BTSP framed handshake.
 pub async fn serve_tcp(
     state: Arc<RwLock<SkunkBat>>,
+    sessions: Arc<BtspSessionRegistry>,
     addr: String,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -53,13 +57,17 @@ pub async fn serve_tcp(
         tracing::debug!("TCP connection from {addr}");
         let state = Arc::clone(&state);
         let btsp = btsp_config.clone();
+        let sessions = Arc::clone(&sessions);
         tokio::spawn(async move {
             if let Some(ref cfg) = btsp {
                 let mut peek_buf = [0u8; 1];
                 let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
                 if n > 0 && peek_buf[0] != b'{' {
                     match perform_server_handshake(&mut stream, cfg).await {
-                        Ok(sid) => tracing::debug!("BTSP authenticated TCP {addr}: session={sid}"),
+                        Ok(sid) => {
+                            tracing::debug!("BTSP authenticated TCP {addr}: session={sid}");
+                            sessions.insert(sid, None).await;
+                        }
                         Err(e) => {
                             tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
                             return;
@@ -67,7 +75,7 @@ pub async fn serve_tcp(
                     }
                 }
             }
-            handle_connection(state, stream).await;
+            handle_connection(state, sessions, stream).await;
         });
     }
 }
@@ -80,6 +88,7 @@ pub async fn serve_tcp(
 #[cfg(unix)]
 pub async fn serve_uds(
     state: Arc<RwLock<SkunkBat>>,
+    sessions: Arc<BtspSessionRegistry>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     use tokio::io::AsyncReadExt;
     use tokio::net::UnixListener;
@@ -113,6 +122,7 @@ pub async fn serve_uds(
         tracing::debug!("UDS connection accepted");
         let state = Arc::clone(&state);
         let btsp = btsp_config.clone();
+        let sessions = Arc::clone(&sessions);
         tokio::spawn(async move {
             if let Some(ref cfg) = btsp {
                 let mut first = [0u8; 1];
@@ -126,16 +136,19 @@ pub async fn serve_uds(
                 };
                 if first[0] != b'{' {
                     match perform_server_handshake(&mut peeked, cfg).await {
-                        Ok(sid) => tracing::debug!("BTSP authenticated UDS: session={sid}"),
+                        Ok(sid) => {
+                            tracing::debug!("BTSP authenticated UDS: session={sid}");
+                            sessions.insert(sid, None).await;
+                        }
                         Err(e) => {
                             tracing::warn!("BTSP handshake failed UDS: {e}");
                             return;
                         }
                     }
                 }
-                handle_connection(state, peeked).await;
+                handle_connection(state, sessions, peeked).await;
             } else {
-                handle_connection(state, stream).await;
+                handle_connection(state, sessions, stream).await;
             }
         });
     }
@@ -144,6 +157,7 @@ pub async fn serve_uds(
 #[cfg(not(unix))]
 pub async fn serve_uds(
     _state: Arc<RwLock<SkunkBat>>,
+    _sessions: Arc<BtspSessionRegistry>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     tracing::warn!("Unix domain sockets not available on this platform");
     std::future::pending().await

@@ -21,6 +21,7 @@ use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::SkunkBat;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use transport::SessionRegistry;
 
 /// Start IPC listeners and serve until shutdown signal.
 ///
@@ -32,6 +33,7 @@ pub async fn serve(
     no_uds: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = Arc::new(RwLock::new(skunkbat));
+    let sessions = Arc::new(SessionRegistry::new());
 
     let socket_path = if no_uds {
         None
@@ -41,12 +43,20 @@ pub async fn serve(
             .map(|c| c.socket_path())
     };
 
-    let tcp_handle = tokio::spawn(transport::serve_tcp(Arc::clone(&state), addr, port));
+    let tcp_handle = tokio::spawn(transport::serve_tcp(
+        Arc::clone(&state),
+        Arc::clone(&sessions),
+        addr,
+        port,
+    ));
 
     let uds_handle = if no_uds {
         None
     } else {
-        Some(tokio::spawn(transport::serve_uds(Arc::clone(&state))))
+        Some(tokio::spawn(transport::serve_uds(
+            Arc::clone(&state),
+            Arc::clone(&sessions),
+        )))
     };
 
     tracing::info!("skunkBat IPC ready (TCP :{port}, UDS: {})", !no_uds);

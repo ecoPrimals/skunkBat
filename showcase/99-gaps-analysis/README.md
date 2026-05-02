@@ -14,7 +14,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 225 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Tests | 239 passing / 0 failures / 15 ignored (external-primal-gated) |
 | Coverage | 90.6% function, 89% line overall / 93%+ testable (cargo-llvm-cov) |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
@@ -23,7 +23,7 @@
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
 | sourdough-core | **INTERNALIZED** — zero cross-repo path deps, `primal_foundation` module |
-| Max file | 672 lines (`threats/mod.rs`); limit 1000; 38 source files |
+| Max file | 672 lines (`threats/mod.rs`); limit 1000; 39 source files |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)
@@ -43,7 +43,7 @@
 - **Batch requests** (JSON array dispatch)
 - **Notifications** (id-less requests produce no response, per spec §4.1)
 - Newline-delimited framing on TCP and UDS
-- BTSP Phase 1 socket naming + Phase 2 BearDog-delegated handshake (aligned with BearDog v0.9.0)
+- BTSP Phase 1 socket naming + Phase 2 BearDog-delegated handshake + Phase 3 `btsp.negotiate` server handler (NULL cipher fallback, ChaCha20-Poly1305 ready)
 - Wire Standard L2 (`capabilities.list`) and L3 (`identity.get`)
 - Capability symlinks (`security.sock`)
 

@@ -9,8 +9,8 @@ observability — all metadata-only, no content inspection by architecture.
 | Crate | Role | Type |
 |-------|------|------|
 | `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
-| `skunk-bat-integrations` | JSON-RPC 2.0 client, ToadStool discovery, Songbird federation | library |
-| `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2 (BearDog-delegated handshake), Wire Standard L2/L3 | binary |
+| `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
+| `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2/3 (BearDog-delegated handshake + `btsp.negotiate`), Wire Standard L2/L3 | binary |
 
 ## Key Concepts
 
@@ -25,8 +25,9 @@ observability — all metadata-only, no content inspection by architecture.
 - **Transport**: TCP (`--port`, default 9140) + UDS (`$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`)
 - **BTSP Phase 1**: `FAMILY_ID` socket scoping, `BIOMEOS_INSECURE` guard, `XDG_RUNTIME_DIR` fallback
 - **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with first-byte peek (`{` → plain JSON-RPC for biomeOS composition bypass)
+- **BTSP Phase 3**: `btsp.negotiate` server handler — session registry, cipher selection (NULL fallback, ChaCha20-Poly1305 ready), 12-byte server nonce generation
 - **Wire Standard**: `capabilities.list` (L2) and `identity.get` (L3) methods
-- **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`
+- **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `btsp.*`
 - **Capability Symlinks**: `security.sock` domain symlink created on bind
 
 ## Ecosystem Integration
@@ -82,11 +83,13 @@ Full spec compliance including:
 
 v0.2.0-dev — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. All `#[allow]` migrated to `#[expect(reason)]`. JSON-RPC IPC server with
-BTSP Phase 1/2 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned with v0.9.0)
+BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned with v0.9.0,
+`btsp.negotiate` server handler with session registry and ChaCha20-Poly1305 infrastructure)
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 38 source files, 8,317 lines, max 672 lines/file.
+No magic numbers — all thresholds named. 39 source files, 8,852 lines, max 672 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready (awaiting BearDog IPC surface).
+integration ready. 239 tests (127+48+64), pure Rust crypto deps wired (chacha20poly1305,
+hkdf, sha2, rand, hex).

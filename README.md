@@ -22,8 +22,8 @@ packet contents or tracking user behavior.
 - **Graduated Defense**: Monitor, Quarantine, Block — user authority preserved
 - **Statistical Baselines**: Learns YOUR network normal, not universal heuristics
 - **JSON-RPC 2.0**: Full spec — single, batch, and notification support
-- **BTSP Phase 1/2**: Socket naming, BearDog-delegated handshake on TCP + UDS,
-  first-byte peek for biomeOS composition bypass
+- **BTSP Phase 1/2/3**: Socket naming, BearDog-delegated handshake on TCP + UDS,
+  first-byte peek for biomeOS composition bypass, `btsp.negotiate` cipher negotiation
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -157,8 +157,8 @@ No primal names are hardcoded in production code.
 
 ### Consumed Capabilities
 
-`btsp.server.verify`, `lineage.verify`, `lineage.list`, `capabilities.list`,
-`federation.broadcast`, `discovery.find_by_capability`
+`btsp.server.verify`, `btsp.negotiate` (served), `lineage.verify`, `lineage.list`,
+`capabilities.list`, `federation.broadcast`, `discovery.find_by_capability`
 
 ---
 
@@ -173,7 +173,7 @@ No primal names are hardcoded in production code.
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — zero cross-repo path dependencies, no C dependencies
-- 225 tests passing, 90.6% function / 89% line coverage (llvm-cov)
+- 239 tests passing, 90%+ function coverage (llvm-cov)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 
