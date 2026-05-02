@@ -40,3 +40,41 @@ pub enum SkunkBatError {
     #[error("internal error: {0}")]
     Internal(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_display_messages() {
+        let e = SkunkBatError::Config("bad value".to_owned());
+        assert_eq!(e.to_string(), "configuration error: bad value");
+
+        let e = SkunkBatError::Reconnaissance("scan failed".to_owned());
+        assert!(e.to_string().contains("scan failed"));
+
+        let e = SkunkBatError::ThreatDetection("anomaly".to_owned());
+        assert!(e.to_string().contains("anomaly"));
+
+        let e = SkunkBatError::Defense("blocked".to_owned());
+        assert!(e.to_string().contains("blocked"));
+
+        let e = SkunkBatError::Observability("metrics lost".to_owned());
+        assert!(e.to_string().contains("metrics lost"));
+
+        let e = SkunkBatError::LineageVerification("unknown peer".to_owned());
+        assert!(e.to_string().contains("unknown peer"));
+
+        let e = SkunkBatError::Integration("timeout".to_owned());
+        assert!(e.to_string().contains("timeout"));
+
+        let e = SkunkBatError::Internal("panic".to_owned());
+        assert!(e.to_string().contains("panic"));
+    }
+
+    #[test]
+    fn error_is_std_error() {
+        let e: Box<dyn std::error::Error> = Box::new(SkunkBatError::Config("test".to_owned()));
+        assert!(e.to_string().contains("test"));
+    }
+}

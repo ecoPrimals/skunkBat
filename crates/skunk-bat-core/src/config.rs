@@ -63,3 +63,56 @@ impl Default for SkunkBatConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_feature_flags_all_enabled() {
+        let flags = FeatureFlags::default();
+        assert!(flags.reconnaissance);
+        assert!(flags.threat_detection);
+        assert!(flags.auto_defense);
+        assert!(flags.observability);
+    }
+
+    #[test]
+    fn config_default_uses_primal_name() {
+        let config = SkunkBatConfig::default();
+        assert_eq!(config.common.name, crate::PRIMAL_NAME);
+        assert!(config.lineage_id.is_none());
+    }
+
+    #[test]
+    fn config_serde_roundtrip() {
+        let config = SkunkBatConfig {
+            common: CommonConfig::default(),
+            features: FeatureFlags {
+                reconnaissance: true,
+                threat_detection: false,
+                auto_defense: true,
+                observability: false,
+            },
+            lineage_id: Some("family-alpha".to_owned()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: SkunkBatConfig = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.features.threat_detection);
+        assert_eq!(parsed.lineage_id.as_deref(), Some("family-alpha"));
+    }
+
+    #[test]
+    fn feature_flags_serde_roundtrip() {
+        let flags = FeatureFlags {
+            reconnaissance: false,
+            threat_detection: true,
+            auto_defense: false,
+            observability: true,
+        };
+        let json = serde_json::to_string(&flags).unwrap();
+        let parsed: FeatureFlags = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.reconnaissance);
+        assert!(parsed.threat_detection);
+    }
+}

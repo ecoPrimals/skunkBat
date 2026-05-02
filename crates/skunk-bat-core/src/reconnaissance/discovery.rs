@@ -74,3 +74,49 @@ impl TopologyMapper for SimpleTopologyMapper {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_node_has_self_knowledge() {
+        let node = LocalDiscovery::local_node();
+        assert_eq!(node.node_type, crate::PRIMAL_NAME);
+        assert!(matches!(node.status, NodeStatus::Healthy));
+        assert!(!node.capabilities.is_empty());
+        assert!(node.last_seen.is_some());
+    }
+
+    #[test]
+    fn local_node_address_has_fallback() {
+        let node = LocalDiscovery::local_node();
+        assert!(!node.address.is_empty());
+    }
+
+    #[test]
+    fn local_node_id_is_unique() {
+        let n1 = LocalDiscovery::local_node();
+        let n2 = LocalDiscovery::local_node();
+        assert!(!n1.id.is_empty());
+        assert!(!n2.id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn discover_all_returns_self() {
+        let discovery = LocalDiscovery;
+        let nodes = discovery.discover_all().await.unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_type, crate::PRIMAL_NAME);
+    }
+
+    #[tokio::test]
+    async fn simple_topology_mapper_empty() {
+        let mapper = SimpleTopologyMapper;
+        let connections = mapper.map_connections(&[]).await.unwrap();
+        assert!(connections.is_empty());
+
+        let mut scan = NetworkScan::default();
+        assert!(mapper.update_topology(&mut scan).await.is_ok());
+    }
+}
