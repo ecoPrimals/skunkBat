@@ -88,11 +88,12 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 39 source files, 9,540 lines, max 672 lines/file.
+No magic numbers — all thresholds named. 39 source files, 9,586 lines, max 672 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 287 tests (153+48+86), pure Rust crypto deps wired and tested
-(chacha20poly1305, hkdf, sha2, rand, hex — key derivation, encrypt/decrypt exercised).
-BTSP Phase 3 cipher minimum enforcement operational. Bond-type-based cipher selection
-fully implemented and tested. All `.to_string()` on literals evolved to `.to_owned()`;
-`.to_string_lossy().to_string()` evolved to `.into_owned()`.
+integration ready. 290 tests (153+48+89), pure Rust crypto deps wired and tested
+(chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
+BTSP Phase 3 aligned with `BearDog` reference implementation: base64 nonces,
+`client_nonce` from params, directional key derivation (`btsp-session-v1-c2s`/`s2c`),
+32-byte server nonce, `ciphers` array support. `select_best_cipher` matches ecosystem
+preference order (chacha20-poly1305 > hmac-plain > null).

@@ -52,6 +52,10 @@ impl CipherSuite {
 }
 
 /// Bond types that determine minimum cipher requirements.
+#[allow(
+    dead_code,
+    reason = "used in tests + future bond-type policy enforcement"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BondType {
     /// Covalent (genetic lineage) — any cipher allowed including null.
@@ -64,6 +68,7 @@ pub enum BondType {
 
 impl BondType {
     #[must_use]
+    #[allow(dead_code, reason = "used in tests + future bond-type policy")]
     pub fn from_str(s: &str) -> Self {
         match s {
             "Metallic" | "metallic" => Self::Metallic,
@@ -74,6 +79,7 @@ impl BondType {
 
     /// Minimum cipher required by this bond type.
     #[must_use]
+    #[allow(dead_code, reason = "used in tests + future bond-type policy")]
     pub const fn minimum_cipher(self) -> CipherSuite {
         match self {
             Self::Covalent => CipherSuite::Null,
@@ -94,11 +100,11 @@ pub struct SessionState {
     pub created_at: Instant,
     /// The negotiated cipher (initially Null after Phase 2).
     pub cipher: CipherSuite,
-    /// Session key from `BearDog`'s `btsp.session.verify` (if provided).
-    /// Required for Phase 3 encrypted framing.
+    /// Handshake key from `BearDog`'s `btsp.session.verify` (if provided).
+    /// Required for Phase 3 key derivation.
     pub session_key: Option<Vec<u8>>,
-    /// Server nonce generated during negotiate (12 bytes, hex-encoded on wire).
-    pub server_nonce: Option<[u8; 12]>,
+    /// Derived directional keys after Phase 3 negotiate (server perspective).
+    pub phase3_keys: Option<SessionKeys>,
 }
 
 /// Registry of active BTSP sessions.
@@ -124,7 +130,7 @@ impl SessionRegistry {
             created_at: Instant::now(),
             cipher: CipherSuite::Null,
             session_key,
-            server_nonce: None,
+            phase3_keys: None,
         };
         self.sessions.write().await.insert(session_id, state);
     }
@@ -134,16 +140,11 @@ impl SessionRegistry {
         self.sessions.read().await.get(session_id).cloned()
     }
 
-    /// Update a session after negotiate.
-    pub async fn update_cipher(
-        &self,
-        session_id: &str,
-        cipher: CipherSuite,
-        server_nonce: [u8; 12],
-    ) {
+    /// Update a session after Phase 3 negotiate completes.
+    pub async fn update_phase3(&self, session_id: &str, cipher: CipherSuite, keys: SessionKeys) {
         if let Some(session) = self.sessions.write().await.get_mut(session_id) {
             session.cipher = cipher;
-            session.server_nonce = Some(server_nonce);
+            session.phase3_keys = Some(keys);
         }
     }
 
@@ -162,24 +163,27 @@ impl SessionRegistry {
 
 /// Handle a `btsp.negotiate` request.
 ///
-/// Per BTSP Protocol Standard:
+/// Per BTSP Protocol Standard and `BearDog` reference implementation:
 /// 1. Validate `session_id` exists in registry
-/// 2. Check `bond_type` minimum cipher requirements
-/// 3. Generate 12-byte `server_nonce`
-/// 4. Return negotiated cipher + `server_nonce`
+/// 2. Decode `client_nonce` (base64)
+/// 3. Select best cipher from `ciphers` array or `preferred_cipher`
+/// 4. Generate 32-byte `server_nonce`
+/// 5. Derive directional session keys via HKDF-SHA256
+/// 6. Return negotiated cipher + `server_nonce` (base64)
 ///
-/// Currently returns `{"cipher":"null"}` because session key material
-/// from `BearDog` is not yet propagated through the handshake pipeline.
-/// When `BearDog`'s `btsp.session.verify` response includes a `session_key`,
-/// this will upgrade to `chacha20-poly1305` automatically.
+/// Returns `{"cipher":"null","server_nonce":""}` when no supported cipher
+/// is offered or no handshake key is available.
 pub async fn handle_negotiate(
     registry: &SessionRegistry,
     params: Option<serde_json::Value>,
 ) -> serde_json::Value {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+
     let Some(params) = params else {
         return serde_json::json!({
             "error": "params_required",
-            "message": "btsp.negotiate requires session_id, preferred_cipher, bond_type"
+            "message": "btsp.negotiate requires session_id, client_nonce, ciphers/preferred_cipher"
         });
     };
 
@@ -195,14 +199,26 @@ pub async fn handle_negotiate(
         });
     }
 
-    let preferred = params
-        .get("preferred_cipher")
+    let client_nonce_b64 = params
+        .get("client_nonce")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("null");
-    let bond_type = params
-        .get("bond_type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("Covalent");
+        .unwrap_or("");
+
+    let client_nonce = if client_nonce_b64.is_empty() {
+        Vec::new()
+    } else {
+        match BASE64.decode(client_nonce_b64) {
+            Ok(n) => n,
+            Err(e) => {
+                return serde_json::json!({
+                    "error": "invalid_client_nonce",
+                    "message": format!("base64 decode failed: {e}")
+                });
+            }
+        }
+    };
+
+    let offered_ciphers = extract_offered_ciphers(&params);
 
     let Some(session) = registry.get(session_id).await else {
         return serde_json::json!({
@@ -211,18 +227,27 @@ pub async fn handle_negotiate(
         });
     };
 
-    let requested = CipherSuite::from_str(preferred);
-    let bond = BondType::from_str(bond_type);
-    let minimum = bond.minimum_cipher();
+    let selected = select_best_cipher(&offered_ciphers, session.session_key.is_some());
 
-    let selected = select_cipher(requested, minimum, session.session_key.is_some());
+    if selected == CipherSuite::Null {
+        tracing::info!(
+            session_id = %session_id,
+            "BTSP Phase 3: returning null cipher (no key material or unsupported ciphers)"
+        );
+        return serde_json::json!({
+            "cipher": "null",
+            "server_nonce": ""
+        });
+    }
 
-    let server_nonce: [u8; 12] = rand::random();
-    let nonce_hex = hex::encode(server_nonce);
+    let mut server_nonce = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut server_nonce);
+    let server_nonce_b64 = BASE64.encode(server_nonce);
 
-    registry
-        .update_cipher(session_id, selected, server_nonce)
-        .await;
+    if let Some(ref handshake_key) = session.session_key {
+        let keys = derive_session_keys(handshake_key, &client_nonce, &server_nonce);
+        registry.update_phase3(session_id, selected, keys).await;
+    }
 
     tracing::info!(
         session_id = %session_id,
@@ -232,44 +257,54 @@ pub async fn handle_negotiate(
 
     serde_json::json!({
         "cipher": selected.as_str(),
-        "server_nonce": nonce_hex
+        "server_nonce": server_nonce_b64
     })
 }
 
-/// Select the best cipher given request, bond minimum, and key availability.
-///
-/// Enforces: if requested cipher is weaker than minimum, upgrades to minimum.
-/// Without key material, always falls back to Null (authenticated plaintext).
-const fn select_cipher(requested: CipherSuite, minimum: CipherSuite, has_key: bool) -> CipherSuite {
+/// Extract offered ciphers from params — accepts both `ciphers` array and
+/// `preferred_cipher` string (`BearDog`-compatible).
+#[expect(
+    clippy::option_if_let_else,
+    reason = "three-branch logic is clearest with if-let"
+)]
+fn extract_offered_ciphers(params: &serde_json::Value) -> Vec<CipherSuite> {
+    if let Some(arr) = params.get("ciphers").and_then(|v| v.as_array()) {
+        arr.iter()
+            .filter_map(|v| v.as_str())
+            .map(CipherSuite::from_str)
+            .collect()
+    } else if let Some(cipher) = params.get("preferred_cipher").and_then(|v| v.as_str()) {
+        vec![CipherSuite::from_str(cipher)]
+    } else {
+        vec![CipherSuite::Null]
+    }
+}
+
+/// Select the best cipher from client offers, respecting key availability.
+fn select_best_cipher(offered: &[CipherSuite], has_key: bool) -> CipherSuite {
     if !has_key {
         return CipherSuite::Null;
     }
 
-    if cipher_strength(requested) >= cipher_strength(minimum) {
-        requested
+    if offered.contains(&CipherSuite::ChaCha20Poly1305) {
+        CipherSuite::ChaCha20Poly1305
+    } else if offered.contains(&CipherSuite::HmacPlain) {
+        CipherSuite::HmacPlain
     } else {
-        minimum
-    }
-}
-
-/// Cipher strength ordering for comparison.
-const fn cipher_strength(cipher: CipherSuite) -> u8 {
-    match cipher {
-        CipherSuite::Null => 0,
-        CipherSuite::HmacPlain => 1,
-        CipherSuite::ChaCha20Poly1305 => 2,
+        CipherSuite::Null
     }
 }
 
 // ── BTSP Phase 3 Key Derivation ───────────────────────────────────────
 
 /// Derived session keys for bidirectional encrypted communication.
-#[allow(dead_code, reason = "activated once BearDog propagates session keys")]
 #[derive(Clone)]
 pub struct SessionKeys {
     /// Key for encrypting outbound frames (server → client).
+    #[allow(dead_code, reason = "read when encrypted framing is activated")]
     pub encrypt_key: [u8; 32],
     /// Key for decrypting inbound frames (client → server).
+    #[allow(dead_code, reason = "read when encrypted framing is activated")]
     pub decrypt_key: [u8; 32],
 }
 
@@ -284,41 +319,42 @@ impl std::fmt::Debug for SessionKeys {
 
 /// Derive bidirectional session keys from the handshake key and nonces.
 ///
-/// Uses HKDF-SHA256 per BTSP Protocol Standard:
+/// Per BTSP Protocol Standard (`BearDog` reference implementation):
 /// ```text
 /// HKDF-SHA256(
 ///   ikm = handshake_key,
-///   salt = "btsp-session-v1",
-///   info = client_nonce || server_nonce
-/// ) → 64 bytes → split into encrypt_key(32) + decrypt_key(32)
+///   salt = client_nonce || server_nonce
+/// )
+/// expand(info = "btsp-session-v1-c2s") → client_to_server key (32 bytes)
+/// expand(info = "btsp-session-v1-s2c") → server_to_client key (32 bytes)
 /// ```
-#[allow(dead_code, reason = "activated once BearDog propagates session keys")]
+///
+/// Server encrypts with `s2c` key, decrypts with `c2s` key.
 pub fn derive_session_keys(
     handshake_key: &[u8],
-    client_nonce: &[u8; 12],
-    server_nonce: &[u8; 12],
+    client_nonce: &[u8],
+    server_nonce: &[u8],
 ) -> SessionKeys {
     use hkdf::Hkdf;
     use sha2::Sha256;
 
-    let salt = b"btsp-session-v1";
-    let mut info = [0u8; 24];
-    info[..12].copy_from_slice(client_nonce);
-    info[12..].copy_from_slice(server_nonce);
+    let mut salt = Vec::with_capacity(client_nonce.len() + server_nonce.len());
+    salt.extend_from_slice(client_nonce);
+    salt.extend_from_slice(server_nonce);
 
-    let hk = Hkdf::<Sha256>::new(Some(salt), handshake_key);
-    let mut okm = [0u8; 64];
-    hk.expand(&info, &mut okm)
-        .expect("64 bytes is within HKDF-SHA256 output limit");
+    let hk = Hkdf::<Sha256>::new(Some(&salt), handshake_key);
 
-    let mut encrypt_key = [0u8; 32];
-    let mut decrypt_key = [0u8; 32];
-    encrypt_key.copy_from_slice(&okm[..32]);
-    decrypt_key.copy_from_slice(&okm[32..]);
+    let mut client_to_server = [0u8; 32];
+    hk.expand(b"btsp-session-v1-c2s", &mut client_to_server)
+        .expect("32 bytes is within HKDF-SHA256 output limit");
+
+    let mut server_to_client = [0u8; 32];
+    hk.expand(b"btsp-session-v1-s2c", &mut server_to_client)
+        .expect("32 bytes is within HKDF-SHA256 output limit");
 
     SessionKeys {
-        encrypt_key,
-        decrypt_key,
+        encrypt_key: server_to_client,
+        decrypt_key: client_to_server,
     }
 }
 
@@ -427,12 +463,14 @@ mod tests {
         let session = reg.get("ses-1").await.unwrap();
         assert_eq!(session.cipher, CipherSuite::Null);
         assert!(session.session_key.is_none());
+        assert!(session.phase3_keys.is_none());
 
-        reg.update_cipher("ses-1", CipherSuite::ChaCha20Poly1305, [0xAA; 12])
+        let keys = derive_session_keys(&[0x42; 32], &[0x01; 12], &[0x02; 32]);
+        reg.update_phase3("ses-1", CipherSuite::ChaCha20Poly1305, keys)
             .await;
         let updated = reg.get("ses-1").await.unwrap();
         assert_eq!(updated.cipher, CipherSuite::ChaCha20Poly1305);
-        assert_eq!(updated.server_nonce, Some([0xAA; 12]));
+        assert!(updated.phase3_keys.is_some());
 
         reg.remove("ses-1").await;
         assert!(reg.get("ses-1").await.is_none());
@@ -497,80 +535,88 @@ mod tests {
 
     #[tokio::test]
     async fn negotiate_chacha_with_key() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as BASE64;
+
         let reg = SessionRegistry::new();
         reg.insert("ses-withkey".into(), Some(vec![0x42; 32])).await;
 
+        let client_nonce = BASE64.encode([0x01u8; 16]);
         let params = serde_json::json!({
             "session_id": "ses-withkey",
-            "preferred_cipher": "chacha20-poly1305",
+            "ciphers": ["chacha20-poly1305"],
+            "client_nonce": client_nonce,
             "bond_type": "Covalent"
         });
         let result = handle_negotiate(&reg, Some(params)).await;
         assert_eq!(result["cipher"], "chacha20-poly1305");
         assert!(result["server_nonce"].is_string());
 
-        let nonce_hex = result["server_nonce"].as_str().unwrap();
-        assert_eq!(nonce_hex.len(), 24); // 12 bytes = 24 hex chars
+        let nonce_b64 = result["server_nonce"].as_str().unwrap();
+        let decoded = BASE64.decode(nonce_b64).unwrap();
+        assert_eq!(decoded.len(), 32); // 32-byte server nonce
+
+        let session = reg.get("ses-withkey").await.unwrap();
+        assert_eq!(session.cipher, CipherSuite::ChaCha20Poly1305);
+        assert!(session.phase3_keys.is_some());
     }
 
     #[test]
-    fn select_cipher_no_key_always_null() {
-        assert_eq!(
-            select_cipher(CipherSuite::ChaCha20Poly1305, CipherSuite::Null, false),
-            CipherSuite::Null
-        );
-        assert_eq!(
-            select_cipher(
-                CipherSuite::ChaCha20Poly1305,
-                CipherSuite::ChaCha20Poly1305,
-                false
-            ),
-            CipherSuite::Null
-        );
+    fn select_best_cipher_no_key_always_null() {
+        let offered = vec![CipherSuite::ChaCha20Poly1305];
+        assert_eq!(select_best_cipher(&offered, false), CipherSuite::Null);
     }
 
     #[test]
-    fn select_cipher_with_key_honors_request() {
+    fn select_best_cipher_prefers_chacha20() {
+        let offered = vec![
+            CipherSuite::Null,
+            CipherSuite::ChaCha20Poly1305,
+            CipherSuite::HmacPlain,
+        ];
         assert_eq!(
-            select_cipher(CipherSuite::ChaCha20Poly1305, CipherSuite::Null, true),
+            select_best_cipher(&offered, true),
             CipherSuite::ChaCha20Poly1305
         );
-        assert_eq!(
-            select_cipher(CipherSuite::HmacPlain, CipherSuite::Null, true),
-            CipherSuite::HmacPlain
-        );
     }
 
     #[test]
-    fn select_cipher_enforces_minimum() {
-        assert_eq!(
-            select_cipher(CipherSuite::Null, CipherSuite::HmacPlain, true),
-            CipherSuite::HmacPlain,
-            "Metallic bond requires at minimum HMAC"
-        );
-        assert_eq!(
-            select_cipher(CipherSuite::HmacPlain, CipherSuite::ChaCha20Poly1305, true),
-            CipherSuite::ChaCha20Poly1305,
-            "Ionic bond requires full encryption"
-        );
-        assert_eq!(
-            select_cipher(
-                CipherSuite::ChaCha20Poly1305,
-                CipherSuite::ChaCha20Poly1305,
-                true
-            ),
-            CipherSuite::ChaCha20Poly1305,
-            "Request matches minimum"
-        );
+    fn select_best_cipher_falls_back_to_hmac() {
+        let offered = vec![CipherSuite::Null, CipherSuite::HmacPlain];
+        assert_eq!(select_best_cipher(&offered, true), CipherSuite::HmacPlain);
     }
 
     #[test]
-    fn cipher_strength_ordering() {
-        assert!(cipher_strength(CipherSuite::Null) < cipher_strength(CipherSuite::HmacPlain));
-        assert!(
-            cipher_strength(CipherSuite::HmacPlain)
-                < cipher_strength(CipherSuite::ChaCha20Poly1305)
-        );
+    fn select_best_cipher_null_only() {
+        let offered = vec![CipherSuite::Null];
+        assert_eq!(select_best_cipher(&offered, true), CipherSuite::Null);
+    }
+
+    #[test]
+    fn extract_offered_ciphers_from_array() {
+        let params = serde_json::json!({
+            "ciphers": ["chacha20-poly1305", "hmac-plain"]
+        });
+        let ciphers = extract_offered_ciphers(&params);
+        assert_eq!(ciphers.len(), 2);
+        assert!(ciphers.contains(&CipherSuite::ChaCha20Poly1305));
+        assert!(ciphers.contains(&CipherSuite::HmacPlain));
+    }
+
+    #[test]
+    fn extract_offered_ciphers_from_preferred() {
+        let params = serde_json::json!({
+            "preferred_cipher": "chacha20-poly1305"
+        });
+        let ciphers = extract_offered_ciphers(&params);
+        assert_eq!(ciphers, vec![CipherSuite::ChaCha20Poly1305]);
+    }
+
+    #[test]
+    fn extract_offered_ciphers_fallback_null() {
+        let params = serde_json::json!({});
+        let ciphers = extract_offered_ciphers(&params);
+        assert_eq!(ciphers, vec![CipherSuite::Null]);
     }
 
     // ── Key Derivation Tests ──────────────────────────────────────────
