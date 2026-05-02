@@ -13,7 +13,7 @@ Interactive demonstrations of skunkBat's sovereign, defensive security capabilit
 - **Security Observability** — Metrics, logging, health monitoring
 - **Federation** — Coordinate defense across trusted peers via JSON-RPC
 - **Genetic Trust** — BearDog lineage verification
-- **IPC** — JSON-RPC 2.0 server on TCP + UDS with BTSP Phase 1/2 (BearDog-delegated handshake)
+- **IPC** — JSON-RPC 2.0 server on TCP + UDS with BTSP Phase 1/2/3 (BearDog-delegated handshake + cipher negotiation)
 
 ---
 

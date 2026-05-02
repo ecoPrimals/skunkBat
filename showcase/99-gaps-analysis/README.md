@@ -4,7 +4,7 @@
 
 **Current state vs what's needed for complete skunkBat deployment.**
 
-*Updated: April 2026*
+*Updated: May 2, 2026*
 
 ---
 
