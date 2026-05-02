@@ -127,3 +127,122 @@ pub struct PathValidation {
     /// Bypassed layers (if any)
     pub bypassed_layers: Vec<u8>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn threat_serde_roundtrip() {
+        let threat = Threat {
+            id: "threat-001".to_owned(),
+            threat_type: ThreatType::IntrusionAttempt {
+                attack_type: "port-scan".to_owned(),
+                signature: "nmap".to_owned(),
+            },
+            severity: Severity::High,
+            source: "192.168.1.100".to_owned(),
+            target: "192.168.1.1".to_owned(),
+            detected_at: SystemTime::UNIX_EPOCH,
+            description: "Port scan detected".to_owned(),
+            confidence: 0.85,
+        };
+
+        let json = serde_json::to_string(&threat).unwrap();
+        let parsed: Threat = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "threat-001");
+        assert_eq!(parsed.severity, Severity::High);
+    }
+
+    #[test]
+    fn severity_ordering() {
+        assert!(Severity::Low < Severity::Medium);
+        assert!(Severity::Medium < Severity::High);
+        assert!(Severity::High < Severity::Critical);
+    }
+
+    #[test]
+    fn threat_type_unknown_lineage_serde() {
+        let tt = ThreatType::UnknownLineage {
+            peer_id: "peer-xyz".to_owned(),
+            lineage: Some("family-a".to_owned()),
+        };
+        let json = serde_json::to_value(&tt).unwrap();
+        assert!(json["UnknownLineage"]["peer_id"].is_string());
+    }
+
+    #[test]
+    fn threat_type_dos_serde() {
+        let tt = ThreatType::DenialOfService {
+            resource: "cpu".to_owned(),
+            current_level: 0.95,
+        };
+        let json = serde_json::to_value(&tt).unwrap();
+        let parsed: ThreatType = serde_json::from_value(json).unwrap();
+        match parsed {
+            ThreatType::DenialOfService {
+                resource,
+                current_level,
+            } => {
+                assert_eq!(resource, "cpu");
+                assert!((current_level - 0.95).abs() < f64::EPSILON);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn threat_type_topology_violation_serde() {
+        let tt = ThreatType::TopologyViolation {
+            expected_path: vec![1, 2, 3],
+            actual_path: vec![1, 3],
+            bypassed_layers: vec![2],
+        };
+        let json = serde_json::to_string(&tt).unwrap();
+        let parsed: ThreatType = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ThreatType::TopologyViolation {
+                bypassed_layers, ..
+            } => assert_eq!(bypassed_layers, vec![2]),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn observation_serde_roundtrip() {
+        let obs = Observation {
+            connection_rate: 42.5,
+            traffic_volume: 1_000_000,
+            ports_accessed: vec![80, 443, 8080],
+            timestamp: SystemTime::UNIX_EPOCH,
+        };
+        let json = serde_json::to_string(&obs).unwrap();
+        let parsed: Observation = serde_json::from_str(&json).unwrap();
+        assert!((parsed.connection_rate - 42.5).abs() < f64::EPSILON);
+        assert_eq!(parsed.ports_accessed.len(), 3);
+    }
+
+    #[test]
+    fn anomaly_serde_roundtrip() {
+        let anomaly = Anomaly {
+            deviation: 3.5,
+            behavior: "spike".to_owned(),
+            confidence: 0.9,
+        };
+        let json = serde_json::to_string(&anomaly).unwrap();
+        let parsed: Anomaly = serde_json::from_str(&json).unwrap();
+        assert!((parsed.deviation - 3.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn path_validation_construction() {
+        let pv = PathValidation {
+            is_valid: false,
+            expected_path: vec![1, 2, 3],
+            actual_path: vec![1, 3],
+            bypassed_layers: vec![2],
+        };
+        assert!(!pv.is_valid);
+        assert_eq!(pv.bypassed_layers.len(), 1);
+    }
+}

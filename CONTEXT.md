@@ -75,9 +75,9 @@ Full spec compliance including:
 
 ## Tests
 
-225 tests passing (127 core + 48 integrations + 50 server + 7 binary + 9 chaos + 3 e2e + doctests),
-15 ignored (gated behind external primals). 12 working examples. 90.6% function coverage
-(llvm-cov, 89% line overall — 93%+ testable code); core ~96%, btsp ~94%, dispatch ~97%, threats ~95%.
+287 tests passing (153 core + 48 integrations + 86 server), all workspace lib+bins.
+90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
+crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 
 ## Status
 
@@ -88,8 +88,11 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 39 source files, 8,852 lines, max 672 lines/file.
+No magic numbers — all thresholds named. 39 source files, 9,540 lines, max 672 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 239 tests (127+48+64), pure Rust crypto deps wired (chacha20poly1305,
-hkdf, sha2, rand, hex).
+integration ready. 287 tests (153+48+86), pure Rust crypto deps wired and tested
+(chacha20poly1305, hkdf, sha2, rand, hex — key derivation, encrypt/decrypt exercised).
+BTSP Phase 3 cipher minimum enforcement operational. Bond-type-based cipher selection
+fully implemented and tested. All `.to_string()` on literals evolved to `.to_owned()`;
+`.to_string_lossy().to_string()` evolved to `.into_owned()`.

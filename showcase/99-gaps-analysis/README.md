@@ -14,8 +14,8 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 239 passing / 0 failures / 15 ignored (external-primal-gated) |
-| Coverage | 90.6% function, 89% line overall / 93%+ testable (cargo-llvm-cov) |
+| Tests | 287 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Coverage | 90%+ function (cargo-llvm-cov); crypto 100%, behavioral 100%, threats ~98% |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
 | Docs | CLEAN — `cargo doc --no-deps`, zero warnings |

@@ -237,19 +237,142 @@ pub async fn handle_negotiate(
 }
 
 /// Select the best cipher given request, bond minimum, and key availability.
-const fn select_cipher(
-    requested: CipherSuite,
-    _minimum: CipherSuite,
-    has_key: bool,
-) -> CipherSuite {
+///
+/// Enforces: if requested cipher is weaker than minimum, upgrades to minimum.
+/// Without key material, always falls back to Null (authenticated plaintext).
+const fn select_cipher(requested: CipherSuite, minimum: CipherSuite, has_key: bool) -> CipherSuite {
     if !has_key {
         return CipherSuite::Null;
     }
 
-    // When we have key material, honor the request (or fall back to minimum).
-    // For now, key material is never available (BearDog integration pending),
-    // so this path is exercised only in tests.
-    requested
+    if cipher_strength(requested) >= cipher_strength(minimum) {
+        requested
+    } else {
+        minimum
+    }
+}
+
+/// Cipher strength ordering for comparison.
+const fn cipher_strength(cipher: CipherSuite) -> u8 {
+    match cipher {
+        CipherSuite::Null => 0,
+        CipherSuite::HmacPlain => 1,
+        CipherSuite::ChaCha20Poly1305 => 2,
+    }
+}
+
+// ── BTSP Phase 3 Key Derivation ───────────────────────────────────────
+
+/// Derived session keys for bidirectional encrypted communication.
+#[allow(dead_code, reason = "activated once BearDog propagates session keys")]
+#[derive(Clone)]
+pub struct SessionKeys {
+    /// Key for encrypting outbound frames (server → client).
+    pub encrypt_key: [u8; 32],
+    /// Key for decrypting inbound frames (client → server).
+    pub decrypt_key: [u8; 32],
+}
+
+impl std::fmt::Debug for SessionKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionKeys")
+            .field("encrypt_key", &"[REDACTED]")
+            .field("decrypt_key", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Derive bidirectional session keys from the handshake key and nonces.
+///
+/// Uses HKDF-SHA256 per BTSP Protocol Standard:
+/// ```text
+/// HKDF-SHA256(
+///   ikm = handshake_key,
+///   salt = "btsp-session-v1",
+///   info = client_nonce || server_nonce
+/// ) → 64 bytes → split into encrypt_key(32) + decrypt_key(32)
+/// ```
+#[allow(dead_code, reason = "activated once BearDog propagates session keys")]
+pub fn derive_session_keys(
+    handshake_key: &[u8],
+    client_nonce: &[u8; 12],
+    server_nonce: &[u8; 12],
+) -> SessionKeys {
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+
+    let salt = b"btsp-session-v1";
+    let mut info = [0u8; 24];
+    info[..12].copy_from_slice(client_nonce);
+    info[12..].copy_from_slice(server_nonce);
+
+    let hk = Hkdf::<Sha256>::new(Some(salt), handshake_key);
+    let mut okm = [0u8; 64];
+    hk.expand(&info, &mut okm)
+        .expect("64 bytes is within HKDF-SHA256 output limit");
+
+    let mut encrypt_key = [0u8; 32];
+    let mut decrypt_key = [0u8; 32];
+    encrypt_key.copy_from_slice(&okm[..32]);
+    decrypt_key.copy_from_slice(&okm[32..]);
+
+    SessionKeys {
+        encrypt_key,
+        decrypt_key,
+    }
+}
+
+/// Encrypt a single BTSP frame using `ChaCha20-Poly1305`.
+///
+/// Returns the ciphertext with appended Poly1305 tag (16 bytes).
+/// The `frame_counter` is used to construct the 12-byte nonce.
+#[allow(
+    dead_code,
+    reason = "activated once encrypted framing is wired into handle_connection"
+)]
+pub fn encrypt_frame(
+    key: &[u8; 32],
+    frame_counter: u64,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::{Aead, KeyInit};
+    use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+
+    let cipher = ChaCha20Poly1305::new(key.into());
+
+    let mut nonce_bytes = [0u8; 12];
+    nonce_bytes[4..].copy_from_slice(&frame_counter.to_be_bytes());
+    let nonce = Nonce::from(nonce_bytes);
+
+    cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| format!("encrypt failed: {e}"))
+}
+
+/// Decrypt a single BTSP frame using `ChaCha20-Poly1305`.
+///
+/// Expects ciphertext with appended Poly1305 tag.
+#[allow(
+    dead_code,
+    reason = "activated once encrypted framing is wired into handle_connection"
+)]
+pub fn decrypt_frame(
+    key: &[u8; 32],
+    frame_counter: u64,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::{Aead, KeyInit};
+    use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+
+    let cipher = ChaCha20Poly1305::new(key.into());
+
+    let mut nonce_bytes = [0u8; 12];
+    nonce_bytes[4..].copy_from_slice(&frame_counter.to_be_bytes());
+    let nonce = Nonce::from(nonce_bytes);
+
+    cipher
+        .decrypt(&nonce, ciphertext)
+        .map_err(|e| format!("decrypt failed: {e}"))
 }
 
 #[cfg(test)]
@@ -416,5 +539,151 @@ mod tests {
             select_cipher(CipherSuite::HmacPlain, CipherSuite::Null, true),
             CipherSuite::HmacPlain
         );
+    }
+
+    #[test]
+    fn select_cipher_enforces_minimum() {
+        assert_eq!(
+            select_cipher(CipherSuite::Null, CipherSuite::HmacPlain, true),
+            CipherSuite::HmacPlain,
+            "Metallic bond requires at minimum HMAC"
+        );
+        assert_eq!(
+            select_cipher(CipherSuite::HmacPlain, CipherSuite::ChaCha20Poly1305, true),
+            CipherSuite::ChaCha20Poly1305,
+            "Ionic bond requires full encryption"
+        );
+        assert_eq!(
+            select_cipher(
+                CipherSuite::ChaCha20Poly1305,
+                CipherSuite::ChaCha20Poly1305,
+                true
+            ),
+            CipherSuite::ChaCha20Poly1305,
+            "Request matches minimum"
+        );
+    }
+
+    #[test]
+    fn cipher_strength_ordering() {
+        assert!(cipher_strength(CipherSuite::Null) < cipher_strength(CipherSuite::HmacPlain));
+        assert!(
+            cipher_strength(CipherSuite::HmacPlain)
+                < cipher_strength(CipherSuite::ChaCha20Poly1305)
+        );
+    }
+
+    // ── Key Derivation Tests ──────────────────────────────────────────
+
+    #[test]
+    fn derive_session_keys_deterministic() {
+        let handshake_key = [0x42u8; 32];
+        let client_nonce = [0x01u8; 12];
+        let server_nonce = [0x02u8; 12];
+
+        let keys1 = derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
+        let keys2 = derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
+
+        assert_eq!(keys1.encrypt_key, keys2.encrypt_key);
+        assert_eq!(keys1.decrypt_key, keys2.decrypt_key);
+    }
+
+    #[test]
+    fn derive_session_keys_different_nonces_different_keys() {
+        let handshake_key = [0x42u8; 32];
+        let client_nonce = [0x01u8; 12];
+        let server_nonce_a = [0x02u8; 12];
+        let server_nonce_b = [0x03u8; 12];
+
+        let keys_a = derive_session_keys(&handshake_key, &client_nonce, &server_nonce_a);
+        let keys_b = derive_session_keys(&handshake_key, &client_nonce, &server_nonce_b);
+
+        assert_ne!(keys_a.encrypt_key, keys_b.encrypt_key);
+    }
+
+    #[test]
+    fn derive_session_keys_encrypt_decrypt_differ() {
+        let handshake_key = [0x42u8; 32];
+        let client_nonce = [0x01u8; 12];
+        let server_nonce = [0x02u8; 12];
+
+        let keys = derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
+        assert_ne!(keys.encrypt_key, keys.decrypt_key);
+    }
+
+    #[test]
+    fn session_keys_debug_redacts() {
+        let keys = derive_session_keys(&[0x42; 32], &[0x01; 12], &[0x02; 12]);
+        let debug = format!("{keys:?}");
+        assert!(debug.contains("REDACTED"));
+        assert!(!debug.contains("42"));
+    }
+
+    // ── Encrypt/Decrypt Tests ─────────────────────────────────────────
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let key = derive_session_keys(&[0xAA; 32], &[0x01; 12], &[0x02; 12]);
+        let plaintext = b"hello btsp phase 3";
+
+        let ciphertext = encrypt_frame(&key.encrypt_key, 0, plaintext).unwrap();
+        assert_ne!(ciphertext.as_slice(), plaintext.as_slice());
+        assert!(ciphertext.len() > plaintext.len()); // tag adds 16 bytes
+
+        let decrypted = decrypt_frame(&key.encrypt_key, 0, &ciphertext).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn encrypt_different_counters_different_ciphertext() {
+        let key = [0xBB; 32];
+        let plaintext = b"same plaintext";
+
+        let ct0 = encrypt_frame(&key, 0, plaintext).unwrap();
+        let ct1 = encrypt_frame(&key, 1, plaintext).unwrap();
+        assert_ne!(ct0, ct1);
+    }
+
+    #[test]
+    fn decrypt_wrong_counter_fails() {
+        let key = [0xCC; 32];
+        let plaintext = b"sensitive data";
+
+        let ciphertext = encrypt_frame(&key, 42, plaintext).unwrap();
+        let result = decrypt_frame(&key, 43, &ciphertext);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_wrong_key_fails() {
+        let key_a = [0xDD; 32];
+        let key_b = [0xEE; 32];
+        let plaintext = b"classified";
+
+        let ciphertext = encrypt_frame(&key_a, 0, plaintext).unwrap();
+        let result = decrypt_frame(&key_b, 0, &ciphertext);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_tampered_ciphertext_fails() {
+        let key = [0xFF; 32];
+        let plaintext = b"integrity check";
+
+        let mut ciphertext = encrypt_frame(&key, 0, plaintext).unwrap();
+        if let Some(byte) = ciphertext.get_mut(5) {
+            *byte ^= 0x01;
+        }
+        let result = decrypt_frame(&key, 0, &ciphertext);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encrypt_empty_payload() {
+        let key = [0x11; 32];
+        let ciphertext = encrypt_frame(&key, 0, b"").unwrap();
+        assert_eq!(ciphertext.len(), 16); // just the tag
+        let decrypted = decrypt_frame(&key, 0, &ciphertext).unwrap();
+        assert!(decrypted.is_empty());
     }
 }

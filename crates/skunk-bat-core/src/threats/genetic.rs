@@ -67,3 +67,61 @@ impl TopologyValidator for LayerTopologyValidator {
         self.expected_path.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn local_lineage_always_denies() {
+        let verifier = LocalLineageVerifier;
+        assert!(!verifier.is_family("any-peer").await.unwrap());
+        assert!(!verifier.is_family("trusted-peer").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn local_lineage_returns_no_lineage() {
+        let verifier = LocalLineageVerifier;
+        assert!(verifier.get_lineage("any-peer").await.unwrap().is_none());
+    }
+
+    #[test]
+    fn topology_validator_construction() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3, 4]);
+        assert_eq!(validator.expected_path(), vec![1, 2, 3, 4]);
+    }
+
+    #[tokio::test]
+    async fn topology_valid_path() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3]);
+        let result = validator.validate_path(&[1, 2, 3]).await.unwrap();
+        assert!(result.is_valid);
+        assert!(result.bypassed_layers.is_empty());
+        assert_eq!(result.expected_path, vec![1, 2, 3]);
+        assert_eq!(result.actual_path, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn topology_invalid_path_detects_bypass() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3, 4]);
+        let result = validator.validate_path(&[1, 4]).await.unwrap();
+        assert!(!result.is_valid);
+        assert_eq!(result.bypassed_layers, vec![2, 3]);
+    }
+
+    #[tokio::test]
+    async fn topology_empty_actual_path() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3]);
+        let result = validator.validate_path(&[]).await.unwrap();
+        assert!(!result.is_valid);
+        assert_eq!(result.bypassed_layers, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn topology_empty_expected_path() {
+        let validator = LayerTopologyValidator::new(vec![]);
+        let result = validator.validate_path(&[1, 2]).await.unwrap();
+        assert!(!result.is_valid);
+        assert!(result.bypassed_layers.is_empty());
+    }
+}

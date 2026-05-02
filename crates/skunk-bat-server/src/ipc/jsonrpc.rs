@@ -113,3 +113,117 @@ impl Request {
         self.id.clone().unwrap_or(serde_json::Value::Null)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn request_serde_roundtrip() {
+        let req = Request {
+            jsonrpc: "2.0".to_owned(),
+            method: "security.scan".to_owned(),
+            params: Some(json!({"scope": "local"})),
+            id: Some(json!(1)),
+        };
+        let json_str = serde_json::to_string(&req).unwrap();
+        let parsed: Request = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.method, "security.scan");
+        assert_eq!(parsed.id, Some(json!(1)));
+    }
+
+    #[test]
+    fn request_notification_no_id() {
+        let req = Request {
+            jsonrpc: "2.0".to_owned(),
+            method: "event.alert".to_owned(),
+            params: None,
+            id: None,
+        };
+        assert!(req.is_notification());
+        assert_eq!(req.id_or_null(), serde_json::Value::Null);
+    }
+
+    #[test]
+    fn request_validate_correct_version() {
+        let req = Request {
+            jsonrpc: "2.0".to_owned(),
+            method: "test".to_owned(),
+            params: None,
+            id: Some(json!(1)),
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn request_validate_wrong_version() {
+        let req = Request {
+            jsonrpc: "1.0".to_owned(),
+            method: "test".to_owned(),
+            params: None,
+            id: Some(json!(1)),
+        };
+        let err = req.validate().unwrap_err();
+        assert!(err.error.is_some());
+        assert_eq!(err.error.unwrap().code, INVALID_REQUEST);
+    }
+
+    #[test]
+    fn response_success_construction() {
+        let resp = Response::success(json!(42), json!({"status": "ok"}));
+        assert_eq!(resp.jsonrpc, "2.0");
+        assert_eq!(resp.id, json!(42));
+        assert!(resp.result.is_some());
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn response_error_construction() {
+        let resp = Response::error(json!(1), METHOD_NOT_FOUND, "not found");
+        assert_eq!(resp.jsonrpc, "2.0");
+        assert!(resp.result.is_none());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, METHOD_NOT_FOUND);
+        assert_eq!(err.message, "not found");
+    }
+
+    #[test]
+    fn response_serde_roundtrip_success() {
+        let resp = Response::success(json!(7), json!([1, 2, 3]));
+        let json_str = serde_json::to_string(&resp).unwrap();
+        let parsed: Response = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.id, json!(7));
+        assert!(parsed.error.is_none());
+    }
+
+    #[test]
+    fn response_serde_roundtrip_error() {
+        let resp = Response::error(json!("abc"), PARSE_ERROR, "invalid json");
+        let json_str = serde_json::to_string(&resp).unwrap();
+        let parsed: Response = serde_json::from_str(&json_str).unwrap();
+        assert!(parsed.result.is_none());
+        assert_eq!(parsed.error.as_ref().unwrap().code, PARSE_ERROR);
+    }
+
+    #[test]
+    fn notification_skips_id_in_serialization() {
+        let req = Request {
+            jsonrpc: "2.0".to_owned(),
+            method: "event.notify".to_owned(),
+            params: None,
+            id: None,
+        };
+        let json_str = serde_json::to_string(&req).unwrap();
+        assert!(!json_str.contains("\"id\""));
+    }
+
+    #[test]
+    fn error_codes_are_standard() {
+        assert_eq!(PARSE_ERROR, -32700);
+        assert_eq!(INVALID_REQUEST, -32600);
+        assert_eq!(METHOD_NOT_FOUND, -32601);
+        assert_eq!(INVALID_PARAMS, -32602);
+        assert_eq!(INTERNAL_ERROR, -32603);
+    }
+}

@@ -35,7 +35,7 @@ impl BtspConfig {
 
         if family_id.is_some() && insecure {
             return Err(
-                "BTSP guard: FAMILY_ID and BIOMEOS_INSECURE=1 cannot both be set".to_string(),
+                "BTSP guard: FAMILY_ID and BIOMEOS_INSECURE=1 cannot both be set".to_owned(),
             );
         }
 

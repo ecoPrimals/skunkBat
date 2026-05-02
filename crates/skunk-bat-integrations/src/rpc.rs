@@ -88,7 +88,7 @@ pub async fn call(
         return call_tcp(addr, method, params, timeout).await;
     }
 
-    Err("no endpoint available".to_string())
+    Err("no endpoint available".to_owned())
 }
 
 /// Send a JSON-RPC request over a Unix domain socket.
@@ -167,7 +167,7 @@ where
 
     tokio::time::timeout(timeout, lines.read_line(&mut line))
         .await
-        .map_err(|_| "timeout reading response".to_string())?
+        .map_err(|_| "timeout reading response".to_owned())?
         .map_err(|e| format!("read: {e}"))?;
 
     let resp: RpcResponse =
@@ -177,7 +177,7 @@ where
         return Err(format!("rpc error {}: {}", err.code, err.message));
     }
 
-    resp.result.ok_or_else(|| "null result".to_string())
+    resp.result.ok_or_else(|| "null result".to_owned())
 }
 
 fn proc_uid() -> u32 {

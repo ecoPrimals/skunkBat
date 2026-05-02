@@ -196,14 +196,14 @@ impl DiscoveryClient {
                 continue;
             }
 
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.to_string_lossy().into_owned();
 
             #[cfg(unix)]
             if let Ok(value) =
                 crate::rpc::call_uds(&path_str, "capabilities.list", None, timeout).await
             {
-                let service_id = value["primal"].as_str().unwrap_or("unknown").to_string();
-                let version = value["version"].as_str().unwrap_or("0.0.0").to_string();
+                let service_id = value["primal"].as_str().unwrap_or("unknown").to_owned();
+                let version = value["version"].as_str().unwrap_or("0.0.0").to_owned();
                 let capabilities = value["provided_capabilities"]
                     .as_array()
                     .map(|arr| {
