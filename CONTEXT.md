@@ -25,7 +25,7 @@ observability — all metadata-only, no content inspection by architecture.
 - **Transport**: TCP (`--port`, default 9140) + UDS (`$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`)
 - **BTSP Phase 1**: `FAMILY_ID` socket scoping, `BIOMEOS_INSECURE` guard, `XDG_RUNTIME_DIR` fallback
 - **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with first-byte peek (`{` → plain JSON-RPC for biomeOS composition bypass)
-- **BTSP Phase 3**: `btsp.negotiate` server handler — session registry, cipher selection (NULL fallback, ChaCha20-Poly1305 ready), 12-byte server nonce generation
+- **BTSP Phase 3**: `btsp.negotiate` server handler with encrypted frame upgrade — session registry, cipher selection, HKDF key derivation, `ChaCha20-Poly1305` AEAD framing wired into connection loop (`[4B len][12B nonce][ct+tag]`)
 - **Wire Standard**: `capabilities.list` (L2) and `identity.get` (L3) methods
 - **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `btsp.*`
 - **Capability Symlinks**: `security.sock` domain symlink created on bind
@@ -75,9 +75,10 @@ Full spec compliance including:
 
 ## Tests
 
-287 tests passing (153 core + 48 integrations + 86 server), all workspace lib+bins.
+303 tests passing (164 core + 48 integrations + 91 server), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
+Full end-to-end test for NDJSON→encrypted frame upgrade path.
 
 ## Status
 
@@ -88,12 +89,14 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 39 source files, 9,586 lines, max 672 lines/file.
+No magic numbers — all thresholds named. 39 source files, 10,026 lines, max 780 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 290 tests (153+48+89), pure Rust crypto deps wired and tested
+integration ready. 303 tests (164+48+91), pure Rust crypto deps wired and tested
 (chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
-BTSP Phase 3 aligned with `BearDog` reference implementation: base64 nonces,
-`client_nonce` from params, directional key derivation (`btsp-session-v1-c2s`/`s2c`),
-32-byte server nonce, `ciphers` array support. `select_best_cipher` matches ecosystem
-preference order (chacha20-poly1305 > hmac-plain > null).
+BTSP Phase 3 fully wired: handshake key plumbed from Phase 2 into `SessionRegistry`,
+`btsp.negotiate` derives directional session keys, connection loop auto-upgrades to
+encrypted `ChaCha20-Poly1305` framing (`[4B len][12B nonce][ct+tag]`). Aligned with
+`BearDog` reference implementation: base64 nonces, `client_nonce` from params, directional
+key derivation (`btsp-session-v1-c2s`/`s2c`), 32-byte server nonce, `ciphers` array support.
+`select_best_cipher` matches ecosystem preference order (chacha20-poly1305 > hmac-plain > null).

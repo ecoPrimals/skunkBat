@@ -7,9 +7,10 @@
 //! `btsp.negotiate` JSON-RPC method to request encrypted framing.
 //! This module manages the session registry and cipher negotiation.
 //!
-//! Current state: returns `{"cipher":"null"}` (authenticated plaintext).
-//! Infrastructure for `ChaCha20-Poly1305` AEAD is wired and ready for
-//! activation once `BearDog` exposes session key material via IPC.
+//! When a handshake key is available (derived from `FAMILY_SEED` during
+//! Phase 2), negotiation produces directional `ChaCha20-Poly1305` session
+//! keys and the connection upgrades to encrypted framing. Falls back to
+//! authenticated NULL cipher when no key material is present.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -161,6 +162,15 @@ impl SessionRegistry {
     }
 }
 
+/// Result of a `btsp.negotiate` call — includes both the JSON response
+/// and the derived session keys (when encryption was negotiated).
+pub struct NegotiateOutcome {
+    /// The JSON-RPC result value to return to the client.
+    pub response: serde_json::Value,
+    /// Derived session keys when a non-null cipher was negotiated.
+    pub session_keys: Option<SessionKeys>,
+}
+
 /// Handle a `btsp.negotiate` request.
 ///
 /// Per BTSP Protocol Standard and `BearDog` reference implementation:
@@ -176,15 +186,18 @@ impl SessionRegistry {
 pub async fn handle_negotiate(
     registry: &SessionRegistry,
     params: Option<serde_json::Value>,
-) -> serde_json::Value {
+) -> NegotiateOutcome {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64;
 
     let Some(params) = params else {
-        return serde_json::json!({
-            "error": "params_required",
-            "message": "btsp.negotiate requires session_id, client_nonce, ciphers/preferred_cipher"
-        });
+        return NegotiateOutcome {
+            response: serde_json::json!({
+                "error": "params_required",
+                "message": "btsp.negotiate requires session_id, client_nonce, ciphers/preferred_cipher"
+            }),
+            session_keys: None,
+        };
     };
 
     let session_id = params
@@ -193,10 +206,13 @@ pub async fn handle_negotiate(
         .unwrap_or("");
 
     if session_id.is_empty() {
-        return serde_json::json!({
-            "error": "invalid_session",
-            "message": "session_id is required"
-        });
+        return NegotiateOutcome {
+            response: serde_json::json!({
+                "error": "invalid_session",
+                "message": "session_id is required"
+            }),
+            session_keys: None,
+        };
     }
 
     let client_nonce_b64 = params
@@ -210,10 +226,13 @@ pub async fn handle_negotiate(
         match BASE64.decode(client_nonce_b64) {
             Ok(n) => n,
             Err(e) => {
-                return serde_json::json!({
-                    "error": "invalid_client_nonce",
-                    "message": format!("base64 decode failed: {e}")
-                });
+                return NegotiateOutcome {
+                    response: serde_json::json!({
+                        "error": "invalid_client_nonce",
+                        "message": format!("base64 decode failed: {e}")
+                    }),
+                    session_keys: None,
+                };
             }
         }
     };
@@ -221,10 +240,13 @@ pub async fn handle_negotiate(
     let offered_ciphers = extract_offered_ciphers(&params);
 
     let Some(session) = registry.get(session_id).await else {
-        return serde_json::json!({
-            "error": "unknown_session",
-            "message": "session_id not found in registry"
-        });
+        return NegotiateOutcome {
+            response: serde_json::json!({
+                "error": "unknown_session",
+                "message": "session_id not found in registry"
+            }),
+            session_keys: None,
+        };
     };
 
     let selected = select_best_cipher(&offered_ciphers, session.session_key.is_some());
@@ -234,20 +256,28 @@ pub async fn handle_negotiate(
             session_id = %session_id,
             "BTSP Phase 3: returning null cipher (no key material or unsupported ciphers)"
         );
-        return serde_json::json!({
-            "cipher": "null",
-            "server_nonce": ""
-        });
+        return NegotiateOutcome {
+            response: serde_json::json!({
+                "cipher": "null",
+                "server_nonce": ""
+            }),
+            session_keys: None,
+        };
     }
 
     let mut server_nonce = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut server_nonce);
     let server_nonce_b64 = BASE64.encode(server_nonce);
 
-    if let Some(ref handshake_key) = session.session_key {
+    let derived_keys = if let Some(ref handshake_key) = session.session_key {
         let keys = derive_session_keys(handshake_key, &client_nonce, &server_nonce);
-        registry.update_phase3(session_id, selected, keys).await;
-    }
+        registry
+            .update_phase3(session_id, selected, keys.clone())
+            .await;
+        Some(keys)
+    } else {
+        None
+    };
 
     tracing::info!(
         session_id = %session_id,
@@ -255,10 +285,13 @@ pub async fn handle_negotiate(
         "BTSP Phase 3 negotiate complete"
     );
 
-    serde_json::json!({
-        "cipher": selected.as_str(),
-        "server_nonce": server_nonce_b64
-    })
+    NegotiateOutcome {
+        response: serde_json::json!({
+            "cipher": selected.as_str(),
+            "server_nonce": server_nonce_b64
+        }),
+        session_keys: derived_keys,
+    }
 }
 
 /// Extract offered ciphers from params — accepts both `ciphers` array and
@@ -358,56 +391,53 @@ pub fn derive_session_keys(
     }
 }
 
-/// Encrypt a single BTSP frame using `ChaCha20-Poly1305`.
+/// Nonce size for `ChaCha20-Poly1305` (12 bytes).
+const NONCE_SIZE: usize = 12;
+
+/// Minimum encrypted frame size: 12-byte nonce + 16-byte Poly1305 tag.
+const MIN_ENCRYPTED_FRAME: usize = NONCE_SIZE + 16;
+
+/// Encrypt a plaintext payload for BTSP wire transmission.
 ///
-/// Returns the ciphertext with appended Poly1305 tag (16 bytes).
-/// The `frame_counter` is used to construct the 12-byte nonce.
-#[allow(
-    dead_code,
-    reason = "activated once encrypted framing is wired into handle_connection"
-)]
-pub fn encrypt_frame(
-    key: &[u8; 32],
-    frame_counter: u64,
-    plaintext: &[u8],
-) -> Result<Vec<u8>, String> {
-    use chacha20poly1305::aead::{Aead, KeyInit};
-    use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+/// Returns `nonce(12) || ciphertext || tag(16)`.
+/// Uses a random nonce per frame (matching `sweetGrass` / `BearDog` wire format).
+pub fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
+    use chacha20poly1305::{AeadCore, ChaCha20Poly1305};
 
     let cipher = ChaCha20Poly1305::new(key.into());
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
 
-    let mut nonce_bytes = [0u8; 12];
-    nonce_bytes[4..].copy_from_slice(&frame_counter.to_be_bytes());
-    let nonce = Nonce::from(nonce_bytes);
-
-    cipher
+    let ciphertext = cipher
         .encrypt(&nonce, plaintext)
-        .map_err(|e| format!("encrypt failed: {e}"))
+        .map_err(|e| format!("encrypt failed: {e}"))?;
+
+    let mut frame = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
+    frame.extend_from_slice(&nonce);
+    frame.extend_from_slice(&ciphertext);
+    Ok(frame)
 }
 
-/// Decrypt a single BTSP frame using `ChaCha20-Poly1305`.
+/// Decrypt an incoming BTSP encrypted frame.
 ///
-/// Expects ciphertext with appended Poly1305 tag.
-#[allow(
-    dead_code,
-    reason = "activated once encrypted framing is wired into handle_connection"
-)]
-pub fn decrypt_frame(
-    key: &[u8; 32],
-    frame_counter: u64,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>, String> {
+/// Expects `nonce(12) || ciphertext || tag(16)`.
+pub fn decrypt_frame(key: &[u8; 32], frame: &[u8]) -> Result<Vec<u8>, String> {
     use chacha20poly1305::aead::{Aead, KeyInit};
     use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 
+    if frame.len() < MIN_ENCRYPTED_FRAME {
+        return Err(format!(
+            "encrypted frame too short: {} bytes (min {MIN_ENCRYPTED_FRAME})",
+            frame.len()
+        ));
+    }
+
+    let (nonce_bytes, ciphertext) = frame.split_at(NONCE_SIZE);
+    let nonce = Nonce::from_slice(nonce_bytes);
+
     let cipher = ChaCha20Poly1305::new(key.into());
-
-    let mut nonce_bytes = [0u8; 12];
-    nonce_bytes[4..].copy_from_slice(&frame_counter.to_be_bytes());
-    let nonce = Nonce::from(nonce_bytes);
-
     cipher
-        .decrypt(&nonce, ciphertext)
+        .decrypt(nonce, ciphertext)
         .map_err(|e| format!("decrypt failed: {e}"))
 }
 
@@ -490,8 +520,9 @@ mod tests {
     #[tokio::test]
     async fn negotiate_missing_params() {
         let reg = SessionRegistry::new();
-        let result = handle_negotiate(&reg, None).await;
-        assert!(result.get("error").is_some());
+        let outcome = handle_negotiate(&reg, None).await;
+        assert!(outcome.response.get("error").is_some());
+        assert!(outcome.session_keys.is_none());
     }
 
     #[tokio::test]
@@ -502,8 +533,9 @@ mod tests {
             "preferred_cipher": "chacha20-poly1305",
             "bond_type": "Covalent"
         });
-        let result = handle_negotiate(&reg, Some(params)).await;
-        assert_eq!(result["error"], "invalid_session");
+        let outcome = handle_negotiate(&reg, Some(params)).await;
+        assert_eq!(outcome.response["error"], "invalid_session");
+        assert!(outcome.session_keys.is_none());
     }
 
     #[tokio::test]
@@ -514,8 +546,9 @@ mod tests {
             "preferred_cipher": "chacha20-poly1305",
             "bond_type": "Covalent"
         });
-        let result = handle_negotiate(&reg, Some(params)).await;
-        assert_eq!(result["error"], "unknown_session");
+        let outcome = handle_negotiate(&reg, Some(params)).await;
+        assert_eq!(outcome.response["error"], "unknown_session");
+        assert!(outcome.session_keys.is_none());
     }
 
     #[tokio::test]
@@ -528,9 +561,10 @@ mod tests {
             "preferred_cipher": "chacha20-poly1305",
             "bond_type": "Covalent"
         });
-        let result = handle_negotiate(&reg, Some(params)).await;
-        assert_eq!(result["cipher"], "null");
-        assert!(result["server_nonce"].is_string());
+        let outcome = handle_negotiate(&reg, Some(params)).await;
+        assert_eq!(outcome.response["cipher"], "null");
+        assert!(outcome.response["server_nonce"].is_string());
+        assert!(outcome.session_keys.is_none());
     }
 
     #[tokio::test]
@@ -548,13 +582,14 @@ mod tests {
             "client_nonce": client_nonce,
             "bond_type": "Covalent"
         });
-        let result = handle_negotiate(&reg, Some(params)).await;
-        assert_eq!(result["cipher"], "chacha20-poly1305");
-        assert!(result["server_nonce"].is_string());
+        let outcome = handle_negotiate(&reg, Some(params)).await;
+        assert_eq!(outcome.response["cipher"], "chacha20-poly1305");
+        assert!(outcome.response["server_nonce"].is_string());
+        assert!(outcome.session_keys.is_some());
 
-        let nonce_b64 = result["server_nonce"].as_str().unwrap();
+        let nonce_b64 = outcome.response["server_nonce"].as_str().unwrap();
         let decoded = BASE64.decode(nonce_b64).unwrap();
-        assert_eq!(decoded.len(), 32); // 32-byte server nonce
+        assert_eq!(decoded.len(), 32);
 
         let session = reg.get("ses-withkey").await.unwrap();
         assert_eq!(session.cipher, CipherSuite::ChaCha20Poly1305);
@@ -669,35 +704,25 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
-        let key = derive_session_keys(&[0xAA; 32], &[0x01; 12], &[0x02; 12]);
+        let keys = derive_session_keys(&[0xAA; 32], &[0x01; 12], &[0x02; 12]);
         let plaintext = b"hello btsp phase 3";
 
-        let ciphertext = encrypt_frame(&key.encrypt_key, 0, plaintext).unwrap();
-        assert_ne!(ciphertext.as_slice(), plaintext.as_slice());
-        assert!(ciphertext.len() > plaintext.len()); // tag adds 16 bytes
+        let frame = encrypt_frame(&keys.encrypt_key, plaintext).unwrap();
+        assert!(frame.len() >= NONCE_SIZE + 16);
+        assert!(frame.len() > plaintext.len());
 
-        let decrypted = decrypt_frame(&key.encrypt_key, 0, &ciphertext).unwrap();
+        let decrypted = decrypt_frame(&keys.encrypt_key, &frame).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
     #[test]
-    fn encrypt_different_counters_different_ciphertext() {
+    fn encrypt_produces_different_frames() {
         let key = [0xBB; 32];
         let plaintext = b"same plaintext";
 
-        let ct0 = encrypt_frame(&key, 0, plaintext).unwrap();
-        let ct1 = encrypt_frame(&key, 1, plaintext).unwrap();
-        assert_ne!(ct0, ct1);
-    }
-
-    #[test]
-    fn decrypt_wrong_counter_fails() {
-        let key = [0xCC; 32];
-        let plaintext = b"sensitive data";
-
-        let ciphertext = encrypt_frame(&key, 42, plaintext).unwrap();
-        let result = decrypt_frame(&key, 43, &ciphertext);
-        assert!(result.is_err());
+        let ct0 = encrypt_frame(&key, plaintext).unwrap();
+        let ct1 = encrypt_frame(&key, plaintext).unwrap();
+        assert_ne!(ct0, ct1, "random nonces should make frames differ");
     }
 
     #[test]
@@ -706,8 +731,8 @@ mod tests {
         let key_b = [0xEE; 32];
         let plaintext = b"classified";
 
-        let ciphertext = encrypt_frame(&key_a, 0, plaintext).unwrap();
-        let result = decrypt_frame(&key_b, 0, &ciphertext);
+        let frame = encrypt_frame(&key_a, plaintext).unwrap();
+        let result = decrypt_frame(&key_b, &frame);
         assert!(result.is_err());
     }
 
@@ -716,20 +741,41 @@ mod tests {
         let key = [0xFF; 32];
         let plaintext = b"integrity check";
 
-        let mut ciphertext = encrypt_frame(&key, 0, plaintext).unwrap();
-        if let Some(byte) = ciphertext.get_mut(5) {
+        let mut frame = encrypt_frame(&key, plaintext).unwrap();
+        if let Some(byte) = frame.get_mut(NONCE_SIZE + 5) {
             *byte ^= 0x01;
         }
-        let result = decrypt_frame(&key, 0, &ciphertext);
+        let result = decrypt_frame(&key, &frame);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_too_short_fails() {
+        let key = [0x11; 32];
+        let result = decrypt_frame(&key, &[0u8; 10]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too short"));
     }
 
     #[test]
     fn encrypt_empty_payload() {
         let key = [0x11; 32];
-        let ciphertext = encrypt_frame(&key, 0, b"").unwrap();
-        assert_eq!(ciphertext.len(), 16); // just the tag
-        let decrypted = decrypt_frame(&key, 0, &ciphertext).unwrap();
+        let frame = encrypt_frame(&key, b"").unwrap();
+        assert_eq!(frame.len(), NONCE_SIZE + 16); // nonce + tag only
+        let decrypted = decrypt_frame(&key, &frame).unwrap();
         assert!(decrypted.is_empty());
+    }
+
+    #[test]
+    fn directional_keys_encrypt_decrypt() {
+        let keys = derive_session_keys(&[0xAA; 32], &[0x01; 16], &[0x02; 32]);
+        let plaintext = b"server to client message";
+
+        let frame = encrypt_frame(&keys.encrypt_key, plaintext).unwrap();
+        let decrypted = decrypt_frame(&keys.encrypt_key, &frame).unwrap();
+        assert_eq!(decrypted, plaintext);
+
+        let result = decrypt_frame(&keys.decrypt_key, &frame);
+        assert!(result.is_err(), "wrong directional key should fail");
     }
 }

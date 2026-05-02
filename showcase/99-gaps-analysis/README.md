@@ -14,7 +14,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 301 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Tests | 303 passing / 0 failures / 15 ignored (external-primal-gated) |
 | Coverage | 90%+ function (cargo-llvm-cov); crypto 100%, behavioral 100%, threats ~98% |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
@@ -23,7 +23,7 @@
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
 | sourdough-core | **INTERNALIZED** — zero cross-repo path deps, `primal_foundation` module |
-| Max file | 672 lines (`threats/mod.rs`); limit 1000; 39 source files |
+| Max file | 780 lines (`negotiate.rs`); limit 1000; 39 source files |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)
@@ -43,7 +43,7 @@
 - **Batch requests** (JSON array dispatch)
 - **Notifications** (id-less requests produce no response, per spec §4.1)
 - Newline-delimited framing on TCP and UDS
-- BTSP Phase 1 socket naming + Phase 2 BearDog-delegated handshake + Phase 3 `btsp.negotiate` server handler (NULL cipher fallback, ChaCha20-Poly1305 ready)
+- BTSP Phase 1 socket naming + Phase 2 BearDog-delegated handshake + Phase 3 `btsp.negotiate` with encrypted `ChaCha20-Poly1305` frame upgrade (handshake key plumbed, AEAD loop wired)
 - Wire Standard L2 (`capabilities.list`) and L3 (`identity.get`)
 - Capability symlinks (`security.sock`)
 

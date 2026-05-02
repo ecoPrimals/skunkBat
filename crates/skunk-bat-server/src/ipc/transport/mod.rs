@@ -18,6 +18,7 @@ pub mod negotiate;
 mod peek;
 mod sys;
 
+pub use btsp::{read_frame, write_frame};
 pub use config::{BtspConfig, BtspHandshakeConfig};
 pub use negotiate::SessionRegistry;
 
@@ -64,9 +65,14 @@ pub async fn serve_tcp(
                 let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
                 if n > 0 && peek_buf[0] != b'{' {
                     match perform_server_handshake(&mut stream, cfg).await {
-                        Ok(sid) => {
-                            tracing::debug!("BTSP authenticated TCP {addr}: session={sid}");
-                            sessions.insert(sid, None).await;
+                        Ok(result) => {
+                            tracing::debug!(
+                                "BTSP authenticated TCP {addr}: session={}",
+                                result.session_id
+                            );
+                            sessions
+                                .insert(result.session_id, result.handshake_key)
+                                .await;
                         }
                         Err(e) => {
                             tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
@@ -136,9 +142,14 @@ pub async fn serve_uds(
                 };
                 if first[0] != b'{' {
                     match perform_server_handshake(&mut peeked, cfg).await {
-                        Ok(sid) => {
-                            tracing::debug!("BTSP authenticated UDS: session={sid}");
-                            sessions.insert(sid, None).await;
+                        Ok(result) => {
+                            tracing::debug!(
+                                "BTSP authenticated UDS: session={}",
+                                result.session_id
+                            );
+                            sessions
+                                .insert(result.session_id, result.handshake_key)
+                                .await;
                         }
                         Err(e) => {
                             tracing::warn!("BTSP handshake failed UDS: {e}");

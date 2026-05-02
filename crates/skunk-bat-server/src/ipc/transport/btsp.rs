@@ -83,6 +83,31 @@ pub async fn provider_call(
         .ok_or_else(|| "no result in provider response".to_owned())
 }
 
+// ── Handshake Key Derivation ──────────────────────────────────────────
+
+/// Derive the handshake key from the family seed.
+///
+/// Matches `BearDog`'s `derive_handshake_key`:
+/// `HKDF-SHA256(ikm=family_seed, salt="btsp-v1", info="handshake")` → 32 bytes
+///
+/// Returns `None` if `FAMILY_SEED` is not set or too short.
+pub fn derive_handshake_key_from_env() -> Option<Vec<u8>> {
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+
+    let seed_str = std::env::var("FAMILY_SEED").ok()?;
+    if seed_str.len() < 16 {
+        tracing::warn!("FAMILY_SEED too short for BTSP key derivation (minimum 16 bytes)");
+        return None;
+    }
+
+    let hk = Hkdf::<Sha256>::new(Some(b"btsp-v1"), seed_str.as_bytes());
+    let mut key = [0u8; 32];
+    hk.expand(b"handshake", &mut key).ok()?;
+
+    Some(key.to_vec())
+}
+
 // ── Server Handshake ───────────────────────────────────────────────────
 
 /// Accumulated state during the BTSP handshake exchange.
@@ -98,10 +123,17 @@ pub struct HandshakeState {
     preferred_cipher: String,
 }
 
+/// Result of a successful BTSP handshake: session ID + optional handshake key.
+#[derive(Debug)]
+pub struct HandshakeResult {
+    pub session_id: String,
+    pub handshake_key: Option<Vec<u8>>,
+}
+
 pub async fn perform_server_handshake<S>(
     stream: &mut S,
     config: &super::config::BtspHandshakeConfig,
-) -> Result<String, String>
+) -> Result<HandshakeResult, String>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
@@ -114,7 +146,16 @@ where
 
     let sid = hs.session_id.as_deref().unwrap_or(&hs.session_token);
     tracing::info!(session_id = %sid, "BTSP handshake complete");
-    Ok(sid.to_owned())
+
+    let handshake_key = derive_handshake_key_from_env();
+    if handshake_key.is_some() {
+        tracing::debug!(session_id = %sid, "Handshake key derived — Phase 3 encryption available");
+    }
+
+    Ok(HandshakeResult {
+        session_id: sid.to_owned(),
+        handshake_key,
+    })
 }
 
 async fn btsp_exchange_hello<S>(
@@ -503,10 +544,10 @@ mod tests {
             assert_eq!(complete["session_id"], "sid_abc");
         });
 
-        let session_id = perform_server_handshake(&mut server_stream, &config)
+        let result = perform_server_handshake(&mut server_stream, &config)
             .await
             .unwrap();
-        assert_eq!(session_id, "sid_abc");
+        assert_eq!(result.session_id, "sid_abc");
 
         client_handle.await.unwrap();
         provider_handle.abort();

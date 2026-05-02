@@ -24,6 +24,7 @@ packet contents or tracking user behavior.
 - **JSON-RPC 2.0**: Full spec — single, batch, and notification support
 - **BTSP Phase 1/2/3**: Socket naming, BearDog-delegated handshake on TCP + UDS,
   first-byte peek for biomeOS composition bypass, `btsp.negotiate` cipher negotiation
+  with auto-upgrade to `ChaCha20-Poly1305` encrypted framing
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -168,12 +169,12 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - All `#[allow]` migrated to `#[expect(reason)]`
 - `cargo deny` advisory/ban/license/source checks pass
-- 38 source files, all under 1000 lines (largest: 672)
+- 39 source files, all under 1000 lines (largest: 780)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — zero cross-repo path dependencies, no C dependencies
-- 301 tests passing, 90%+ function coverage (llvm-cov)
+- 303 tests passing, 90%+ function coverage (llvm-cov)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 
