@@ -91,12 +91,15 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 39 source files, max 780 lines/file.
+No magic numbers — all thresholds named. 40 source files, max 780 lines/file (production).
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
 integration ready. 309 tests (164+48+97), pure Rust crypto deps wired and tested
 (chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
-Unused `hex` dependency removed.
+Unused `hex` dependency removed. All `Result<_, String>` errors evolved to typed enums
+(`TransportError`, `RpcError`) with structured variants for match-based handling.
+`btsp.negotiate` inside batch arrays explicitly rejected (transport upgrade incompatible
+with batch semantics).
 BTSP Phase 3 fully wired: handshake key plumbed from Phase 2 into `SessionRegistry`,
 `btsp.negotiate` derives directional session keys, connection loop auto-upgrades to
 encrypted `ChaCha20-Poly1305` framing (`[4B len][12B nonce][ct+tag]`). Aligned with
