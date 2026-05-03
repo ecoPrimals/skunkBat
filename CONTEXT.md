@@ -75,7 +75,7 @@ Full spec compliance including:
 
 ## Tests
 
-308 tests passing (164 core + 48 integrations + 96 server), all workspace lib+bins.
+309 tests passing (164 core + 48 integrations + 97 server), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -94,7 +94,7 @@ and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 No magic numbers — all thresholds named. 39 source files, max 780 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 308 tests (164+48+96), pure Rust crypto deps wired and tested
+integration ready. 309 tests (164+48+97), pure Rust crypto deps wired and tested
 (chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
 Unused `hex` dependency removed.
 BTSP Phase 3 fully wired: handshake key plumbed from Phase 2 into `SessionRegistry`,

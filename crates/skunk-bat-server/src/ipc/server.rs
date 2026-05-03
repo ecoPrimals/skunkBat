@@ -12,6 +12,11 @@
 //!
 //! Supports single requests, batch requests (JSON arrays), and
 //! notifications (requests without `id` — no response sent).
+//!
+//! **Transport upgrade rule**: `btsp.negotiate` must be sent as a standalone
+//! request, not within a JSON-RPC batch array. Sending it inside a batch
+//! returns an invalid-request error — transport upgrades are incompatible
+//! with batch semantics (wire format changes mid-response are undefined).
 
 use skunk_bat_core::SkunkBat;
 use std::sync::Arc;
@@ -195,9 +200,9 @@ async fn run_encrypted_frame_loop<R, W>(
 
 /// Handle a single JSON-RPC request. Returns `None` for notifications.
 ///
-/// `btsp.negotiate` within a single request is handled by
-/// `try_negotiate_upgrade` before this function runs. This path remains
-/// as a fallback for negotiate requests inside batch arrays.
+/// `btsp.negotiate` is handled by `try_negotiate_upgrade` before this
+/// function runs. If it reaches here (e.g. inside the encrypted frame
+/// loop), it is processed as a regular negotiate without upgrade.
 async fn handle_single(
     state: &Arc<RwLock<SkunkBat>>,
     sessions: &Arc<SessionRegistry>,
@@ -243,10 +248,11 @@ async fn handle_single(
 ///
 /// Per JSON-RPC 2.0 spec: responses are collected and returned as a JSON
 /// array. Notification responses are omitted. An empty batch returns an
-/// invalid-request error.
+/// invalid-request error. `btsp.negotiate` is rejected inside batches
+/// (transport upgrades require standalone requests).
 async fn handle_batch(
     state: &Arc<RwLock<SkunkBat>>,
-    sessions: &Arc<SessionRegistry>,
+    _sessions: &Arc<SessionRegistry>,
     line: &str,
 ) -> Option<Vec<u8>> {
     let requests: Vec<serde_json::Value> = match serde_json::from_str(line) {
@@ -281,19 +287,11 @@ async fn handle_batch(
             Ok(request) => {
                 if request.method == "btsp.negotiate" {
                     let id = request.id_or_null();
-                    let outcome = negotiate::handle_negotiate(sessions, request.params).await;
-                    let response = if outcome.response.get("error").is_some() {
-                        Response::error(
-                            id,
-                            jsonrpc::INVALID_PARAMS,
-                            outcome.response["message"]
-                                .as_str()
-                                .unwrap_or("negotiate failed"),
-                        )
-                    } else {
-                        Response::success(id, outcome.response)
-                    };
-                    responses.push(response);
+                    responses.push(Response::error(
+                        id,
+                        jsonrpc::INVALID_REQUEST,
+                        "btsp.negotiate must be sent as a standalone request, not within a batch",
+                    ));
                     continue;
                 }
                 let is_notification = request.is_notification();
@@ -886,6 +884,61 @@ mod tests {
 
         drop(client_writer);
         drop(inner_reader);
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    }
+
+    /// Verifies that btsp.negotiate inside a batch array is rejected with
+    /// an error (transport upgrades must be standalone requests).
+    #[tokio::test]
+    async fn test_negotiate_in_batch_rejected() {
+        let state = make_state();
+        let sessions = make_sessions();
+        sessions
+            .insert("batch-neg".into(), Some(vec![0xEE; 32]))
+            .await;
+
+        let (client, server) = tokio::io::duplex(8192);
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
+
+        let (client_reader, mut client_writer) = tokio::io::split(client);
+
+        let batch = r#"[{"jsonrpc":"2.0","method":"btsp.negotiate","params":{"session_id":"batch-neg","ciphers":["chacha20-poly1305"],"client_nonce":"AAAAAAAAAAAAAAAAAAAAAA=="},"id":1},{"jsonrpc":"2.0","method":"health.liveness","id":2}]"#;
+        client_writer
+            .write_all(format!("{batch}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let mut reader = BufReader::new(client_reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout")
+            .unwrap();
+
+        let responses: Vec<serde_json::Value> = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(responses.len(), 2);
+
+        assert!(
+            responses[0]["error"].is_object(),
+            "btsp.negotiate in batch should return error"
+        );
+        assert!(
+            responses[0]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("standalone"),
+            "error should mention standalone requirement"
+        );
+
+        assert!(
+            responses[1]["result"]["status"]
+                .as_str()
+                .unwrap()
+                .contains("alive"),
+            "other batch members should still succeed"
+        );
+
+        client_writer.shutdown().await.unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
 }
