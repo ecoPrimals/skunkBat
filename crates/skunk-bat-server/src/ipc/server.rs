@@ -40,11 +40,15 @@ pub(super) async fn handle_connection<S>(
             continue;
         }
 
-        if let Some(keys) = try_negotiate_upgrade(&state, &sessions, trimmed, &mut writer).await {
-            tracing::info!("BTSP Phase 3: switching to encrypted framing");
-            let inner_reader = lines.into_inner().into_inner();
-            run_encrypted_frame_loop(state, sessions, inner_reader, writer, &keys).await;
-            return;
+        match try_negotiate_upgrade(&state, &sessions, trimmed, &mut writer).await {
+            NegotiateAction::Upgrade(keys) => {
+                tracing::info!("BTSP Phase 3: switching to encrypted framing");
+                let buf_reader = lines.into_inner();
+                run_encrypted_frame_loop(state, sessions, buf_reader, writer, &keys).await;
+                return;
+            }
+            NegotiateAction::Handled => continue,
+            NegotiateAction::NotNegotiate => {}
         }
 
         let first_byte = trimmed.as_bytes().first().copied();
@@ -67,23 +71,37 @@ pub(super) async fn handle_connection<S>(
     }
 }
 
+/// Result of attempting to handle a `btsp.negotiate` request.
+enum NegotiateAction {
+    /// Request was not `btsp.negotiate` — process normally.
+    NotNegotiate,
+    /// Negotiate was handled (response sent), but no encryption — stay on NDJSON.
+    Handled,
+    /// Negotiate succeeded with encryption — switch to encrypted frame I/O.
+    Upgrade(SessionKeys),
+}
+
 /// Check if a request is `btsp.negotiate` and handle the upgrade in-band.
 ///
-/// Sends the negotiate response via NDJSON, then returns `Some(keys)` if
-/// encryption was established so the caller can switch to frame mode.
+/// Sends the negotiate response via NDJSON and returns the appropriate action:
+/// - `Upgrade(keys)` → caller switches to encrypted frame loop
+/// - `Handled` → response already sent, caller skips this line
+/// - `NotNegotiate` → not a negotiate request, process normally
 async fn try_negotiate_upgrade<W>(
     _state: &Arc<RwLock<SkunkBat>>,
     sessions: &Arc<SessionRegistry>,
     line: &str,
     writer: &mut W,
-) -> Option<SessionKeys>
+) -> NegotiateAction
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let request: jsonrpc::Request = serde_json::from_str(line).ok()?;
+    let Ok(request) = serde_json::from_str::<jsonrpc::Request>(line) else {
+        return NegotiateAction::NotNegotiate;
+    };
 
     if request.method != "btsp.negotiate" {
-        return None;
+        return NegotiateAction::NotNegotiate;
     }
 
     let id = request.id_or_null();
@@ -105,10 +123,12 @@ where
     bytes.push(b'\n');
 
     if writer.write_all(&bytes).await.is_err() || writer.flush().await.is_err() {
-        return None;
+        return NegotiateAction::Handled;
     }
 
-    outcome.session_keys
+    outcome
+        .session_keys
+        .map_or(NegotiateAction::Handled, NegotiateAction::Upgrade)
 }
 
 /// Encrypted BTSP frame loop — reads length-prefixed encrypted frames,
@@ -515,6 +535,201 @@ mod tests {
 
         drop(client_writer);
         drop(inner_reader);
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    }
+
+    /// Verifies that ALL subsequent messages after negotiate use encrypted
+    /// framing — multiple requests in sequence all go through the AEAD loop.
+    #[tokio::test]
+    async fn test_encrypted_loop_multiple_messages() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use tokio::io::AsyncReadExt;
+
+        let state = make_state();
+        let sessions = make_sessions();
+        let handshake_key = vec![0xAA; 32];
+        sessions
+            .insert("multi-session".into(), Some(handshake_key.clone()))
+            .await;
+
+        let (client, server) = tokio::io::duplex(16384);
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
+
+        let (client_reader, mut client_writer) = tokio::io::split(client);
+
+        let client_nonce = [0x02u8; 16];
+        let client_nonce_b64 = BASE64.encode(client_nonce);
+        let negotiate_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"btsp.negotiate","params":{{"session_id":"multi-session","ciphers":["chacha20-poly1305"],"client_nonce":"{client_nonce_b64}"}},"id":1}}"#
+        );
+        client_writer
+            .write_all(format!("{negotiate_req}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let mut reader = BufReader::new(client_reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout")
+            .unwrap();
+
+        let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        let result = &resp["result"];
+        assert_eq!(result["cipher"], "chacha20-poly1305");
+
+        let server_nonce = BASE64
+            .decode(result["server_nonce"].as_str().unwrap())
+            .unwrap();
+        let server_keys =
+            negotiate::derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
+
+        let mut inner_reader = reader.into_inner();
+
+        let methods = ["health.liveness", "identity.get", "capabilities.list"];
+        for (i, method) in methods.iter().enumerate() {
+            let req = format!(r#"{{"jsonrpc":"2.0","method":"{method}","id":{}}}"#, i + 10);
+            let encrypted =
+                negotiate::encrypt_frame(&server_keys.decrypt_key, req.as_bytes()).unwrap();
+            let len = u32::try_from(encrypted.len()).unwrap();
+            client_writer.write_u32(len).await.unwrap();
+            client_writer.write_all(&encrypted).await.unwrap();
+            client_writer.flush().await.unwrap();
+
+            let resp_len = tokio::time::timeout(Duration::from_secs(5), inner_reader.read_u32())
+                .await
+                .expect("timeout reading frame len")
+                .unwrap();
+            let mut resp_buf = vec![0u8; resp_len as usize];
+            inner_reader.read_exact(&mut resp_buf).await.unwrap();
+
+            let decrypted = negotiate::decrypt_frame(&server_keys.encrypt_key, &resp_buf).unwrap();
+            let response: serde_json::Value = serde_json::from_slice(&decrypted).unwrap();
+            assert!(
+                response.get("result").is_some(),
+                "message {i} ({method}) should have result, got: {response}"
+            );
+        }
+
+        drop(client_writer);
+        drop(inner_reader);
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    }
+
+    /// Verifies that plaintext NDJSON is rejected after encrypted upgrade —
+    /// the server terminates the connection on auth failure.
+    #[tokio::test]
+    async fn test_plaintext_rejected_after_upgrade() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use tokio::io::AsyncReadExt;
+
+        let state = make_state();
+        let sessions = make_sessions();
+        let handshake_key = vec![0xBB; 32];
+        sessions
+            .insert("reject-session".into(), Some(handshake_key.clone()))
+            .await;
+
+        let (client, server) = tokio::io::duplex(8192);
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
+
+        let (client_reader, mut client_writer) = tokio::io::split(client);
+
+        let client_nonce = [0x03u8; 16];
+        let client_nonce_b64 = BASE64.encode(client_nonce);
+        let negotiate_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"btsp.negotiate","params":{{"session_id":"reject-session","ciphers":["chacha20-poly1305"],"client_nonce":"{client_nonce_b64}"}},"id":1}}"#
+        );
+        client_writer
+            .write_all(format!("{negotiate_req}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let mut reader = BufReader::new(client_reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout")
+            .unwrap();
+
+        let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(resp["result"]["cipher"], "chacha20-poly1305");
+
+        let plaintext_ndjson = b"{\"jsonrpc\":\"2.0\",\"method\":\"health.liveness\",\"id\":99}\n";
+        client_writer.write_all(plaintext_ndjson).await.unwrap();
+        client_writer.flush().await.unwrap();
+
+        let mut inner_reader = reader.into_inner();
+        let read_result =
+            tokio::time::timeout(Duration::from_secs(2), inner_reader.read_u32()).await;
+
+        match read_result {
+            Ok(Ok(_)) => panic!("server should not send a valid frame for plaintext input"),
+            Ok(Err(e)) => {
+                assert_eq!(
+                    e.kind(),
+                    std::io::ErrorKind::UnexpectedEof,
+                    "server should close connection on decrypt failure"
+                );
+            }
+            Err(_timeout) => {
+                panic!("expected EOF, got timeout — server may be hanging");
+            }
+        }
+
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    }
+
+    /// Verifies that negotiate returning null cipher does NOT switch to
+    /// encrypted mode — subsequent NDJSON continues working.
+    #[tokio::test]
+    async fn test_null_cipher_stays_ndjson() {
+        let state = make_state();
+        let sessions = make_sessions();
+        sessions.insert("null-session".into(), None).await;
+
+        let (client, server) = tokio::io::duplex(8192);
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
+
+        let (client_reader, mut client_writer) = tokio::io::split(client);
+
+        let negotiate_req = r#"{"jsonrpc":"2.0","method":"btsp.negotiate","params":{"session_id":"null-session","preferred_cipher":"chacha20-poly1305"},"id":1}"#;
+        client_writer
+            .write_all(format!("{negotiate_req}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let mut reader = BufReader::new(client_reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout")
+            .unwrap();
+        let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(resp["result"]["cipher"], "null");
+
+        let followup = r#"{"jsonrpc":"2.0","method":"health.liveness","id":2}"#;
+        client_writer
+            .write_all(format!("{followup}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let mut line2 = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line2))
+            .await
+            .expect("timeout reading followup response")
+            .unwrap();
+        let resp2: serde_json::Value = serde_json::from_str(line2.trim()).unwrap();
+        assert!(
+            resp2["result"]["status"]
+                .as_str()
+                .unwrap()
+                .contains("alive")
+        );
+
+        client_writer.shutdown().await.unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
 }

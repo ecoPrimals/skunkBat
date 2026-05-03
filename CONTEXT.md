@@ -75,10 +75,11 @@ Full spec compliance including:
 
 ## Tests
 
-303 tests passing (164 core + 48 integrations + 91 server), all workspace lib+bins.
+306 tests passing (164 core + 48 integrations + 94 server), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
-Full end-to-end test for NDJSON→encrypted frame upgrade path.
+Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
+encrypted loop verification and plaintext-after-upgrade rejection.
 
 ## Status
 
@@ -89,10 +90,10 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 39 source files, 10,026 lines, max 780 lines/file.
+No magic numbers — all thresholds named. 39 source files, max 780 lines/file.
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 303 tests (164+48+91), pure Rust crypto deps wired and tested
+integration ready. 306 tests (164+48+94), pure Rust crypto deps wired and tested
 (chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
 BTSP Phase 3 fully wired: handshake key plumbed from Phase 2 into `SessionRegistry`,
 `btsp.negotiate` derives directional session keys, connection loop auto-upgrades to
