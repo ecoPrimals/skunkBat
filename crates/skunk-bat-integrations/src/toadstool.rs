@@ -251,7 +251,7 @@ impl CapabilityPrimalDiscovery {
             .map(|primal| Node {
                 id: primal.service_id,
                 address: primal.endpoint,
-                node_type: "primal".to_string(),
+                node_type: "primal".to_owned(),
                 status: NodeStatus::Healthy,
                 capabilities: primal.capabilities,
                 last_seen: Some(SystemTime::now()),

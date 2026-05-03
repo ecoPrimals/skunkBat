@@ -732,4 +732,160 @@ mod tests {
         client_writer.shutdown().await.unwrap();
         let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
+
+    /// Verifies that batch requests work inside the encrypted frame loop.
+    #[tokio::test]
+    async fn test_encrypted_batch_request() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use tokio::io::AsyncReadExt;
+
+        let state = make_state();
+        let sessions = make_sessions();
+        let handshake_key = vec![0xCC; 32];
+        sessions
+            .insert("batch-session".into(), Some(handshake_key.clone()))
+            .await;
+
+        let (client, server) = tokio::io::duplex(16384);
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
+
+        let (client_reader, mut client_writer) = tokio::io::split(client);
+
+        let client_nonce = [0x04u8; 16];
+        let client_nonce_b64 = BASE64.encode(client_nonce);
+        let negotiate_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"btsp.negotiate","params":{{"session_id":"batch-session","ciphers":["chacha20-poly1305"],"client_nonce":"{client_nonce_b64}"}},"id":1}}"#
+        );
+        client_writer
+            .write_all(format!("{negotiate_req}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let mut reader = BufReader::new(client_reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout")
+            .unwrap();
+        let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(resp["result"]["cipher"], "chacha20-poly1305");
+
+        let server_nonce = BASE64
+            .decode(resp["result"]["server_nonce"].as_str().unwrap())
+            .unwrap();
+        let server_keys =
+            negotiate::derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
+
+        let batch = r#"[{"jsonrpc":"2.0","method":"health.liveness","id":10},{"jsonrpc":"2.0","method":"identity.get","id":11}]"#;
+        let encrypted =
+            negotiate::encrypt_frame(&server_keys.decrypt_key, batch.as_bytes()).unwrap();
+        let len = u32::try_from(encrypted.len()).unwrap();
+        client_writer.write_u32(len).await.unwrap();
+        client_writer.write_all(&encrypted).await.unwrap();
+        client_writer.flush().await.unwrap();
+
+        let mut inner_reader = reader.into_inner();
+        let resp_len = tokio::time::timeout(Duration::from_secs(5), inner_reader.read_u32())
+            .await
+            .expect("timeout")
+            .unwrap();
+        let mut resp_buf = vec![0u8; resp_len as usize];
+        inner_reader.read_exact(&mut resp_buf).await.unwrap();
+
+        let decrypted = negotiate::decrypt_frame(&server_keys.encrypt_key, &resp_buf).unwrap();
+        let responses: Vec<serde_json::Value> = serde_json::from_slice(&decrypted).unwrap();
+        assert_eq!(responses.len(), 2);
+        assert!(
+            responses[0]["result"]["status"]
+                .as_str()
+                .unwrap()
+                .contains("alive")
+        );
+        assert_eq!(responses[1]["result"]["primal"], "skunkbat");
+
+        drop(client_writer);
+        drop(inner_reader);
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    }
+
+    /// Verifies that notifications inside encrypted frames produce no response.
+    #[tokio::test]
+    async fn test_encrypted_notification_no_response() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use tokio::io::AsyncReadExt;
+
+        let state = make_state();
+        let sessions = make_sessions();
+        let handshake_key = vec![0xDD; 32];
+        sessions
+            .insert("notif-session".into(), Some(handshake_key.clone()))
+            .await;
+
+        let (client, server) = tokio::io::duplex(8192);
+        let handle = tokio::spawn(handle_connection(state, sessions, server));
+
+        let (client_reader, mut client_writer) = tokio::io::split(client);
+
+        let client_nonce = [0x05u8; 16];
+        let client_nonce_b64 = BASE64.encode(client_nonce);
+        let negotiate_req = format!(
+            r#"{{"jsonrpc":"2.0","method":"btsp.negotiate","params":{{"session_id":"notif-session","ciphers":["chacha20-poly1305"],"client_nonce":"{client_nonce_b64}"}},"id":1}}"#
+        );
+        client_writer
+            .write_all(format!("{negotiate_req}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let mut reader = BufReader::new(client_reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout")
+            .unwrap();
+        let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(resp["result"]["cipher"], "chacha20-poly1305");
+
+        let server_nonce = BASE64
+            .decode(resp["result"]["server_nonce"].as_str().unwrap())
+            .unwrap();
+        let server_keys =
+            negotiate::derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
+
+        let notification = r#"{"jsonrpc":"2.0","method":"health.liveness"}"#;
+        let encrypted =
+            negotiate::encrypt_frame(&server_keys.decrypt_key, notification.as_bytes()).unwrap();
+        let len = u32::try_from(encrypted.len()).unwrap();
+        client_writer.write_u32(len).await.unwrap();
+        client_writer.write_all(&encrypted).await.unwrap();
+        client_writer.flush().await.unwrap();
+
+        let followup = r#"{"jsonrpc":"2.0","method":"identity.get","id":99}"#;
+        let encrypted2 =
+            negotiate::encrypt_frame(&server_keys.decrypt_key, followup.as_bytes()).unwrap();
+        let len2 = u32::try_from(encrypted2.len()).unwrap();
+        client_writer.write_u32(len2).await.unwrap();
+        client_writer.write_all(&encrypted2).await.unwrap();
+        client_writer.flush().await.unwrap();
+
+        let mut inner_reader = reader.into_inner();
+        let resp_len = tokio::time::timeout(Duration::from_secs(5), inner_reader.read_u32())
+            .await
+            .expect("timeout — notification may have caused a spurious response")
+            .unwrap();
+        let mut resp_buf = vec![0u8; resp_len as usize];
+        inner_reader.read_exact(&mut resp_buf).await.unwrap();
+
+        let decrypted = negotiate::decrypt_frame(&server_keys.encrypt_key, &resp_buf).unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&decrypted).unwrap();
+        assert_eq!(
+            response["result"]["primal"], "skunkbat",
+            "first response should be from identity.get (notification produces nothing)"
+        );
+
+        drop(client_writer);
+        drop(inner_reader);
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    }
 }

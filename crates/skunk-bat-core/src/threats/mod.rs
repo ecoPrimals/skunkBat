@@ -193,8 +193,8 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
                         behavior: a.behavior,
                     },
                     severity,
-                    source: "network".to_string(),
-                    target: "local".to_string(),
+                    source: "network".to_owned(),
+                    target: "local".to_owned(),
                     detected_at: SystemTime::now(),
                 }
             })
@@ -222,12 +222,12 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             return Ok(vec![Threat {
                 id: format!("dos-{:?}", SystemTime::now()),
                 threat_type: ThreatType::DenialOfService {
-                    resource: "cpu".to_string(),
+                    resource: "cpu".to_owned(),
                     current_level: load,
                 },
                 severity: Severity::High,
-                source: "unknown".to_string(),
-                target: "local".to_string(),
+                source: "unknown".to_owned(),
+                target: "local".to_owned(),
                 detected_at: SystemTime::now(),
                 description: format!("High CPU usage detected: {:.1}%", load * 100.0),
                 confidence: DOS_CONFIDENCE,
