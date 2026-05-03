@@ -504,7 +504,6 @@ impl HealthReporter {
 
 ```rust
 /// Reconnaissance service API
-#[async_trait]
 pub trait ReconnaissanceService {
     /// Start reconnaissance scan
     async fn start_scan(&self, scope: NetworkScope) -> Result<ScanId, ReconError>;

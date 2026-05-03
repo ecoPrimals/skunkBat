@@ -291,7 +291,6 @@ pub struct ServiceRestartStrategy {
     services: ServiceManager,
 }
 
-#[async_trait]
 impl HealingStrategy for ServiceRestartStrategy {
     async fn can_heal(&self, health: &HealthStatus) -> Result<Option<HealingAction>, DefenseError> {
         // Check for crashed services
