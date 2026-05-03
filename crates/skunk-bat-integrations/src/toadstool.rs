@@ -115,7 +115,7 @@ impl DiscoveryClient {
             timeout,
         )
         .await
-        .map_err(SkunkBatError::Integration)
+        .map_err(|e| SkunkBatError::Integration(e.to_string()))
     }
 
     /// Discover all primals in the network.

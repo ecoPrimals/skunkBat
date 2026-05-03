@@ -401,7 +401,11 @@ const MIN_ENCRYPTED_FRAME: usize = NONCE_SIZE + 16;
 ///
 /// Returns `nonce(12) || ciphertext || tag(16)`.
 /// Uses a random nonce per frame (matching `sweetGrass` / `BearDog` wire format).
-pub fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+///
+/// # Errors
+///
+/// Returns `TransportError::Crypto` if AEAD encryption fails.
+pub fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, super::TransportError> {
     use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
     use chacha20poly1305::{AeadCore, ChaCha20Poly1305};
 
@@ -410,7 +414,7 @@ pub fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String
 
     let ciphertext = cipher
         .encrypt(&nonce, plaintext)
-        .map_err(|e| format!("encrypt failed: {e}"))?;
+        .map_err(|e| super::TransportError::Crypto(format!("encrypt: {e}")))?;
 
     let mut frame = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
     frame.extend_from_slice(&nonce);
@@ -421,15 +425,20 @@ pub fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String
 /// Decrypt an incoming BTSP encrypted frame.
 ///
 /// Expects `nonce(12) || ciphertext || tag(16)`.
-pub fn decrypt_frame(key: &[u8; 32], frame: &[u8]) -> Result<Vec<u8>, String> {
+///
+/// # Errors
+///
+/// Returns `TransportError::Crypto` if the frame is too short or AEAD
+/// authentication fails.
+pub fn decrypt_frame(key: &[u8; 32], frame: &[u8]) -> Result<Vec<u8>, super::TransportError> {
     use chacha20poly1305::aead::{Aead, KeyInit};
     use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 
     if frame.len() < MIN_ENCRYPTED_FRAME {
-        return Err(format!(
-            "encrypted frame too short: {} bytes (min {MIN_ENCRYPTED_FRAME})",
+        return Err(super::TransportError::Crypto(format!(
+            "frame too short: {} bytes (min {MIN_ENCRYPTED_FRAME})",
             frame.len()
-        ));
+        )));
     }
 
     let (nonce_bytes, ciphertext) = frame.split_at(NONCE_SIZE);
@@ -438,7 +447,7 @@ pub fn decrypt_frame(key: &[u8; 32], frame: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = ChaCha20Poly1305::new(key.into());
     cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|e| format!("decrypt failed: {e}"))
+        .map_err(|e| super::TransportError::Crypto(format!("decrypt: {e}")))
 }
 
 #[cfg(test)]
@@ -754,7 +763,7 @@ mod tests {
         let key = [0x11; 32];
         let result = decrypt_frame(&key, &[0u8; 10]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("too short"));
+        assert!(result.unwrap_err().to_string().contains("too short"));
     }
 
     #[test]

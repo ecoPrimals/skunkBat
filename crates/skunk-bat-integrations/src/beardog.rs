@@ -86,7 +86,7 @@ impl RemoteLineageVerifier {
         &self,
         method: &str,
         params: Option<serde_json::Value>,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, crate::rpc::RpcError> {
         let timeout = Duration::from_millis(self.timeout_ms);
         crate::rpc::call(
             self.uds_path.as_deref(),

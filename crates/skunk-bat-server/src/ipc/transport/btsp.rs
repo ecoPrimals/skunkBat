@@ -6,6 +6,7 @@
 //!
 //! Configuration lives in [`super::config`]; UID helpers in [`super::sys`].
 
+use super::error::TransportError;
 use serde_json::Value;
 
 /// Maximum BTSP frame size: 16 MiB.
@@ -46,12 +47,12 @@ pub async fn provider_call(
     socket: &std::path::Path,
     method: &str,
     params: Value,
-) -> Result<Value, String> {
+) -> Result<Value, TransportError> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let mut stream = tokio::net::UnixStream::connect(socket)
         .await
-        .map_err(|e| format!("BTSP provider {}: {e}", socket.display()))?;
+        .map_err(|e| TransportError::Provider(format!("{}: {e}", socket.display())))?;
 
     let request = serde_json::json!({
         "jsonrpc": "2.0",
@@ -59,28 +60,33 @@ pub async fn provider_call(
         "params": params,
         "id": 1
     });
-    let mut line = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    let mut line = serde_json::to_string(&request)
+        .map_err(|e| TransportError::Provider(format!("serialize: {e}")))?;
     line.push('\n');
     stream
         .write_all(line.as_bytes())
         .await
-        .map_err(|e| e.to_string())?;
-    stream.flush().await.map_err(|e| e.to_string())?;
+        .map_err(|e| TransportError::Provider(format!("write: {e}")))?;
+    stream
+        .flush()
+        .await
+        .map_err(|e| TransportError::Provider(format!("flush: {e}")))?;
 
     let mut reader = BufReader::new(stream);
     let mut response_line = String::new();
     reader
         .read_line(&mut response_line)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TransportError::Provider(format!("read: {e}")))?;
 
-    let resp: Value = serde_json::from_str(&response_line).map_err(|e| e.to_string())?;
+    let resp: Value = serde_json::from_str(&response_line)
+        .map_err(|e| TransportError::Provider(format!("parse: {e}")))?;
     if let Some(err) = resp.get("error") {
-        return Err(format!("BTSP provider error: {err}"));
+        return Err(TransportError::Provider(format!("rpc error: {err}")));
     }
     resp.get("result")
         .cloned()
-        .ok_or_else(|| "no result in provider response".to_owned())
+        .ok_or_else(|| TransportError::Provider("no result in response".to_owned()))
 }
 
 // ── Handshake Key Derivation ──────────────────────────────────────────
@@ -133,7 +139,7 @@ pub struct HandshakeResult {
 pub async fn perform_server_handshake<S>(
     stream: &mut S,
     config: &super::config::BtspHandshakeConfig,
-) -> Result<HandshakeResult, String>
+) -> Result<HandshakeResult, TransportError>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
@@ -161,15 +167,15 @@ where
 async fn btsp_exchange_hello<S>(
     stream: &mut S,
     config: &super::config::BtspHandshakeConfig,
-) -> Result<HandshakeState, String>
+) -> Result<HandshakeState, TransportError>
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
     let client_hello_bytes = read_frame(stream)
         .await
-        .map_err(|e| format!("read ClientHello: {e}"))?;
+        .map_err(|e| TransportError::Handshake(format!("read ClientHello: {e}")))?;
     let client_hello: Value = serde_json::from_slice(&client_hello_bytes)
-        .map_err(|e| format!("parse ClientHello: {e}"))?;
+        .map_err(|e| TransportError::Handshake(format!("parse ClientHello: {e}")))?;
 
     let client_ephemeral_pub = json_str(&client_hello, "client_ephemeral_pub");
 
@@ -193,12 +199,11 @@ where
         "server_ephemeral_pub": server_ephemeral_pub,
         "challenge": challenge,
     });
-    write_frame(
-        stream,
-        &serde_json::to_vec(&server_hello).map_err(|e| e.to_string())?,
-    )
-    .await
-    .map_err(|e| format!("write ServerHello: {e}"))?;
+    let hello_bytes = serde_json::to_vec(&server_hello)
+        .map_err(|e| TransportError::Handshake(format!("serialize ServerHello: {e}")))?;
+    write_frame(stream, &hello_bytes)
+        .await
+        .map_err(|e| TransportError::Handshake(format!("write ServerHello: {e}")))?;
 
     Ok(HandshakeState {
         client_ephemeral_pub,
@@ -209,15 +214,15 @@ where
     })
 }
 
-async fn btsp_read_challenge_response<S>(stream: &mut S) -> Result<(String, String), String>
+async fn btsp_read_challenge_response<S>(stream: &mut S) -> Result<(String, String), TransportError>
 where
     S: tokio::io::AsyncReadExt + Unpin,
 {
     let cr_bytes = read_frame(stream)
         .await
-        .map_err(|e| format!("read ChallengeResponse: {e}"))?;
-    let cr: Value =
-        serde_json::from_slice(&cr_bytes).map_err(|e| format!("parse ChallengeResponse: {e}"))?;
+        .map_err(|e| TransportError::Handshake(format!("read ChallengeResponse: {e}")))?;
+    let cr: Value = serde_json::from_slice(&cr_bytes)
+        .map_err(|e| TransportError::Handshake(format!("parse ChallengeResponse: {e}")))?;
 
     Ok((
         json_str(&cr, "response"),
@@ -229,7 +234,7 @@ async fn btsp_verify_and_complete<S>(
     stream: &mut S,
     config: &super::config::BtspHandshakeConfig,
     hs: &mut HandshakeState,
-) -> Result<(), String>
+) -> Result<(), TransportError>
 where
     S: tokio::io::AsyncWriteExt + Unpin,
 {
@@ -256,7 +261,9 @@ where
             .unwrap_or("unknown");
         let err_frame = serde_json::json!({"error": "handshake_failed", "reason": reason});
         let _ = write_frame(stream, &serde_json::to_vec(&err_frame).unwrap_or_default()).await;
-        return Err(format!("BTSP verify failed: {reason}"));
+        return Err(TransportError::Handshake(format!(
+            "verify failed: {reason}"
+        )));
     }
 
     hs.session_id = verify_result
@@ -281,12 +288,11 @@ where
         "session_id": sid,
         "cipher": cipher,
     });
-    write_frame(
-        stream,
-        &serde_json::to_vec(&complete).map_err(|e| e.to_string())?,
-    )
-    .await
-    .map_err(|e| format!("write Complete: {e}"))?;
+    let complete_bytes = serde_json::to_vec(&complete)
+        .map_err(|e| TransportError::Handshake(format!("serialize Complete: {e}")))?;
+    write_frame(stream, &complete_bytes)
+        .await
+        .map_err(|e| TransportError::Handshake(format!("write Complete: {e}")))?;
 
     Ok(())
 }
@@ -455,7 +461,7 @@ mod tests {
 
         let result = provider_call(&sock, "test.bad", serde_json::json!({})).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid request"));
+        assert!(result.unwrap_err().to_string().contains("invalid request"));
 
         provider_handle.await.unwrap();
         let _ = std::fs::remove_dir_all(&dir);
@@ -634,7 +640,7 @@ mod tests {
 
         let result = perform_server_handshake(&mut server_stream, &config).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("bad_response"));
+        assert!(result.unwrap_err().to_string().contains("bad_response"));
 
         client_handle.await.unwrap();
         provider_handle.abort();

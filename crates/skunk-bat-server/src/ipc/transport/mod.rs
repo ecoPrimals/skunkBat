@@ -14,9 +14,12 @@
 
 mod btsp;
 mod config;
+mod error;
 pub mod negotiate;
 mod peek;
 mod sys;
+
+pub use error::TransportError;
 
 pub use btsp::{read_frame, write_frame};
 pub use config::{BtspConfig, BtspHandshakeConfig};
@@ -99,8 +102,7 @@ pub async fn serve_uds(
     use tokio::io::AsyncReadExt;
     use tokio::net::UnixListener;
 
-    let btsp = BtspConfig::from_env()
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+    let btsp = BtspConfig::from_env()?;
     btsp.log_mode();
 
     let socket_path = btsp.socket_path();

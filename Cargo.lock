@@ -644,6 +644,7 @@ dependencies = [
  "serde",
  "serde_json",
  "skunk-bat-core",
+ "thiserror",
  "tokio",
  "tracing",
 ]
@@ -665,6 +666,7 @@ dependencies = [
  "sha2",
  "skunk-bat-core",
  "skunk-bat-integrations",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",

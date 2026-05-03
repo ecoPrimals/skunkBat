@@ -6,6 +6,7 @@
 //! Phase 1: socket naming with `FAMILY_ID` awareness.
 //! Phase 2: `BearDog`-delegated handshake via provider RPC.
 
+use super::error::TransportError;
 use super::sys::proc_uid;
 
 /// BTSP Phase 1 environment configuration.
@@ -24,7 +25,7 @@ impl BtspConfig {
     /// # Errors
     ///
     /// Returns `Err` when both `FAMILY_ID` and `BIOMEOS_INSECURE=1` are set.
-    pub fn from_env() -> Result<Self, String> {
+    pub fn from_env() -> Result<Self, TransportError> {
         let family_id = std::env::var("FAMILY_ID")
             .ok()
             .filter(|v| !v.is_empty() && v != "default");
@@ -34,9 +35,9 @@ impl BtspConfig {
             .unwrap_or(false);
 
         if family_id.is_some() && insecure {
-            return Err(
-                "BTSP guard: FAMILY_ID and BIOMEOS_INSECURE=1 cannot both be set".to_owned(),
-            );
+            return Err(TransportError::Config(
+                "FAMILY_ID and BIOMEOS_INSECURE=1 cannot both be set".to_owned(),
+            ));
         }
 
         let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {

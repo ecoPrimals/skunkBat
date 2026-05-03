@@ -13,6 +13,31 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// IPC RPC call failure.
+#[derive(Debug, thiserror::Error)]
+pub enum RpcError {
+    /// Network or I/O failure (connection refused, write error).
+    #[error("io: {0}")]
+    Io(String),
+
+    /// Server returned a JSON-RPC error response.
+    #[error("rpc {code}: {message}")]
+    Server {
+        /// JSON-RPC error code.
+        code: i32,
+        /// Human-readable error message.
+        message: String,
+    },
+
+    /// Response could not be parsed.
+    #[error("parse: {0}")]
+    Parse(String),
+
+    /// Call timed out.
+    #[error("timeout: {0}")]
+    Timeout(String),
+}
+
 #[derive(Serialize)]
 struct RpcRequest<'a> {
     jsonrpc: &'static str,
@@ -57,18 +82,18 @@ pub fn capability_socket(capability: &str) -> String {
 /// High-level JSON-RPC call with UDS-first, TCP-fallback transport.
 ///
 /// Tries UDS (if path provided and platform supports it), then TCP.
-/// Returns the `result` field from the JSON-RPC response, or an error string.
+/// Returns the `result` field from the JSON-RPC response.
 ///
 /// # Errors
 ///
-/// Returns `Err` if no endpoint is available or all transports fail.
+/// Returns [`RpcError`] if no endpoint is available or all transports fail.
 pub async fn call(
     uds_path: Option<&str>,
     tcp_endpoint: Option<&str>,
     method: &str,
     params: Option<serde_json::Value>,
     timeout: Duration,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, RpcError> {
     #[cfg(unix)]
     if let Some(path) = uds_path {
         match call_uds(path, method, params.clone(), timeout).await {
@@ -88,27 +113,27 @@ pub async fn call(
         return call_tcp(addr, method, params, timeout).await;
     }
 
-    Err("no endpoint available".to_owned())
+    Err(RpcError::Io("no endpoint available".to_owned()))
 }
 
 /// Send a JSON-RPC request over a Unix domain socket.
 ///
 /// # Errors
 ///
-/// Returns `Err` if the socket is unreachable or the RPC fails.
+/// Returns [`RpcError`] if the socket is unreachable or the RPC fails.
 #[cfg(unix)]
 pub async fn call_uds(
     socket_path: &str,
     method: &str,
     params: Option<serde_json::Value>,
     timeout: Duration,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, RpcError> {
     use tokio::net::UnixStream;
 
     let stream = tokio::time::timeout(timeout, UnixStream::connect(socket_path))
         .await
-        .map_err(|_| format!("timeout connecting to {socket_path}"))?
-        .map_err(|e| format!("connect {socket_path}: {e}"))?;
+        .map_err(|_| RpcError::Timeout(format!("connecting to {socket_path}")))?
+        .map_err(|e| RpcError::Io(format!("connect {socket_path}: {e}")))?;
 
     call_stream(stream, method, params, timeout).await
 }
@@ -117,19 +142,19 @@ pub async fn call_uds(
 ///
 /// # Errors
 ///
-/// Returns `Err` if the address is unreachable or the RPC fails.
+/// Returns [`RpcError`] if the address is unreachable or the RPC fails.
 pub async fn call_tcp(
     addr: &str,
     method: &str,
     params: Option<serde_json::Value>,
     timeout: Duration,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, RpcError> {
     use tokio::net::TcpStream;
 
     let stream = tokio::time::timeout(timeout, TcpStream::connect(addr))
         .await
-        .map_err(|_| format!("timeout connecting to {addr}"))?
-        .map_err(|e| format!("connect {addr}: {e}"))?;
+        .map_err(|_| RpcError::Timeout(format!("connecting to {addr}")))?
+        .map_err(|e| RpcError::Io(format!("connect {addr}: {e}")))?;
 
     call_stream(stream, method, params, timeout).await
 }
@@ -139,7 +164,7 @@ async fn call_stream<S>(
     method: &str,
     params: Option<serde_json::Value>,
     timeout: Duration,
-) -> Result<serde_json::Value, String>
+) -> Result<serde_json::Value, RpcError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -151,7 +176,8 @@ where
         id,
     };
 
-    let mut buf = serde_json::to_vec(&req).map_err(|e| e.to_string())?;
+    let mut buf =
+        serde_json::to_vec(&req).map_err(|e| RpcError::Parse(format!("serialize: {e}")))?;
     buf.push(b'\n');
 
     let (reader, mut writer) = tokio::io::split(stream);
@@ -159,25 +185,32 @@ where
     writer
         .write_all(&buf)
         .await
-        .map_err(|e| format!("write: {e}"))?;
-    writer.flush().await.map_err(|e| format!("flush: {e}"))?;
+        .map_err(|e| RpcError::Io(format!("write: {e}")))?;
+    writer
+        .flush()
+        .await
+        .map_err(|e| RpcError::Io(format!("flush: {e}")))?;
 
     let mut lines = BufReader::new(reader);
     let mut line = String::new();
 
     tokio::time::timeout(timeout, lines.read_line(&mut line))
         .await
-        .map_err(|_| "timeout reading response".to_owned())?
-        .map_err(|e| format!("read: {e}"))?;
+        .map_err(|_| RpcError::Timeout("reading response".to_owned()))?
+        .map_err(|e| RpcError::Io(format!("read: {e}")))?;
 
     let resp: RpcResponse =
-        serde_json::from_str(line.trim()).map_err(|e| format!("parse response: {e}"))?;
+        serde_json::from_str(line.trim()).map_err(|e| RpcError::Parse(format!("response: {e}")))?;
 
     if let Some(err) = resp.error {
-        return Err(format!("rpc error {}: {}", err.code, err.message));
+        return Err(RpcError::Server {
+            code: err.code,
+            message: err.message,
+        });
     }
 
-    resp.result.ok_or_else(|| "null result".to_owned())
+    resp.result
+        .ok_or_else(|| RpcError::Parse("null result".to_owned()))
 }
 
 fn proc_uid() -> u32 {
@@ -224,7 +257,7 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("no endpoint"));
+        assert!(result.unwrap_err().to_string().contains("no endpoint"));
     }
 
     #[tokio::test]
@@ -290,8 +323,9 @@ mod tests {
 
         handle.await.unwrap();
         let err = result.unwrap_err();
-        assert!(err.contains("-32601"));
-        assert!(err.contains("Method not found"));
+        let err_str = err.to_string();
+        assert!(err_str.contains("-32601"));
+        assert!(err_str.contains("Method not found"));
     }
 
     #[tokio::test]
@@ -313,7 +347,7 @@ mod tests {
 
         handle.await.unwrap();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("null result"));
+        assert!(result.unwrap_err().to_string().contains("null result"));
     }
 
     #[tokio::test]
@@ -323,7 +357,7 @@ mod tests {
         let result = call_stream(client, "test.slow", None, Duration::from_millis(50)).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("timeout"));
+        assert!(result.unwrap_err().to_string().contains("timeout"));
     }
 
     #[tokio::test]
@@ -406,6 +440,6 @@ mod tests {
         let result = call_stream(client, "test.bad", None, Duration::from_secs(5)).await;
         handle.await.unwrap();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("parse response"));
+        assert!(result.unwrap_err().to_string().contains("parse"));
     }
 }
