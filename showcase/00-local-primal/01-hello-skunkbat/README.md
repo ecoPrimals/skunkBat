@@ -181,7 +181,7 @@ Which uses `examples/basic_usage.rs` from the main codebase.
 
 ## ➡️ Next Demo
 
-**Continue to**: `../02-violation-detection/` to see all 4 threat detection types
+**Continue to**: `../02-violation-detection/` to see all 5 threat detection types
 
 ---
 

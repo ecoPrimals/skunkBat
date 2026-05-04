@@ -43,7 +43,8 @@ showcase/
 ```
 
 Each sub-directory contains a `README.md` explaining the scenario and a
-`demo.sh` that runs the relevant `cargo run --example` command.
+`demo.sh` script. Level 0 demos run `cargo run --example`; higher tiers
+demonstrate integration patterns via narrative walkthroughs.
 
 ---
 

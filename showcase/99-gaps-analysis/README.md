@@ -71,7 +71,7 @@
 
 **Showcase:**
 - 12 working examples (`cargo run --example ...`)
-- 4-tier interactive demo suite (22 demos with `demo.sh` scripts)
+- 4-tier interactive demo suite (21 demos with `demo.sh` scripts)
 
 ---
 

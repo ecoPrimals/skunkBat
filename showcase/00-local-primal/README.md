@@ -11,7 +11,7 @@
 
 By completing this level, you'll understand:
 - ✅ How skunkBat initializes and discovers itself
-- ✅ All 4 types of threat detection (genetic, behavioral, signature, DoS)
+- ✅ All 5 types of threat detection (genetic, topology, behavioral, intrusion, resource)
 - ✅ All 3 defense actions (quarantine, rate-limit, block)
 - ✅ Statistical baseline profiling for anomaly detection
 - ✅ Real-time security metrics and observability

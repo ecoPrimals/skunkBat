@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-//! Beardog integration demonstration for skunkBat
+//! BearDog integration demonstration for skunkBat.
 //!
 //! Shows genetic lineage verification architecture. This demo uses the
 //! `LocalLineageVerifier` stub to demonstrate the integration pattern.
-//! For production use with real Beardog, enable the "beardog-integration" feature.
+//! Production integration uses `RemoteLineageVerifier` via JSON-RPC IPC
+//! to a running BearDog instance (discovered at runtime, not compile-time).
 
 use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{

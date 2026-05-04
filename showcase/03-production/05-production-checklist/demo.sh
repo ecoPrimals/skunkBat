@@ -87,5 +87,5 @@ echo "  ✅ Level 3: Production deployment"
 echo ""
 echo "🦨 skunkBat: Defensive reconnaissance, NOT surveillance"
 echo ""
-echo "Ready to deploy? See docs/DEPLOYMENT.md for next steps!"
+echo "Ready to deploy? See README.md and specs/ for production guidance!"
 
