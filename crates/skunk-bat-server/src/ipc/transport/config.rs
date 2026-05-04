@@ -4,7 +4,7 @@
 //! BTSP environment configuration (Phase 1 + Phase 2).
 //!
 //! Phase 1: socket naming with `FAMILY_ID` awareness.
-//! Phase 2: `BearDog`-delegated handshake via provider RPC.
+//! Phase 2: capability-delegated handshake via provider RPC.
 
 use super::error::TransportError;
 use super::sys::proc_uid;
@@ -99,42 +99,48 @@ impl BtspConfig {
 /// Configuration for BTSP server-side handshake (Phase 2).
 ///
 /// When present, every accepted connection must complete a BTSP handshake
-/// via the `BearDog` security provider before JSON-RPC is served.
+/// via the security provider before JSON-RPC is served.
+///
+/// Provider discovery follows capability-based resolution:
+/// 1. `BTSP_PROVIDER_SOCKET` — explicit path (highest priority)
+/// 2. `{BIOMEOS_SOCKET_DIR}/{BTSP_PROVIDER}-{FAMILY_ID}.sock` — by capability
+/// 3. Falls back to `btsp` capability name (agnostic of which primal serves it)
 #[derive(Debug, Clone)]
 pub struct BtspHandshakeConfig {
-    /// Path to `BearDog`'s UDS socket for `btsp.server.*` RPCs.
+    /// Path to the BTSP security provider's UDS socket for `btsp.server.*` RPCs.
     pub provider_socket: std::path::PathBuf,
     /// Family identifier (used for logging and future cipher scoping).
     #[expect(dead_code, reason = "reserved for BTSP Phase 2 cipher scoping")]
     pub family_id: String,
 }
 
+/// Default BTSP capability name for socket resolution.
+const DEFAULT_BTSP_CAPABILITY: &str = "btsp";
+
 impl BtspHandshakeConfig {
     /// Resolve handshake config from the environment.
     ///
     /// Returns `Some` when `FAMILY_ID` is set to a production value.
+    /// Provider socket is resolved by capability, not by primal name.
     #[must_use]
     pub fn from_env() -> Option<Self> {
         let fid = std::env::var("FAMILY_ID")
             .ok()
             .filter(|v| !v.is_empty() && v != "default")?;
 
-        let provider_socket = std::env::var("BTSP_PROVIDER_SOCKET")
-            .or_else(|_| std::env::var("BEARDOG_SOCKET"))
-            .ok()
-            .map_or_else(
-                || {
-                    let provider =
-                        std::env::var("BTSP_PROVIDER").unwrap_or_else(|_| "beardog".to_owned());
-                    let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
-                        let xdg =
-                            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
-                        format!("{xdg}/biomeos")
-                    });
-                    std::path::PathBuf::from(format!("{socket_dir}/{provider}-{fid}.sock"))
-                },
-                std::path::PathBuf::from,
-            );
+        let provider_socket = std::env::var("BTSP_PROVIDER_SOCKET").ok().map_or_else(
+            || {
+                let capability = std::env::var("BTSP_PROVIDER")
+                    .unwrap_or_else(|_| DEFAULT_BTSP_CAPABILITY.to_owned());
+                let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
+                    let xdg =
+                        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
+                    format!("{xdg}/biomeos")
+                });
+                std::path::PathBuf::from(format!("{socket_dir}/{capability}-{fid}.sock"))
+            },
+            std::path::PathBuf::from,
+        );
 
         Some(Self {
             provider_socket,

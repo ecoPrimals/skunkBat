@@ -171,6 +171,13 @@ pub struct NegotiateOutcome {
     pub session_keys: Option<SessionKeys>,
 }
 
+fn negotiate_error(error: &str, message: impl Into<String>) -> NegotiateOutcome {
+    NegotiateOutcome {
+        response: serde_json::json!({ "error": error, "message": message.into() }),
+        session_keys: None,
+    }
+}
+
 /// Handle a `btsp.negotiate` request.
 ///
 /// Per BTSP Protocol Standard and `BearDog` reference implementation:
@@ -191,13 +198,10 @@ pub async fn handle_negotiate(
     use base64::engine::general_purpose::STANDARD as BASE64;
 
     let Some(params) = params else {
-        return NegotiateOutcome {
-            response: serde_json::json!({
-                "error": "params_required",
-                "message": "btsp.negotiate requires session_id, client_nonce, ciphers/preferred_cipher"
-            }),
-            session_keys: None,
-        };
+        return negotiate_error(
+            "params_required",
+            "btsp.negotiate requires session_id, client_nonce, ciphers/preferred_cipher",
+        );
     };
 
     let session_id = params
@@ -206,13 +210,7 @@ pub async fn handle_negotiate(
         .unwrap_or("");
 
     if session_id.is_empty() {
-        return NegotiateOutcome {
-            response: serde_json::json!({
-                "error": "invalid_session",
-                "message": "session_id is required"
-            }),
-            session_keys: None,
-        };
+        return negotiate_error("invalid_session", "session_id is required");
     }
 
     let client_nonce_b64 = params
@@ -226,13 +224,10 @@ pub async fn handle_negotiate(
         match BASE64.decode(client_nonce_b64) {
             Ok(n) => n,
             Err(e) => {
-                return NegotiateOutcome {
-                    response: serde_json::json!({
-                        "error": "invalid_client_nonce",
-                        "message": format!("base64 decode failed: {e}")
-                    }),
-                    session_keys: None,
-                };
+                return negotiate_error(
+                    "invalid_client_nonce",
+                    format!("base64 decode failed: {e}"),
+                );
             }
         }
     };
@@ -240,13 +235,7 @@ pub async fn handle_negotiate(
     let offered_ciphers = extract_offered_ciphers(&params);
 
     let Some(session) = registry.get(session_id).await else {
-        return NegotiateOutcome {
-            response: serde_json::json!({
-                "error": "unknown_session",
-                "message": "session_id not found in registry"
-            }),
-            session_keys: None,
-        };
+        return negotiate_error("unknown_session", "session_id not found in registry");
     };
 
     let selected = select_best_cipher(&offered_ciphers, session.session_key.is_some());
@@ -270,11 +259,18 @@ pub async fn handle_negotiate(
     let server_nonce_b64 = BASE64.encode(server_nonce);
 
     let derived_keys = if let Some(ref handshake_key) = session.session_key {
-        let keys = derive_session_keys(handshake_key, &client_nonce, &server_nonce);
-        registry
-            .update_phase3(session_id, selected, keys.clone())
-            .await;
-        Some(keys)
+        match derive_session_keys(handshake_key, &client_nonce, &server_nonce) {
+            Ok(keys) => {
+                registry
+                    .update_phase3(session_id, selected, keys.clone())
+                    .await;
+                Some(keys)
+            }
+            Err(e) => {
+                tracing::error!("BTSP Phase 3 key derivation failed: {e}");
+                return negotiate_error("key_derivation_failed", "key derivation failed");
+            }
+        }
     } else {
         None
     };
@@ -363,11 +359,15 @@ impl std::fmt::Debug for SessionKeys {
 /// ```
 ///
 /// Server encrypts with `s2c` key, decrypts with `c2s` key.
+/// # Errors
+///
+/// Returns `TransportError::Crypto` if HKDF expansion fails (should not
+/// occur for 32-byte output, but handled without panics).
 pub fn derive_session_keys(
     handshake_key: &[u8],
     client_nonce: &[u8],
     server_nonce: &[u8],
-) -> SessionKeys {
+) -> Result<SessionKeys, super::TransportError> {
     use hkdf::Hkdf;
     use sha2::Sha256;
 
@@ -379,16 +379,16 @@ pub fn derive_session_keys(
 
     let mut client_to_server = [0u8; 32];
     hk.expand(b"btsp-session-v1-c2s", &mut client_to_server)
-        .expect("32 bytes is within HKDF-SHA256 output limit");
+        .map_err(|_| super::TransportError::Crypto("HKDF expand c2s failed".to_owned()))?;
 
     let mut server_to_client = [0u8; 32];
     hk.expand(b"btsp-session-v1-s2c", &mut server_to_client)
-        .expect("32 bytes is within HKDF-SHA256 output limit");
+        .map_err(|_| super::TransportError::Crypto("HKDF expand s2c failed".to_owned()))?;
 
-    SessionKeys {
+    Ok(SessionKeys {
         encrypt_key: server_to_client,
         decrypt_key: client_to_server,
-    }
+    })
 }
 
 /// Nonce size for `ChaCha20-Poly1305` (12 bytes).
@@ -504,7 +504,7 @@ mod tests {
         assert!(session.session_key.is_none());
         assert!(session.phase3_keys.is_none());
 
-        let keys = derive_session_keys(&[0x42; 32], &[0x01; 12], &[0x02; 32]);
+        let keys = derive_session_keys(&[0x42; 32], &[0x01; 12], &[0x02; 32]).unwrap();
         reg.update_phase3("ses-1", CipherSuite::ChaCha20Poly1305, keys)
             .await;
         let updated = reg.get("ses-1").await.unwrap();
@@ -671,8 +671,8 @@ mod tests {
         let client_nonce = [0x01u8; 12];
         let server_nonce = [0x02u8; 12];
 
-        let keys1 = derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
-        let keys2 = derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
+        let keys1 = derive_session_keys(&handshake_key, &client_nonce, &server_nonce).unwrap();
+        let keys2 = derive_session_keys(&handshake_key, &client_nonce, &server_nonce).unwrap();
 
         assert_eq!(keys1.encrypt_key, keys2.encrypt_key);
         assert_eq!(keys1.decrypt_key, keys2.decrypt_key);
@@ -685,8 +685,8 @@ mod tests {
         let server_nonce_a = [0x02u8; 12];
         let server_nonce_b = [0x03u8; 12];
 
-        let keys_a = derive_session_keys(&handshake_key, &client_nonce, &server_nonce_a);
-        let keys_b = derive_session_keys(&handshake_key, &client_nonce, &server_nonce_b);
+        let keys_a = derive_session_keys(&handshake_key, &client_nonce, &server_nonce_a).unwrap();
+        let keys_b = derive_session_keys(&handshake_key, &client_nonce, &server_nonce_b).unwrap();
 
         assert_ne!(keys_a.encrypt_key, keys_b.encrypt_key);
     }
@@ -697,13 +697,13 @@ mod tests {
         let client_nonce = [0x01u8; 12];
         let server_nonce = [0x02u8; 12];
 
-        let keys = derive_session_keys(&handshake_key, &client_nonce, &server_nonce);
+        let keys = derive_session_keys(&handshake_key, &client_nonce, &server_nonce).unwrap();
         assert_ne!(keys.encrypt_key, keys.decrypt_key);
     }
 
     #[test]
     fn session_keys_debug_redacts() {
-        let keys = derive_session_keys(&[0x42; 32], &[0x01; 12], &[0x02; 12]);
+        let keys = derive_session_keys(&[0x42; 32], &[0x01; 12], &[0x02; 12]).unwrap();
         let debug = format!("{keys:?}");
         assert!(debug.contains("REDACTED"));
         assert!(!debug.contains("42"));
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
-        let keys = derive_session_keys(&[0xAA; 32], &[0x01; 12], &[0x02; 12]);
+        let keys = derive_session_keys(&[0xAA; 32], &[0x01; 12], &[0x02; 12]).unwrap();
         let plaintext = b"hello btsp phase 3";
 
         let frame = encrypt_frame(&keys.encrypt_key, plaintext).unwrap();
@@ -777,7 +777,7 @@ mod tests {
 
     #[test]
     fn directional_keys_encrypt_decrypt() {
-        let keys = derive_session_keys(&[0xAA; 32], &[0x01; 16], &[0x02; 32]);
+        let keys = derive_session_keys(&[0xAA; 32], &[0x01; 16], &[0x02; 32]).unwrap();
         let plaintext = b"server to client message";
 
         let frame = encrypt_frame(&keys.encrypt_key, plaintext).unwrap();

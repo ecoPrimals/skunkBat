@@ -97,6 +97,9 @@ Zero cross-repo path dependencies — `sourdough-core` types internalized as `pr
 integration ready. 332 tests (164+48+100+20), pure Rust crypto deps wired and tested
 (chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.
+`server.rs` refactored (945→322L production, tests extracted to `server_tests.rs` with DRY
+helpers). `derive_session_keys` evolved from `.expect()` to `Result<_, TransportError>`.
+Hardcoded `"beardog"` provider name evolved to capability-based `"btsp"` default.
 Unused `hex` dependency removed. All `Result<_, String>` errors evolved to typed enums
 (`TransportError`, `RpcError`) with structured variants for match-based handling.
 `btsp.negotiate` inside batch arrays explicitly rejected (transport upgrade incompatible

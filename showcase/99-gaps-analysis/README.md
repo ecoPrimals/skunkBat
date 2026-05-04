@@ -23,7 +23,7 @@
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
 | sourdough-core | **INTERNALIZED** — zero cross-repo path deps, `primal_foundation` module |
-| Max file | 780 lines (`negotiate.rs`); limit 1000; 41 source files |
+| Max file | 790 lines (`negotiate.rs`); limit 1000; 42 source files |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)
