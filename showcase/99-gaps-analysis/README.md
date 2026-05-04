@@ -4,7 +4,7 @@
 
 **Current state vs what's needed for complete skunkBat deployment.**
 
-*Updated: May 3, 2026*
+*Updated: May 4, 2026*
 
 ---
 
@@ -14,7 +14,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 309 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Tests | 332 passing / 0 failures / 15 ignored (external-primal-gated) |
 | Coverage | 90%+ function (cargo-llvm-cov); crypto 100%, behavioral 100%, threats ~98% |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
@@ -23,7 +23,7 @@
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
 | sourdough-core | **INTERNALIZED** — zero cross-repo path deps, `primal_foundation` module |
-| Max file | 780 lines (`negotiate.rs`); limit 1000; 40 source files |
+| Max file | 780 lines (`negotiate.rs`); limit 1000; 41 source files |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)
@@ -46,6 +46,7 @@
 - BTSP Phase 1 socket naming + Phase 2 BearDog-delegated handshake + Phase 3 `btsp.negotiate` with encrypted `ChaCha20-Poly1305` frame upgrade (handshake key plumbed, AEAD loop wired)
 - Wire Standard L2 (`capabilities.list`) and L3 (`identity.get`)
 - Capability symlinks (`security.sock`)
+- **Self-registration** with discovery (`ipc.register`) — standalone-safe probe on startup
 
 **Threat Detection (5 types):**
 - Genetic (lineage) — trait + local stub + BearDog delegation
@@ -100,6 +101,7 @@ ecosystem primals.
 
 | Gap | Status | Notes |
 |-----|--------|-------|
+| **Neural API registration** | **DONE** | `ipc.register` on startup with 6 capabilities; standalone-safe |
 | **Federation threat sharing** | Conceptual | Needs intel format + pub/sub |
 | **NestGate data protection** | Not started | Specific to NestGate deployments |
 | **Multiple baseline windows** | Single rolling window works | Hour/day/week windows |

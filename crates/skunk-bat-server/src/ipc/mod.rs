@@ -14,6 +14,7 @@
 
 mod dispatch;
 mod jsonrpc;
+mod registration;
 mod server;
 pub mod transport;
 
@@ -60,6 +61,12 @@ pub async fn serve(
     };
 
     tracing::info!("skunkBat IPC ready (TCP :{port}, UDS: {})", !no_uds);
+
+    let register_endpoint = socket_path.as_ref().map_or_else(
+        || format!("tcp://0.0.0.0:{port}"),
+        |p| format!("unix://{p}"),
+    );
+    tokio::spawn(registration::self_register(register_endpoint));
 
     tokio::select! {
         result = tcp_handle => {
