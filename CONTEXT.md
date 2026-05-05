@@ -39,6 +39,15 @@ observability — all metadata-only, no content inspection by architecture.
 
 All integration is capability-based runtime discovery. No primal names hardcoded in routing.
 
+**Discovery Escalation Hierarchy** (ecosystem-wide, primalSpring Phase 58+):
+1. Songbird `ipc.resolve` — highest fidelity, cross-gate capable
+2. biomeOS Neural API (`capability.discover`)
+3. UDS filesystem convention (`skunkbat-{family_id}.sock`) ← we support this
+4. Socket registry / manifests
+5. TCP probing (port 9140) ← we support this
+
+skunkBat supports tiers 1 (via `ipc.register`), 3, and 5 out of the box.
+
 ## Composable Primitives
 
 skunkBat decomposes into five primitive domains, each independently useful:
