@@ -48,7 +48,7 @@ and scheduling hints are centralized:
 |---------------------|-------|
 | `PRIMAL_ID` | `"skunkbat"` |
 | `CAPABILITIES` | All exposed methods (see IPC table below) |
-| `CONSUMED_CAPABILITIES` | `btsp.server.verify`, `genetic.verify_lineage`, `capabilities.list`, `discovery.query`, `federation.peers` |
+| `CONSUMED_CAPABILITIES` | `btsp.session.verify`, `lineage.verify`, `lineage.list`, `capabilities.list`, `discovery.find_by_capability`, `federation.broadcast` |
 
 ---
 
