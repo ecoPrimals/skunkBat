@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-332 tests passing (164 core + 48 integrations + 100 server + 20 transport/integration), all workspace lib+bins.
+338 tests passing (165 core + 51 integrations + 102 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -103,7 +103,7 @@ and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 No magic numbers — all thresholds named. 40 source files, max 780 lines/file (production).
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 332 tests (164+48+100+20), pure Rust crypto deps wired and tested
+integration ready. 338 tests (165+51+102+20), pure Rust crypto deps wired and tested
 (chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.
 `server.rs` refactored (945→322L production, tests extracted to `server_tests.rs` with DRY
@@ -119,3 +119,14 @@ encrypted `ChaCha20-Poly1305` framing (`[4B len][12B nonce][ct+tag]`). Aligned w
 `BearDog` reference implementation: base64 nonces, `client_nonce` from params, directional
 key derivation (`btsp-session-v1-c2s`/`s2c`), 32-byte server nonce, `ciphers` array support.
 `select_best_cipher` matches ecosystem preference order (chacha20-poly1305 > hmac-plain > null).
+`detect_genetic_threats` evolved from no-op to real lineage verifier call (produces
+`UnknownLineage` threat on verification failure). `RuntimeVerifier` enum dispatch added
+(`integrations::verifier`) — probes env at startup for remote provider, falls back to
+conservative local default. `SecurityObserver` metrics wired into live pipeline:
+`detect_threats` → `record_threat_detected`, `respond_to_threat` → `record_threat_mitigated`
++ `record_quarantine` + `record_alert`, `scan_network` → `record_scan_performed`.
+`DefenseEngine::respond` returns `ActionType` for caller instrumentation.
+`btsp.negotiate` separated from dispatch `METHODS` into `TRANSPORT_METHODS` — transport-only,
+advertised in `capabilities.list` but rejected by `dispatch()`.
+`SKUNKBAT_LISTEN_ADDR` env var added for bind address parity with `SKUNKBAT_PORT`.
+Threat IDs evolved from Debug-formatted SystemTime to clean microsecond epoch format.

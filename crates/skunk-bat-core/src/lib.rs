@@ -124,8 +124,13 @@ impl SkunkBat {
     /// # Errors
     ///
     /// Returns an error if threat detection fails.
+    #[must_use = "threats should be handled by respond_to_threat"]
     pub async fn detect_threats(&self) -> Result<Vec<threats::Threat>, SkunkBatError> {
-        self.threat_detector.detect().await
+        let threats = self.threat_detector.detect().await?;
+        for _ in &threats {
+            self.observer.record_threat_detected();
+        }
+        Ok(threats)
     }
 
     /// Respond to a detected threat.
@@ -136,7 +141,21 @@ impl SkunkBat {
     ///
     /// Returns an error if the threat response fails.
     pub fn respond_to_threat(&self, threat: &threats::Threat) -> Result<(), SkunkBatError> {
-        self.defense.respond(threat)
+        let action = self.defense.respond(threat)?;
+        self.observer.record_threat_mitigated();
+        match action {
+            defense::ActionType::Quarantine | defense::ActionType::QuarantineAndAlert => {
+                self.observer.record_quarantine();
+            }
+            _ => {}
+        }
+        if matches!(
+            action,
+            defense::ActionType::QuarantineAndAlert | defense::ActionType::MonitorAndAlert
+        ) {
+            self.observer.record_alert();
+        }
+        Ok(())
     }
 
     /// Scan network topology.
@@ -146,8 +165,11 @@ impl SkunkBat {
     /// # Errors
     ///
     /// Returns an error if the network scan fails.
+    #[must_use = "scan results should be analyzed for threats"]
     pub async fn scan_network(&self) -> Result<reconnaissance::NetworkScan, SkunkBatError> {
-        self.reconnaissance.scan().await
+        let scan = self.reconnaissance.scan().await?;
+        self.observer.record_scan_performed();
+        Ok(scan)
     }
 
     /// Get security metrics.

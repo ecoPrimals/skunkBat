@@ -28,3 +28,4 @@ pub mod beardog;
 pub mod rpc;
 pub mod songbird;
 pub mod toadstool;
+pub mod verifier;

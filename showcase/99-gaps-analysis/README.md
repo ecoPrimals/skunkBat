@@ -4,7 +4,7 @@
 
 **Current state vs what's needed for complete skunkBat deployment.**
 
-*Updated: May 4, 2026*
+*Updated: May 5, 2026*
 
 ---
 
@@ -14,7 +14,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 332 passing / 0 failures / 15 ignored (external-primal-gated) |
+| Tests | 338 passing / 0 failures / 15 ignored (external-primal-gated) |
 | Coverage | 90%+ function (cargo-llvm-cov); crypto 100%, behavioral 100%, threats ~98% |
 | Clippy | CLEAN — pedantic + nursery, `-D warnings`, zero warnings |
 | Format | CLEAN — `cargo fmt --check` |
@@ -23,7 +23,7 @@
 | Unsafe | `forbid(unsafe_code)` workspace-wide |
 | async-trait | **ELIMINATED** — 14→0, native RPITIT + generics, dep removed + banned |
 | sourdough-core | **INTERNALIZED** — zero cross-repo path deps, `primal_foundation` module |
-| Max file | 790 lines (`negotiate.rs`); limit 1000; 42 source files |
+| Max file | 790 lines (`negotiate.rs`); limit 1000; 43 source files |
 | Edition | 2024 |
 
 ### What's Implemented (Production Code)
@@ -36,7 +36,7 @@
 - Named constants for all thresholds (no magic numbers)
 - Cross-platform implementations (`platform::proc_uid`, `check_system_load`)
 - Crate-level self-knowledge constants (`PRIMAL_NAME`, `PRIMAL_ID`, `CAPABILITIES`)
-- Config-driven TCP bind address (no hardcoded `"0.0.0.0"`)
+- Config-driven TCP bind address via `SKUNKBAT_LISTEN_ADDR` env var (no hardcoded `"0.0.0.0"`)
 
 **JSON-RPC 2.0 Server (from scratch):**
 - Single requests with standard error codes (-32700 through -32603)
@@ -49,7 +49,7 @@
 - **Self-registration** with discovery (`ipc.register`) — standalone-safe probe on startup
 
 **Threat Detection (5 types):**
-- Genetic (lineage) — trait + local stub + BearDog delegation
+- Genetic (lineage) — real verifier call + `RuntimeVerifier` enum dispatch + conservative deny fallback
 - Topology (layer-hopping) — trait + simple mapper
 - Behavioral (statistical anomaly) — `StatisticalProfiler` with rolling baselines
 - Intrusion (signatures) — framework + pattern matching
@@ -61,7 +61,8 @@
 - User-approval workflow structure
 
 **Observability:**
-- Metrics collection, structured logging, health checks, audit logging
+- Metrics collection wired to live operations (detect → `record_threat_detected`, respond → `record_threat_mitigated` + `record_quarantine` + `record_alert`, scan → `record_scan_performed`)
+- Structured logging, health checks, audit logging
 
 **Integrations (JSON-RPC clients):**
 - `RpcClient` — full JSON-RPC 2.0 client with BTSP handshake

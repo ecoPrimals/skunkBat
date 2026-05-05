@@ -14,8 +14,7 @@ use tokio::sync::RwLock;
 
 use super::jsonrpc::{self, Request, Response};
 
-/// Every callable method — the single source of truth for
-/// `capabilities.list` and `lifecycle.capabilities`.
+/// Application-layer methods routed through `dispatch()`.
 const METHODS: &[&str] = &[
     "health.liveness",
     "health.readiness",
@@ -28,8 +27,11 @@ const METHODS: &[&str] = &[
     "lifecycle.capabilities",
     "capabilities.list",
     "identity.get",
-    "btsp.negotiate",
 ];
+
+/// Transport-layer methods handled by the connection handler before dispatch.
+/// Listed here for `capabilities.list` completeness only — not routed by `dispatch()`.
+const TRANSPORT_METHODS: &[&str] = &["btsp.negotiate"];
 
 const PRIMAL_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PRIMAL_DOMAIN: &str = "security";
@@ -95,7 +97,8 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
         }
 
         "lifecycle.capabilities" => {
-            Response::success(id, serde_json::json!({"capabilities": METHODS}))
+            let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
+            Response::success(id, serde_json::json!({"capabilities": all}))
         }
 
         "capabilities.list" | "capability.list" => Response::success(
@@ -103,7 +106,7 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
             serde_json::json!({
                 "primal": skunk_bat_core::PRIMAL_ID,
                 "version": PRIMAL_VERSION,
-                "methods": METHODS,
+                "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
                 "provided_capabilities": [
                     {
                         "type": "security",
@@ -374,5 +377,32 @@ mod tests {
         };
         let resp = dispatch(&state, req).await;
         assert!(resp.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn btsp_negotiate_is_transport_only() {
+        let state = make_state();
+        let resp = dispatch(&state, make_request("btsp.negotiate")).await;
+        assert!(
+            resp.error.is_some(),
+            "btsp.negotiate must NOT be dispatch-routed (transport-layer only)"
+        );
+    }
+
+    #[tokio::test]
+    async fn capabilities_list_includes_transport_methods() {
+        let state = make_state();
+        let resp = dispatch(&state, make_request("capabilities.list")).await;
+        let result = resp.result.expect("capabilities should succeed");
+        let methods = result["methods"].as_array().expect("methods array");
+        let method_strs: Vec<&str> = methods.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            method_strs.contains(&"btsp.negotiate"),
+            "capabilities.list must advertise transport methods"
+        );
+        assert!(
+            method_strs.contains(&"health.liveness"),
+            "capabilities.list must advertise application methods"
+        );
     }
 }

@@ -149,13 +149,50 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         &self.lineage_verifier
     }
 
-    #[expect(
-        clippy::unused_async,
-        reason = "async signature for trait consistency when BearDog integration lands"
-    )]
+    fn threat_id_suffix() -> u64 {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "microsecond epoch fits u64 until year 586524"
+        )]
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_micros() as u64)
+    }
+
     async fn detect_genetic_threats(&self) -> Result<Vec<Threat>, SkunkBatError> {
-        tracing::debug!("Genetic threat detection ready (awaiting peer connections)");
-        Ok(Vec::new())
+        let Some(ref my_lineage) = self.lineage_id else {
+            tracing::debug!("Genetic threat detection: no lineage_id configured");
+            return Ok(Vec::new());
+        };
+
+        match self.lineage_verifier.is_family(my_lineage).await {
+            Ok(true) => {
+                tracing::debug!("Lineage verification passed for {my_lineage}");
+                Ok(Vec::new())
+            }
+            Ok(false) => {
+                tracing::warn!("Lineage verification FAILED for {my_lineage}");
+                Ok(vec![Threat {
+                    id: format!("genetic-lineage-{}", Self::threat_id_suffix()),
+                    threat_type: ThreatType::UnknownLineage {
+                        peer_id: my_lineage.clone(),
+                        lineage: None,
+                    },
+                    source: my_lineage.clone(),
+                    target: "self".to_owned(),
+                    severity: Severity::Critical,
+                    confidence: 0.95,
+                    description: format!(
+                        "Lineage verification failed — identity '{my_lineage}' not recognized"
+                    ),
+                    detected_at: SystemTime::now(),
+                }])
+            }
+            Err(e) => {
+                tracing::debug!("Lineage verifier unavailable: {e} — skipping genetic detection");
+                Ok(Vec::new())
+            }
+        }
     }
 
     async fn detect_behavioral_anomalies(&self) -> Result<Vec<Threat>, SkunkBatError> {
@@ -185,7 +222,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
                     Severity::Low
                 };
                 Threat {
-                    id: format!("anomaly-{:?}", SystemTime::now()),
+                    id: format!("anomaly-{}", Self::threat_id_suffix()),
                     description: format!("Behavioral anomaly detected: {}", a.behavior),
                     confidence: a.confidence,
                     threat_type: ThreatType::BehaviorAnomaly {
@@ -318,11 +355,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_threat_detection() {
+    async fn test_threat_detection_with_local_verifier() {
         let config = test_config();
         let detector = ThreatDetector::new(&config);
         let threats = detector.detect().await.expect("detection should succeed");
-        assert!(threats.is_empty());
+        assert_eq!(
+            threats.len(),
+            1,
+            "LocalLineageVerifier denies → genetic threat"
+        );
+        assert!(threats[0].id.starts_with("genetic-lineage-"));
+    }
+
+    #[tokio::test]
+    async fn test_threat_detection_no_lineage_id() {
+        let config = SkunkBatConfig {
+            lineage_id: None,
+            ..test_config()
+        };
+        let detector = ThreatDetector::new(&config);
+        let threats = detector.detect().await.expect("detection should succeed");
+        assert!(threats.is_empty(), "no lineage_id → no genetic detection");
     }
 
     #[tokio::test]
@@ -607,13 +660,11 @@ mod tests {
         let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
         let threats = detector.detect().await.expect("detect");
         assert!(
-            !threats.is_empty(),
+            threats
+                .iter()
+                .any(|t| matches!(t.threat_type, ThreatType::BehaviorAnomaly { .. })),
             "Should detect the connection rate spike as anomaly"
         );
-        assert!(matches!(
-            threats[0].threat_type,
-            ThreatType::BehaviorAnomaly { .. }
-        ));
     }
 
     #[tokio::test]

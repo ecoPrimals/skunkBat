@@ -72,10 +72,10 @@ impl DefenseEngine {
     /// # Errors
     ///
     /// Returns an error if the threat response fails.
-    pub fn respond(&self, threat: &Threat) -> Result<(), SkunkBatError> {
+    pub fn respond(&self, threat: &Threat) -> Result<ActionType, SkunkBatError> {
         if !self.enabled {
             tracing::debug!("Defense engine disabled, threat logged only");
-            return Ok(());
+            return Ok(ActionType::MonitorAndAlert);
         }
 
         tracing::warn!(
@@ -88,7 +88,7 @@ impl DefenseEngine {
         let action = Self::determine_action(threat);
         self.execute_action(&action, threat);
 
-        Ok(())
+        Ok(action.action_type)
     }
 
     /// Determine appropriate defense action.
