@@ -124,7 +124,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             return Ok(vec![]);
         }
 
-        let mut threats = Vec::new();
+        let mut threats = Vec::with_capacity(4);
         threats.extend(self.detect_genetic_threats().await?);
         threats.extend(self.detect_behavioral_anomalies().await?);
         threats.extend(self.detect_intrusions().await?);

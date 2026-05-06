@@ -277,10 +277,38 @@ impl PrimalHealth for SkunkBat {
     }
 
     async fn health_check(&self) -> Result<HealthReport, PrimalError> {
-        Ok(
-            HealthReport::new(&self.config.common.name, env!("CARGO_PKG_VERSION"))
-                .with_status(self.health_status()),
-        )
+        let mut report = HealthReport::new(&self.config.common.name, env!("CARGO_PKG_VERSION"))
+            .with_status(self.health_status());
+
+        for dep in self.dependency_health().await? {
+            report = report.with_dependency(dep);
+        }
+
+        Ok(report)
+    }
+
+    async fn dependency_health(&self) -> Result<Vec<DependencyHealth>, PrimalError> {
+        let mut deps = Vec::with_capacity(2);
+
+        let lineage_status = if self.config.lineage_id.is_some() {
+            DependencyHealth::healthy("lineage-verifier", "capability")
+        } else {
+            DependencyHealth::unhealthy(
+                "lineage-verifier",
+                "capability",
+                "no lineage_id configured",
+            )
+        };
+        deps.push(lineage_status);
+
+        let observer_status = if self.observer.is_healthy() {
+            DependencyHealth::healthy("security-observer", "internal")
+        } else {
+            DependencyHealth::unhealthy("security-observer", "internal", "disabled by config")
+        };
+        deps.push(observer_status);
+
+        Ok(deps)
     }
 }
 

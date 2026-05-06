@@ -285,9 +285,8 @@ impl ThreatBroadcaster for FederationThreatBroadcaster {
                 Ok(())
             }
             Err(e) => {
-                tracing::error!("Threat broadcast failed: {e}");
-                tracing::warn!("Federation unavailable, continuing with local-only defense");
-                Ok(())
+                tracing::warn!("Federation broadcast failed (local defense unaffected): {e}");
+                Err(e)
             }
         }
     }
@@ -302,7 +301,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_federation_broadcaster() {
+    async fn test_federation_broadcaster_propagates_error() {
         let client = FederationClient::from_env();
         client.connect().await.expect("connect should not error");
 
@@ -311,13 +310,13 @@ mod tests {
             .broadcast("TestThreat", "test", "Low", "unit test")
             .await;
         assert!(
-            result.is_ok(),
-            "Should gracefully degrade when disconnected"
+            result.is_err(),
+            "Should propagate error when federation unreachable"
         );
     }
 
     #[tokio::test]
-    async fn test_graceful_degradation() {
+    async fn test_broadcast_error_propagation() {
         let client =
             FederationClient::new("unreachable.invalid:9999".to_string(), "skunkbat".into());
 
@@ -326,7 +325,7 @@ mod tests {
         let result = broadcaster
             .broadcast("GeneticViolation", "test-node", "High", "Test threat")
             .await;
-        assert!(result.is_ok(), "Should gracefully degrade");
+        assert!(result.is_err(), "Should propagate RPC failure to caller");
     }
 
     #[tokio::test]

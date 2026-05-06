@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-//! Universal Adapter for capability-based primal discovery
+//! Universal Adapter for capability-based primal discovery.
+//!
+//! **Status: Experimental API** — this module provides the local data structures
+//! for capability indexing but is not yet wired into the main `SkunkBat` runtime
+//! path. Production discovery uses `ipc.register` + `ipc.resolve` via
+//! `skunk-bat-integrations`. This module is retained for future in-process
+//! capability routing when multiple subsystems share a process.
 //!
 //! The Universal Adapter enables primals to:
 //! - Announce their capabilities without naming themselves

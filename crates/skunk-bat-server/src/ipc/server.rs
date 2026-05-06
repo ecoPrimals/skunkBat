@@ -289,7 +289,7 @@ async fn handle_batch(
         );
     }
 
-    let mut responses = Vec::new();
+    let mut responses = Vec::with_capacity(requests.len());
 
     for raw in requests {
         match serde_json::from_value::<jsonrpc::Request>(raw) {
