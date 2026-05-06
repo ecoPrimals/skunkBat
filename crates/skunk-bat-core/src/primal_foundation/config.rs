@@ -34,7 +34,7 @@ impl Default for CommonConfig {
             log_level: "info".to_owned(),
             data_dir: "./data".to_owned(),
             listen_addr: std::env::var("SKUNKBAT_LISTEN_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0".to_owned()),
+                .unwrap_or_else(|_| "127.0.0.1".to_owned()),
             listen_port: 0,
             identity_service_endpoint: None,
             discovery_service_endpoint: None,

@@ -139,9 +139,11 @@ and observer status. `FederationThreatBroadcaster::broadcast` now propagates err
 silently swallowing). `Vec::with_capacity` in batch handler and threat detection.
 `universal_adapter` documented as experimental (not production-path).
 PG-55: `--bind` CLI flag added to `server` subcommand (UniBin v1.1 pattern) — precedence:
-CLI flag > `SKUNKBAT_LISTEN_ADDR` env > `0.0.0.0` default. Enables localhost-only binding.
+CLI flag > `SKUNKBAT_LISTEN_ADDR` env > `127.0.0.1` default (secure-by-default, localhost-only).
+Use `--bind 0.0.0.0` to explicitly expose on all interfaces.
 PG-57: Baseline learning pipeline established — `StatisticalProfiler::seed_baseline()` called
 at construction with 12 normal-traffic observations. Profiler `is_established()` gate now
-passes from first `detect()`. 7 pen-test attack patterns (port enumeration, payload flood,
-malformed JSON-RPC burst, service enumeration, amplification, slow-rate exhaustion, protocol
-confusion) documented in `threats::baseline` module and validated by tests.
+passes from first `detect()`. Multi-dimensional analysis: connection rate, traffic volume,
+and port diversity all contribute to anomaly scoring. 7 pen-test attack patterns (port
+enumeration, payload flood, malformed JSON-RPC burst, service enumeration, amplification,
+slow-rate exhaustion, protocol confusion) documented in `threats::baseline` module.

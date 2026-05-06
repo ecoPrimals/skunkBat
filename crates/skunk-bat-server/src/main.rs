@@ -26,7 +26,7 @@ fn default_port() -> u16 {
 }
 
 fn default_bind() -> String {
-    std::env::var("SKUNKBAT_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0".to_owned())
+    std::env::var("SKUNKBAT_LISTEN_ADDR").unwrap_or_else(|_| "127.0.0.1".to_owned())
 }
 
 /// skunkBat — Reconnaissance & Automated Defense
@@ -44,8 +44,8 @@ enum Commands {
         /// TCP listen address.
         ///
         /// Override with `SKUNKBAT_LISTEN_ADDR` env var or `--bind`.
-        /// Defaults to `0.0.0.0` (all interfaces). Use `127.0.0.1`
-        /// for localhost-only binding.
+        /// Defaults to `127.0.0.1` (localhost-only). Use `0.0.0.0`
+        /// to expose on all interfaces.
         #[arg(long, default_value_t = default_bind())]
         bind: String,
 

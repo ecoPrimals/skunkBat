@@ -97,6 +97,7 @@ impl BaselineProfiler for StatisticalProfiler {
 
         let mut anomalies = Vec::new();
 
+        // Dimension 1: Connection rate
         let rates: Vec<f64> = self
             .observations
             .iter()
@@ -105,13 +106,59 @@ impl BaselineProfiler for StatisticalProfiler {
 
         if let Some((mean, std_dev)) = Self::calculate_stats(&rates) {
             let deviation = (observation.connection_rate - mean).abs() / std_dev;
-
             if deviation > self.threshold {
                 anomalies.push(Anomaly {
                     deviation,
                     behavior: format!(
                         "Unusual connection rate: {:.2}/s (baseline: {mean:.2}±{std_dev:.2})",
                         observation.connection_rate,
+                    ),
+                    confidence: (deviation / (self.threshold * 2.0)).min(1.0),
+                });
+            }
+        }
+
+        // Dimension 2: Traffic volume
+        #[expect(clippy::cast_precision_loss, reason = "traffic volumes fit in f64")]
+        let volumes: Vec<f64> = self
+            .observations
+            .iter()
+            .map(|o| o.traffic_volume as f64)
+            .collect();
+
+        #[expect(clippy::cast_precision_loss, reason = "traffic volumes fit in f64")]
+        if let Some((mean, std_dev)) = Self::calculate_stats(&volumes) {
+            let deviation = (observation.traffic_volume as f64 - mean).abs() / std_dev;
+            if deviation > self.threshold {
+                anomalies.push(Anomaly {
+                    deviation,
+                    behavior: format!(
+                        "Unusual traffic volume: {} B/s (baseline: {mean:.0}±{std_dev:.0})",
+                        observation.traffic_volume,
+                    ),
+                    confidence: (deviation / (self.threshold * 2.0)).min(1.0),
+                });
+            }
+        }
+
+        // Dimension 3: Port diversity (number of distinct ports accessed)
+        #[expect(clippy::cast_precision_loss, reason = "port counts fit in f64")]
+        let port_counts: Vec<f64> = self
+            .observations
+            .iter()
+            .map(|o| o.ports_accessed.len() as f64)
+            .collect();
+
+        #[expect(clippy::cast_precision_loss, reason = "port counts fit in f64")]
+        if let Some((mean, std_dev)) = Self::calculate_stats(&port_counts) {
+            let current_ports = observation.ports_accessed.len() as f64;
+            let deviation = (current_ports - mean).abs() / std_dev;
+            if deviation > self.threshold {
+                anomalies.push(Anomaly {
+                    deviation,
+                    behavior: format!(
+                        "Unusual port diversity: {} ports (baseline: {mean:.1}±{std_dev:.1})",
+                        observation.ports_accessed.len(),
                     ),
                     confidence: (deviation / (self.threshold * 2.0)).min(1.0),
                 });
