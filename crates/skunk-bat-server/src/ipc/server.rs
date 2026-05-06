@@ -49,7 +49,16 @@ pub(super) async fn handle_connection<S>(
             NegotiateAction::Upgrade(keys) => {
                 tracing::info!("BTSP Phase 3: switching to encrypted framing");
                 let buf_reader = lines.into_inner();
-                run_encrypted_frame_loop(state, sessions, buf_reader, writer, &keys).await;
+                if !buf_reader.buffer().is_empty() {
+                    tracing::warn!(
+                        "BufReader has {} leftover bytes at negotiate boundary — \
+                         discarding (protocol violation: client must await response \
+                         before sending encrypted frames)",
+                        buf_reader.buffer().len()
+                    );
+                }
+                let inner_reader = buf_reader.into_inner();
+                run_encrypted_frame_loop(state, sessions, inner_reader, writer, &keys).await;
                 return;
             }
             NegotiateAction::Handled => continue,

@@ -133,7 +133,9 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
                 "primal": skunk_bat_core::PRIMAL_ID,
                 "version": PRIMAL_VERSION,
                 "domain": PRIMAL_DOMAIN,
-                "license": PRIMAL_LICENSE
+                "license": PRIMAL_LICENSE,
+                "protocol": "jsonrpc-2.0",
+                "transport": ["uds", "tcp"]
             }),
         ),
 

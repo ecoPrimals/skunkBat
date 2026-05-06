@@ -61,25 +61,31 @@ pub async fn self_register(endpoint: String) {
 }
 
 /// Resolve the discovery socket path from environment/conventions.
+///
+/// Probe order (first existing socket wins):
+/// 1. `DISCOVERY_SOCKET` env var (explicit override)
+/// 2. `SONGBIRD_SOCKET` env var (direct Songbird tier-1 registration)
+/// 3. `{socket_dir}/songbird.sock` (Songbird convention)
+/// 4. `{socket_dir}/discovery-{FAMILY_ID}.sock` (family-scoped)
+/// 5. `{socket_dir}/discovery.sock` (generic)
 fn resolve_discovery_socket() -> Option<String> {
-    if let Ok(path) = std::env::var("DISCOVERY_SOCKET")
-        && !path.is_empty()
-        && std::path::Path::new(&path).exists()
-    {
-        return Some(path);
+    for env_var in ["DISCOVERY_SOCKET", "SONGBIRD_SOCKET"] {
+        if let Ok(path) = std::env::var(env_var)
+            && !path.is_empty()
+            && std::path::Path::new(&path).exists()
+        {
+            return Some(path);
+        }
     }
 
     let socket_dir = skunk_bat_integrations::rpc::socket_dir();
     let family_id = std::env::var("FAMILY_ID").unwrap_or_default();
 
-    let candidates = if family_id.is_empty() || family_id == "default" {
-        vec![format!("{socket_dir}/discovery.sock")]
-    } else {
-        vec![
-            format!("{socket_dir}/discovery-{family_id}.sock"),
-            format!("{socket_dir}/discovery.sock"),
-        ]
-    };
+    let mut candidates = vec![format!("{socket_dir}/songbird.sock")];
+    if !family_id.is_empty() && family_id != "default" {
+        candidates.push(format!("{socket_dir}/discovery-{family_id}.sock"));
+    }
+    candidates.push(format!("{socket_dir}/discovery.sock"));
 
     candidates
         .into_iter()

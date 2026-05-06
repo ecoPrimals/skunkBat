@@ -178,6 +178,7 @@ No primal names are hardcoded in production code.
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 - Self-registration with discovery (`ipc.register`) — standalone-safe
+- Discovery Escalation Hierarchy support: tier 1 (Songbird `ipc.resolve`), tier 3 (UDS filesystem), tier 5 (TCP probing on port 9140)
 
 ---
 
