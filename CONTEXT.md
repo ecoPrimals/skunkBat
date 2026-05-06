@@ -97,7 +97,7 @@ v0.2.0-dev — Edition 2024, clippy pedantic+nursery clean (zero warnings), `for
 workspace-wide. All `#[allow]` migrated to `#[expect(reason)]`. JSON-RPC IPC server with
 BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned with v0.9.0,
 `btsp.negotiate` server handler with session registry and ChaCha20-Poly1305 infrastructure)
-and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
+and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
 No magic numbers — all thresholds named. 43 source files, max 790 lines/file (production).
@@ -130,3 +130,11 @@ conservative local default. `SecurityObserver` metrics wired into live pipeline:
 advertised in `capabilities.list` but rejected by `dispatch()`.
 `SKUNKBAT_LISTEN_ADDR` env var added for bind address parity with `SKUNKBAT_PORT`.
 Threat IDs evolved from Debug-formatted SystemTime to clean microsecond epoch format.
+BufReader post-negotiate fix: inner stream (not buffered wrapper) passed to encrypted frame
+loop — prevents leftover NDJSON bytes from corrupting binary frames. `identity.get` carries
+Wire Standard L3 fields (`protocol`, `transport`). Songbird `songbird.sock` probed directly
+in registration discovery. `skunk-bat-core` tokio trimmed to `sync`-only (was pulling full
+runtime for one `RwLock`). `SkunkBat::dependency_health` implemented — reports lineage verifier
+and observer status. `FederationThreatBroadcaster::broadcast` now propagates errors (was
+silently swallowing). `Vec::with_capacity` in batch handler and threat detection.
+`universal_adapter` documented as experimental (not production-path).

@@ -43,7 +43,7 @@ cd 01-hello-skunkbat && ./demo.sh
 ### 🟢 Demo 02: Threat Detection Types (10 min)
 **File**: `02-threat-detection-types/demo.sh`
 
-See all 4 threat detection mechanisms in action with real scenarios.
+See all 5 threat detection mechanisms in action with real scenarios.
 
 ```bash
 cd 02-threat-detection-types && ./demo.sh
@@ -254,7 +254,7 @@ Everything runs locally.
 After completing Level 0, you should be able to:
 
 - [ ] Explain the "self-knowledge principle"
-- [ ] List all 4 threat detection types
+- [ ] List all 5 threat detection types
 - [ ] Describe all 3 defense actions
 - [ ] Understand baseline learning process
 - [ ] Read security metrics dashboard
