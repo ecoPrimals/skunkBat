@@ -14,6 +14,7 @@
 //! | Intrusion (signature) | — | built-in |
 //! | Resource (exhaustion) | — | built-in |
 
+pub mod baseline;
 mod behavioral;
 mod genetic;
 pub mod traits;
@@ -58,13 +59,14 @@ pub struct ThreatDetector<
 
 impl ThreatDetector {
     /// Create a threat detector with default local implementations.
+    ///
+    /// Automatically seeds the baseline profiler with normal traffic
+    /// observations so anomaly detection is active from first `detect()` call.
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
-        Self::with_verifiers(
-            config,
-            LocalLineageVerifier,
-            StatisticalProfiler::new(DEFAULT_SIGMA_THRESHOLD),
-        )
+        let mut profiler = StatisticalProfiler::new(DEFAULT_SIGMA_THRESHOLD);
+        profiler.seed_baseline(&baseline::normal_baseline());
+        Self::with_verifiers(config, LocalLineageVerifier, profiler)
     }
 }
 

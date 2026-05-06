@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-338 tests passing (165 core + 51 integrations + 102 server + 20 transport/integration), all workspace lib+bins.
+345 tests passing (172 core + 51 integrations + 102 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -100,10 +100,10 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 43 source files, max 790 lines/file (production).
+No magic numbers — all thresholds named. 44 source files, max 725 lines/file (production).
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 338 tests (165+51+102+20), pure Rust crypto deps wired and tested
+integration ready. 345 tests (172+51+102+20), pure Rust crypto deps wired and tested
 (chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.
 `server.rs` refactored (945→322L production, tests extracted to `server_tests.rs` with DRY
@@ -138,3 +138,10 @@ runtime for one `RwLock`). `SkunkBat::dependency_health` implemented — reports
 and observer status. `FederationThreatBroadcaster::broadcast` now propagates errors (was
 silently swallowing). `Vec::with_capacity` in batch handler and threat detection.
 `universal_adapter` documented as experimental (not production-path).
+PG-55: `--bind` CLI flag added to `server` subcommand (UniBin v1.1 pattern) — precedence:
+CLI flag > `SKUNKBAT_LISTEN_ADDR` env > `0.0.0.0` default. Enables localhost-only binding.
+PG-57: Baseline learning pipeline established — `StatisticalProfiler::seed_baseline()` called
+at construction with 12 normal-traffic observations. Profiler `is_established()` gate now
+passes from first `detect()`. 7 pen-test attack patterns (port enumeration, payload flood,
+malformed JSON-RPC burst, service enumeration, amplification, slow-rate exhaustion, protocol
+confusion) documented in `threats::baseline` module and validated by tests.

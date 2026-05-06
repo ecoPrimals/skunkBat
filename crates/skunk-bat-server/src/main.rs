@@ -4,7 +4,7 @@
 //! skunkBat `UniBin` — single binary, multiple modes.
 //!
 //! Implements BTSP Phase 1 (socket naming, `FAMILY_ID` guard) and
-//! Primal IPC Protocol v3.1 (standalone startup, `--port` convention).
+//! Primal IPC Protocol v3.1 (standalone startup, `--port` + `--bind` convention).
 
 mod ipc;
 
@@ -25,6 +25,10 @@ fn default_port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
+fn default_bind() -> String {
+    std::env::var("SKUNKBAT_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0".to_owned())
+}
+
 /// skunkBat — Reconnaissance & Automated Defense
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -37,6 +41,14 @@ struct Cli {
 enum Commands {
     /// Start the IPC server (JSON-RPC 2.0 over UDS + TCP).
     Server {
+        /// TCP listen address.
+        ///
+        /// Override with `SKUNKBAT_LISTEN_ADDR` env var or `--bind`.
+        /// Defaults to `0.0.0.0` (all interfaces). Use `127.0.0.1`
+        /// for localhost-only binding.
+        #[arg(long, default_value_t = default_bind())]
+        bind: String,
+
         /// TCP port to bind for JSON-RPC (newline-delimited).
         ///
         /// Override with `SKUNKBAT_PORT` env var or `--port`.
@@ -75,22 +87,21 @@ async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Server { port, no_uds } => run_server(port, no_uds).await,
+        Commands::Server { bind, port, no_uds } => run_server(&bind, port, no_uds).await,
         Commands::Health => run_health().await,
         Commands::Scan => run_scan().await,
         Commands::Detect => run_detect().await,
     }
 }
 
-async fn run_server(port: u16, no_uds: bool) -> Result<(), BoxError> {
+async fn run_server(bind: &str, port: u16, no_uds: bool) -> Result<(), BoxError> {
     let config = SkunkBatConfig::default();
-    let listen_addr = config.common.listen_addr.clone();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
 
-    tracing::info!("skunkBat server starting on {listen_addr}:{port}");
+    tracing::info!("skunkBat server starting on {bind}:{port}");
 
-    ipc::serve(skunkbat, listen_addr, port, no_uds).await
+    ipc::serve(skunkbat, bind.to_owned(), port, no_uds).await
 }
 
 async fn run_health() -> Result<(), BoxError> {

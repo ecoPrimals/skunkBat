@@ -30,6 +30,28 @@ impl StatisticalProfiler {
         }
     }
 
+    /// Seed the profiler with baseline observations to establish normal behavior.
+    ///
+    /// Must be called before detection will fire. Requires at least 10 observations
+    /// for the baseline to be considered established. Pen-test pattern: call this
+    /// with representative "normal" traffic to teach skunkBat what benign looks like,
+    /// then anomalous traffic (fuzz, enumeration) will trigger detection.
+    pub fn seed_baseline(&mut self, observations: &[Observation]) {
+        const ROLLING_WINDOW: usize = 100;
+        for obs in observations {
+            self.observations.push_back(obs.clone());
+        }
+        while self.observations.len() > ROLLING_WINDOW {
+            self.observations.pop_front();
+        }
+        if self.is_established() {
+            tracing::info!(
+                "Baseline established with {} observations",
+                self.observations.len()
+            );
+        }
+    }
+
     fn calculate_stats(values: &[f64]) -> Option<(f64, f64)> {
         if values.is_empty() {
             return None;
@@ -225,5 +247,56 @@ mod tests {
             .unwrap();
         assert!(!anomalies.is_empty());
         assert!(anomalies[0].confidence <= 1.0);
+    }
+
+    #[test]
+    fn seed_baseline_establishes_profiler() {
+        use super::super::baseline;
+
+        let mut profiler = StatisticalProfiler::new(2.5);
+        assert!(!profiler.is_established());
+
+        profiler.seed_baseline(&baseline::normal_baseline());
+        assert!(profiler.is_established());
+        assert_eq!(profiler.observations.len(), 12);
+    }
+
+    #[tokio::test]
+    async fn seeded_profiler_detects_pentest_patterns() {
+        use super::super::baseline;
+
+        let mut profiler = StatisticalProfiler::new(2.5);
+        profiler.seed_baseline(&baseline::normal_baseline());
+
+        let attacks = baseline::pentest_attack_patterns();
+        let mut detected = 0;
+        for attack in &attacks {
+            let anomalies = profiler.detect_anomalies(attack).await.unwrap();
+            if !anomalies.is_empty() {
+                detected += 1;
+            }
+        }
+
+        assert!(
+            detected >= 5,
+            "expected at least 5/7 pen-test patterns to trigger detection, got {detected}"
+        );
+    }
+
+    #[tokio::test]
+    async fn seeded_profiler_no_false_positives_on_normal() {
+        use super::super::baseline;
+
+        let mut profiler = StatisticalProfiler::new(2.5);
+        profiler.seed_baseline(&baseline::normal_baseline());
+
+        let normal = baseline::normal_baseline();
+        for obs in &normal {
+            let anomalies = profiler.detect_anomalies(obs).await.unwrap();
+            assert!(
+                anomalies.is_empty(),
+                "false positive on normal traffic: {anomalies:?}"
+            );
+        }
     }
 }
