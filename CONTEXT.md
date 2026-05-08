@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-345 tests passing (172 core + 51 integrations + 102 server + 20 transport/integration), all workspace lib+bins.
+356 tests passing (172 core + 51 integrations + 113 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -100,10 +100,10 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 44 source files, max 725 lines/file (production).
+No magic numbers — all thresholds named. 45 source files, max 725 lines/file (production).
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 345 tests (172+51+102+20), pure Rust crypto deps wired and tested
+integration ready. 356 tests (172+51+113+20), pure Rust crypto deps wired and tested
 (chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.
 `server.rs` refactored (945→322L production, tests extracted to `server_tests.rs` with DRY
@@ -147,3 +147,13 @@ passes from first `detect()`. Multi-dimensional analysis: connection rate, traff
 and port diversity all contribute to anomaly scoring. 7 pen-test attack patterns (port
 enumeration, payload flood, malformed JSON-RPC burst, service enumeration, amplification,
 slow-rate exhaustion, protocol confusion) documented in `threats::baseline` module.
+JH-0 MethodGate: pre-dispatch capability gate wired into `dispatch()`. Methods classified
+as Public (health.*, identity.get, capabilities.list, lifecycle.*, auth.*) or Protected
+(security.*). `SKUNKBAT_AUTH_MODE=enforced` rejects unauthenticated protected calls with
+`-32001 PERMISSION_DENIED`. Default is permissive (log + allow). New `auth.check`,
+`auth.mode`, `auth.peer_info` methods advertised. CallerContext carries connection origin
+(Unix/Loopback/Remote) and optional bearer token. Gate emits structured tracing events
+on every rejection — these are the primary signal for JH-5 security audit ingestion.
+JH-5 (design): gate rejection events + BTSP tunnel logs + primal JSON-RPC audit trail
+will feed into rhizoCrypt DAG and sweetGrass provenance braids. Implementation deferred
+pending ionic token infrastructure (JH-1 → JH-4 chain from BearDog).

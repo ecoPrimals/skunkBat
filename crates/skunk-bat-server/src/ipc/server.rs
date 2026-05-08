@@ -25,6 +25,7 @@ use tokio::sync::RwLock;
 
 use super::dispatch;
 use super::jsonrpc::{self, Response};
+use super::method_gate::{CallerContext, MethodGate};
 use super::transport::negotiate::{self, SessionKeys, SessionRegistry};
 use super::transport::{read_frame, write_frame};
 
@@ -33,9 +34,11 @@ pub(super) async fn handle_connection<S>(
     state: Arc<RwLock<SkunkBat>>,
     sessions: Arc<SessionRegistry>,
     stream: S,
+    caller: CallerContext,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
 {
+    let gate = MethodGate::from_env();
     let (reader, mut writer) = tokio::io::split(stream);
     let mut lines = BufReader::new(reader).lines();
 
@@ -58,7 +61,16 @@ pub(super) async fn handle_connection<S>(
                     );
                 }
                 let inner_reader = buf_reader.into_inner();
-                run_encrypted_frame_loop(state, sessions, inner_reader, writer, &keys).await;
+                run_encrypted_frame_loop(
+                    state,
+                    sessions,
+                    &gate,
+                    &caller,
+                    inner_reader,
+                    writer,
+                    &keys,
+                )
+                .await;
                 return;
             }
             NegotiateAction::Handled => continue,
@@ -67,8 +79,8 @@ pub(super) async fn handle_connection<S>(
 
         let first_byte = trimmed.as_bytes().first().copied();
         let response_bytes = match first_byte {
-            Some(b'[') => handle_batch(&state, &sessions, trimmed).await,
-            _ => handle_single(&state, &sessions, trimmed).await,
+            Some(b'[') => handle_batch(&state, &sessions, &gate, &caller, trimmed).await,
+            _ => handle_single(&state, &sessions, &gate, &caller, trimmed).await,
         };
 
         let Some(mut bytes) = response_bytes else {
@@ -150,6 +162,8 @@ where
 async fn run_encrypted_frame_loop<R, W>(
     state: Arc<RwLock<SkunkBat>>,
     sessions: Arc<SessionRegistry>,
+    gate: &MethodGate,
+    caller: &CallerContext,
     mut reader: R,
     mut writer: W,
     keys: &SessionKeys,
@@ -185,8 +199,8 @@ async fn run_encrypted_frame_loop<R, W>(
 
         let first_byte = line.as_bytes().first().copied();
         let response_bytes = match first_byte {
-            Some(b'[') => handle_batch(&state, &sessions, line).await,
-            _ => handle_single(&state, &sessions, line).await,
+            Some(b'[') => handle_batch(&state, &sessions, gate, caller, line).await,
+            _ => handle_single(&state, &sessions, gate, caller, line).await,
         };
 
         if let Some(bytes) = response_bytes {
@@ -215,6 +229,8 @@ async fn run_encrypted_frame_loop<R, W>(
 async fn handle_single(
     state: &Arc<RwLock<SkunkBat>>,
     sessions: &Arc<SessionRegistry>,
+    gate: &MethodGate,
+    caller: &CallerContext,
     line: &str,
 ) -> Option<Vec<u8>> {
     match serde_json::from_str::<jsonrpc::Request>(line) {
@@ -236,10 +252,10 @@ async fn handle_single(
                 return Some(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()));
             }
             if request.is_notification() {
-                dispatch::dispatch(state, request).await;
+                dispatch::dispatch(state, gate, caller, request).await;
                 return None;
             }
-            let response = dispatch::dispatch(state, request).await;
+            let response = dispatch::dispatch(state, gate, caller, request).await;
             Some(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()))
         }
         Err(e) => Some(
@@ -262,6 +278,8 @@ async fn handle_single(
 async fn handle_batch(
     state: &Arc<RwLock<SkunkBat>>,
     _sessions: &Arc<SessionRegistry>,
+    gate: &MethodGate,
+    caller: &CallerContext,
     line: &str,
 ) -> Option<Vec<u8>> {
     let requests: Vec<serde_json::Value> = match serde_json::from_str(line) {
@@ -304,7 +322,7 @@ async fn handle_batch(
                     continue;
                 }
                 let is_notification = request.is_notification();
-                let response = dispatch::dispatch(state, request).await;
+                let response = dispatch::dispatch(state, gate, caller, request).await;
                 if !is_notification {
                     responses.push(response);
                 }

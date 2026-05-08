@@ -18,7 +18,12 @@ async fn roundtrip(input: &str) -> String {
     let sessions = make_sessions();
     let (client, server) = tokio::io::duplex(4096);
 
-    let handle = tokio::spawn(handle_connection(state, sessions, server));
+    let handle = tokio::spawn(handle_connection(
+        state,
+        sessions,
+        server,
+        CallerContext::loopback(),
+    ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
     client_writer
@@ -59,7 +64,12 @@ async fn setup_encrypted_session(
         .await;
 
     let (client, server) = tokio::io::duplex(16384);
-    let handle = tokio::spawn(handle_connection(state, sessions, server));
+    let handle = tokio::spawn(handle_connection(
+        state,
+        sessions,
+        server,
+        CallerContext::loopback(),
+    ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
 
@@ -155,7 +165,12 @@ async fn test_notification_no_response() {
     let sessions = make_sessions();
     let (client, server) = tokio::io::duplex(4096);
 
-    let handle = tokio::spawn(handle_connection(state, sessions, server));
+    let handle = tokio::spawn(handle_connection(
+        state,
+        sessions,
+        server,
+        CallerContext::loopback(),
+    ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
     client_writer
@@ -199,7 +214,12 @@ async fn test_btsp_negotiate_null_cipher_session() {
     sessions.insert("test-session-1".into(), None).await;
 
     let (client, server) = tokio::io::duplex(4096);
-    let handle = tokio::spawn(handle_connection(state, sessions, server));
+    let handle = tokio::spawn(handle_connection(
+        state,
+        sessions,
+        server,
+        CallerContext::loopback(),
+    ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
     let req = r#"{"jsonrpc":"2.0","method":"btsp.negotiate","params":{"session_id":"test-session-1","preferred_cipher":"chacha20-poly1305","bond_type":"Covalent"},"id":10}"#;
@@ -308,7 +328,12 @@ async fn test_null_cipher_stays_ndjson() {
     sessions.insert("null-session".into(), None).await;
 
     let (client, server) = tokio::io::duplex(8192);
-    let handle = tokio::spawn(handle_connection(state, sessions, server));
+    let handle = tokio::spawn(handle_connection(
+        state,
+        sessions,
+        server,
+        CallerContext::loopback(),
+    ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
 
@@ -437,7 +462,12 @@ async fn test_negotiate_in_batch_rejected() {
         .await;
 
     let (client, server) = tokio::io::duplex(8192);
-    let handle = tokio::spawn(handle_connection(state, sessions, server));
+    let handle = tokio::spawn(handle_connection(
+        state,
+        sessions,
+        server,
+        CallerContext::loopback(),
+    ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
 

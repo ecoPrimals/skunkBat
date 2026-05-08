@@ -33,6 +33,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
+use super::method_gate::CallerContext;
 use super::server::handle_connection;
 
 /// Bind TCP and accept connections with optional BTSP handshake.
@@ -63,6 +64,11 @@ pub async fn serve_tcp(
         let btsp = btsp_config.clone();
         let sessions = Arc::clone(&sessions);
         tokio::spawn(async move {
+            let caller = if addr.ip().is_loopback() {
+                CallerContext::loopback()
+            } else {
+                CallerContext::remote()
+            };
             if let Some(ref cfg) = btsp {
                 let mut peek_buf = [0u8; 1];
                 let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
@@ -84,7 +90,7 @@ pub async fn serve_tcp(
                     }
                 }
             }
-            handle_connection(state, sessions, stream).await;
+            handle_connection(state, sessions, stream, caller).await;
         });
     }
 }
@@ -159,9 +165,9 @@ pub async fn serve_uds(
                         }
                     }
                 }
-                handle_connection(state, sessions, peeked).await;
+                handle_connection(state, sessions, peeked, CallerContext::unix()).await;
             } else {
-                handle_connection(state, sessions, stream).await;
+                handle_connection(state, sessions, stream, CallerContext::unix()).await;
             }
         });
     }

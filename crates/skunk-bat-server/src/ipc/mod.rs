@@ -14,6 +14,7 @@
 
 mod dispatch;
 mod jsonrpc;
+mod method_gate;
 mod registration;
 mod server;
 pub mod transport;

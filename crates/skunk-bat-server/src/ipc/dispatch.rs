@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::jsonrpc::{self, Request, Response};
+use super::method_gate::{CallerContext, MethodGate};
 
 /// Application-layer methods routed through `dispatch()`.
 const METHODS: &[&str] = &[
@@ -27,6 +28,9 @@ const METHODS: &[&str] = &[
     "lifecycle.capabilities",
     "capabilities.list",
     "identity.get",
+    "auth.check",
+    "auth.mode",
+    "auth.peer_info",
 ];
 
 /// Transport-layer methods handled by the connection handler before dispatch.
@@ -67,12 +71,26 @@ fn serialize<T: Serialize>(id: serde_json::Value, value: T) -> Response {
 }
 
 /// Dispatch a JSON-RPC request to the appropriate handler.
-pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) -> Response {
+///
+/// The [`MethodGate`] performs pre-dispatch authorization. In permissive mode
+/// (default), all calls are allowed with a tracing warning for unauthenticated
+/// access to protected methods. In enforced mode, unauthenticated calls to
+/// protected methods are rejected with `-32001 PERMISSION_DENIED`.
+pub(super) async fn dispatch(
+    state: &Arc<RwLock<SkunkBat>>,
+    gate: &MethodGate,
+    caller: &CallerContext,
+    request: Request,
+) -> Response {
     if let Err(resp) = request.validate() {
         return resp;
     }
 
     let id = request.id_or_null();
+
+    if let Err(resp) = gate.check(&request.method, id.clone(), caller) {
+        return resp;
+    }
 
     match request.method.as_str() {
         "health.liveness" => Response::success(id, serde_json::json!({"status": "alive"})),
@@ -139,6 +157,27 @@ pub(super) async fn dispatch(state: &Arc<RwLock<SkunkBat>>, request: Request) ->
             }),
         ),
 
+        "auth.check" => {
+            let has_token = caller.bearer_token.is_some();
+            Response::success(
+                id,
+                serde_json::json!({
+                    "authenticated": has_token,
+                    "mode": gate.mode().as_str()
+                }),
+            )
+        }
+
+        "auth.mode" => Response::success(id, serde_json::json!({ "mode": gate.mode().as_str() })),
+
+        "auth.peer_info" => Response::success(
+            id,
+            serde_json::json!({
+                "origin": format!("{:?}", caller.origin),
+                "has_token": caller.bearer_token.is_some()
+            }),
+        ),
+
         _ => Response::error(
             id,
             jsonrpc::METHOD_NOT_FOUND,
@@ -173,6 +212,7 @@ async fn dispatch_respond(
 
 #[cfg(test)]
 mod tests {
+    use super::super::method_gate::{CallerContext, EnforcementMode, MethodGate};
     use super::*;
     use skunk_bat_core::SkunkBatConfig;
 
@@ -180,6 +220,14 @@ mod tests {
 
     fn make_state() -> Arc<RwLock<SkunkBat>> {
         Arc::new(RwLock::new(SkunkBat::new(SkunkBatConfig::default())))
+    }
+
+    fn make_gate() -> MethodGate {
+        MethodGate::new(EnforcementMode::Permissive)
+    }
+
+    fn make_caller() -> CallerContext {
+        CallerContext::loopback()
     }
 
     fn make_request(method: &str) -> Request {
@@ -194,7 +242,13 @@ mod tests {
     #[tokio::test]
     async fn test_health_liveness() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("health.liveness")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("health.liveness"),
+        )
+        .await;
         assert!(resp.error.is_none());
     }
 
@@ -202,21 +256,39 @@ mod tests {
     async fn test_security_scan() {
         let state = make_state();
         state.write().await.start().await.expect("start");
-        let resp = dispatch(&state, make_request("security.scan")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("security.scan"),
+        )
+        .await;
         assert!(resp.error.is_none());
     }
 
     #[tokio::test]
     async fn test_security_detect() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("security.detect")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("security.detect"),
+        )
+        .await;
         assert!(resp.error.is_none());
     }
 
     #[tokio::test]
     async fn test_lifecycle_capabilities() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("lifecycle.capabilities")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("lifecycle.capabilities"),
+        )
+        .await;
         assert!(resp.error.is_none());
         let caps = resp.result.expect("result");
         assert!(caps["capabilities"].is_array());
@@ -225,7 +297,13 @@ mod tests {
     #[tokio::test]
     async fn test_unknown_method() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("bogus.method")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("bogus.method"),
+        )
+        .await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, jsonrpc::METHOD_NOT_FOUND);
     }
@@ -239,42 +317,72 @@ mod tests {
             params: None,
             id: Some(serde_json::json!(1)),
         };
-        let resp = dispatch(&state, req).await;
+        let resp = dispatch(&state, &make_gate(), &make_caller(), req).await;
         assert!(resp.error.is_some());
     }
 
     #[tokio::test]
     async fn test_security_metrics() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("security.metrics")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("security.metrics"),
+        )
+        .await;
         assert!(resp.error.is_none());
     }
 
     #[tokio::test]
     async fn test_health_readiness() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("health.readiness")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("health.readiness"),
+        )
+        .await;
         assert!(resp.error.is_none());
     }
 
     #[tokio::test]
     async fn test_health_check() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("health.check")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("health.check"),
+        )
+        .await;
         assert!(resp.error.is_none());
     }
 
     #[tokio::test]
     async fn test_lifecycle_state() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("lifecycle.state")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("lifecycle.state"),
+        )
+        .await;
         assert!(resp.error.is_none());
     }
 
     #[tokio::test]
     async fn test_security_respond_missing_params() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("security.respond")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("security.respond"),
+        )
+        .await;
         assert!(resp.error.is_some());
     }
 
@@ -283,7 +391,13 @@ mod tests {
     #[tokio::test]
     async fn test_capabilities_list_wire_standard_l2() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("capabilities.list")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("capabilities.list"),
+        )
+        .await;
         assert!(resp.error.is_none());
 
         let result = resp.result.expect("result");
@@ -300,7 +414,13 @@ mod tests {
     #[tokio::test]
     async fn test_capabilities_list_alias() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("capability.list")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("capability.list"),
+        )
+        .await;
         assert!(resp.error.is_none());
         let result = resp.result.expect("result");
         assert_eq!(result["primal"], "skunkbat");
@@ -309,7 +429,13 @@ mod tests {
     #[tokio::test]
     async fn test_identity_get() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("identity.get")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("identity.get"),
+        )
+        .await;
         assert!(resp.error.is_none());
 
         let result = resp.result.expect("result");
@@ -321,7 +447,13 @@ mod tests {
     #[tokio::test]
     async fn test_provided_capabilities_l3() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("capabilities.list")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("capabilities.list"),
+        )
+        .await;
         let result = resp.result.expect("result");
 
         let caps = result["provided_capabilities"]
@@ -334,7 +466,13 @@ mod tests {
     #[tokio::test]
     async fn test_consumed_capabilities_l3() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("capabilities.list")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("capabilities.list"),
+        )
+        .await;
         let result = resp.result.expect("result");
 
         let consumed = result["consumed_capabilities"]
@@ -362,7 +500,7 @@ mod tests {
             })),
             id: Some(serde_json::json!(42)),
         };
-        let resp = dispatch(&state, req).await;
+        let resp = dispatch(&state, &make_gate(), &make_caller(), req).await;
         assert!(resp.error.is_none());
         let result = resp.result.expect("result");
         assert_eq!(result["status"], "ok");
@@ -377,14 +515,20 @@ mod tests {
             params: Some(serde_json::json!({"not": "a threat"})),
             id: Some(serde_json::json!(43)),
         };
-        let resp = dispatch(&state, req).await;
+        let resp = dispatch(&state, &make_gate(), &make_caller(), req).await;
         assert!(resp.error.is_some());
     }
 
     #[tokio::test]
     async fn btsp_negotiate_is_transport_only() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("btsp.negotiate")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("btsp.negotiate"),
+        )
+        .await;
         assert!(
             resp.error.is_some(),
             "btsp.negotiate must NOT be dispatch-routed (transport-layer only)"
@@ -394,7 +538,13 @@ mod tests {
     #[tokio::test]
     async fn capabilities_list_includes_transport_methods() {
         let state = make_state();
-        let resp = dispatch(&state, make_request("capabilities.list")).await;
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            make_request("capabilities.list"),
+        )
+        .await;
         let result = resp.result.expect("capabilities should succeed");
         let methods = result["methods"].as_array().expect("methods array");
         let method_strs: Vec<&str> = methods.iter().filter_map(|v| v.as_str()).collect();
