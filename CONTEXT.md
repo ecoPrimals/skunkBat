@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-362 tests passing (178 core + 51 integrations + 113 server + 20 transport/integration), all workspace lib+bins.
+363 tests passing (178 core + 51 integrations + 114 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -154,8 +154,14 @@ as Public (health.*, identity.get, capabilities.list, lifecycle.*, auth.*) or Pr
 `auth.mode`, `auth.peer_info` methods advertised. CallerContext carries connection origin
 (Unix/Loopback/Remote) and optional bearer token. Gate emits structured tracing events
 on every rejection — these are the primary signal for JH-5 security audit ingestion.
-JH-5 (implemented — Phase 1): `AuditLog` ring buffer (1024 events) in `observability::audit_log`.
+JH-5 (implemented — Phase 2): `AuditLog` ring buffer (1024 events) in `observability::audit_log`.
 Structured `SecurityEvent` types: GateRejection, GatePermissiveAllow, ThreatDetected, DefenseAction,
-BtspNegotiate, BtspDecryptFailure, LifecycleTransition. Events recorded automatically by dispatch
-on gate decisions. `security.audit_log` RPC method exposes cursor-based event polling (since_seq + limit).
+BtspNegotiate, BtspDecryptFailure, LifecycleTransition. All event kinds now emitted from live code:
+- Gate events: dispatch auto-records on rejection/permissive-allow
+- Threat events: `security.detect` records each detected threat
+- Defense events: `security.respond` records successful defense actions
+- Transport events: BTSP negotiate records success/failure + cipher, decrypt failures logged
+- Lifecycle events: start/stop transitions recorded
+`security.audit_log` RPC method exposes cursor-based event polling. `capabilities.list` includes
+`audit_log` in security methods (L3 wire compliance).
 Downstream forwarding to rhizoCrypt DAG / sweetGrass provenance braids remains pending ionic tokens.

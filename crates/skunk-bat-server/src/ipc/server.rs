@@ -19,6 +19,7 @@
 //! with batch semantics (wire format changes mid-response are undefined).
 
 use skunk_bat_core::SkunkBat;
+use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::RwLock;
@@ -114,7 +115,7 @@ enum NegotiateAction {
 /// - `Handled` → response already sent, caller skips this line
 /// - `NotNegotiate` → not a negotiate request, process normally
 async fn try_negotiate_upgrade<W>(
-    _state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<SkunkBat>>,
     sessions: &Arc<SessionRegistry>,
     line: &str,
     writer: &mut W,
@@ -133,7 +134,17 @@ where
     let id = request.id_or_null();
     let outcome = negotiate::handle_negotiate(sessions, request.params).await;
 
-    let response = if outcome.response.get("error").is_some() {
+    let success = outcome.response.get("error").is_none();
+    let cipher = outcome
+        .response
+        .get("cipher")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("none")
+        .to_owned();
+
+    let response = if success {
+        Response::success(id, outcome.response)
+    } else {
         Response::error(
             id,
             jsonrpc::INVALID_PARAMS,
@@ -141,9 +152,26 @@ where
                 .as_str()
                 .unwrap_or("negotiate failed"),
         )
-    } else {
-        Response::success(id, outcome.response)
     };
+
+    {
+        let sb = state.read().await;
+        sb.audit_log()
+            .record(
+                EventSource::Transport,
+                if success {
+                    EventSeverity::Info
+                } else {
+                    EventSeverity::Warn
+                },
+                EventKind::BtspNegotiate {
+                    session_id: String::new(),
+                    cipher,
+                    success,
+                },
+            )
+            .await;
+    }
 
     let mut bytes = serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec());
     bytes.push(b'\n');
@@ -185,6 +213,17 @@ async fn run_encrypted_frame_loop<R, W>(
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!("BTSP decrypt error: {e}");
+                let sb = state.read().await;
+                sb.audit_log()
+                    .record(
+                        EventSource::Transport,
+                        EventSeverity::Error,
+                        EventKind::BtspDecryptFailure {
+                            reason: e.to_string(),
+                        },
+                    )
+                    .await;
+                drop(sb);
                 break;
             }
         };

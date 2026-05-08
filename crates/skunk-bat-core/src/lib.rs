@@ -213,27 +213,33 @@ impl PrimalLifecycle for SkunkBat {
         self.state = PrimalState::Starting;
         tracing::info!("skunkBat starting...");
 
-        // Initialize reconnaissance engine
         self.reconnaissance
             .start()
             .map_err(|e| PrimalError::lifecycle(e.to_string()))?;
 
-        // Initialize threat detector
         self.threat_detector
             .start()
             .map_err(|e| PrimalError::lifecycle(e.to_string()))?;
 
-        // Initialize defense engine
         self.defense
             .start()
             .map_err(|e| PrimalError::lifecycle(e.to_string()))?;
 
-        // Initialize security observer
         self.observer
             .start()
             .map_err(|e| PrimalError::lifecycle(e.to_string()))?;
 
         self.state = PrimalState::Running;
+        self.audit_log
+            .record(
+                observability::audit_log::EventSource::Lifecycle,
+                observability::audit_log::EventSeverity::Info,
+                observability::audit_log::EventKind::LifecycleTransition {
+                    from_state: "Starting".to_owned(),
+                    to_state: "Running".to_owned(),
+                },
+            )
+            .await;
         tracing::info!("skunkBat running (reconnaissance active)");
         Ok(())
     }
@@ -242,7 +248,17 @@ impl PrimalLifecycle for SkunkBat {
         self.state = PrimalState::Stopping;
         tracing::info!("skunkBat stopping...");
 
-        // Stop all engines
+        self.audit_log
+            .record(
+                observability::audit_log::EventSource::Lifecycle,
+                observability::audit_log::EventSeverity::Info,
+                observability::audit_log::EventKind::LifecycleTransition {
+                    from_state: "Running".to_owned(),
+                    to_state: "Stopping".to_owned(),
+                },
+            )
+            .await;
+
         self.observer
             .stop()
             .map_err(|e| PrimalError::lifecycle(e.to_string()))?;

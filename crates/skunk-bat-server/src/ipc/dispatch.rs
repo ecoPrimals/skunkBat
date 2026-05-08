@@ -143,7 +143,28 @@ pub(super) async fn dispatch(
 
         "health.check" => try_serialize(id, state.read().await.health_check().await),
         "security.scan" => try_serialize(id, state.read().await.scan_network().await),
-        "security.detect" => try_serialize(id, state.read().await.detect_threats().await),
+        "security.detect" => {
+            let sb = state.read().await;
+            let result = sb.detect_threats().await;
+            if let Ok(ref threats) = result {
+                for t in threats {
+                    sb.audit_log()
+                        .record(
+                            EventSource::ThreatDetection,
+                            EventSeverity::Warn,
+                            EventKind::ThreatDetected {
+                                threat_id: t.id.clone(),
+                                threat_type: format!("{:?}", t.threat_type),
+                                severity: format!("{:?}", t.severity),
+                                source: t.source.clone(),
+                            },
+                        )
+                        .await;
+                }
+            }
+            drop(sb);
+            try_serialize(id, result)
+        }
         "security.respond" => dispatch_respond(state, id, request.params).await,
         "security.metrics" => serialize(id, state.read().await.get_security_metrics()),
         "security.audit_log" => dispatch_audit_log(state, id, request.params).await,
@@ -167,7 +188,7 @@ pub(super) async fn dispatch(
                 "provided_capabilities": [
                     {
                         "type": "security",
-                        "methods": ["scan", "detect", "respond", "metrics"],
+                        "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
                         "version": PRIMAL_VERSION,
                         "description": "Network reconnaissance, threat detection, and automated defense"
                     },
@@ -244,8 +265,24 @@ async fn dispatch_respond(
 
     let sb = state.read().await;
     match sb.respond_to_threat(&threat) {
-        Ok(()) => Response::success(id, serde_json::json!({"status": "ok"})),
-        Err(e) => Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string()),
+        Ok(()) => {
+            sb.audit_log()
+                .record(
+                    EventSource::DefenseEngine,
+                    EventSeverity::Info,
+                    EventKind::DefenseAction {
+                        threat_id: threat.id.clone(),
+                        action: "responded".to_owned(),
+                    },
+                )
+                .await;
+            drop(sb);
+            Response::success(id, serde_json::json!({"status": "ok"}))
+        }
+        Err(e) => {
+            drop(sb);
+            Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string())
+        }
     }
 }
 
@@ -412,6 +449,30 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::cast_possible_truncation)]
+    async fn test_security_audit_log() {
+        let state = make_state();
+        let resp = dispatch(
+            &state,
+            &make_gate(),
+            &make_caller(),
+            Request {
+                jsonrpc: "2.0".to_string(),
+                method: "security.audit_log".to_string(),
+                params: Some(serde_json::json!({"since_seq": 0, "limit": 10})),
+                id: Some(serde_json::json!(1)),
+            },
+        )
+        .await;
+        assert!(resp.error.is_none());
+        let result = resp.result.expect("result");
+        let count = result["count"].as_u64().unwrap();
+        let latest_seq = result["latest_seq"].as_u64().unwrap();
+        assert_eq!(count as usize, latest_seq as usize);
+        assert!(latest_seq >= 1, "gate permissive-allow event recorded");
+    }
+
+    #[tokio::test]
     async fn test_health_readiness() {
         let state = make_state();
         let resp = dispatch(
@@ -538,6 +599,11 @@ mod tests {
             .expect("provided_capabilities");
         assert!(caps.iter().any(|c| c["type"] == "security"));
         assert!(caps.iter().any(|c| c["type"] == "health"));
+
+        let security_cap = caps.iter().find(|c| c["type"] == "security").unwrap();
+        let methods = security_cap["methods"].as_array().unwrap();
+        let method_strs: Vec<&str> = methods.iter().filter_map(|m| m.as_str()).collect();
+        assert!(method_strs.contains(&"audit_log"), "security capability must include audit_log");
     }
 
     #[tokio::test]
