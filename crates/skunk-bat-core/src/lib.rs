@@ -90,6 +90,9 @@ pub use defense::DefenseEngine;
 /// Security observability.
 pub use observability::SecurityObserver;
 
+/// Audit log (JH-5 security event trail).
+pub use observability::audit_log::AuditLog;
+
 /// The skunkBat primal.
 ///
 /// Provides reconnaissance, threat detection, and automated defense
@@ -101,6 +104,7 @@ pub struct SkunkBat {
     threat_detector: ThreatDetector,
     defense: DefenseEngine,
     observer: SecurityObserver,
+    audit_log: AuditLog,
 }
 
 impl SkunkBat {
@@ -112,6 +116,7 @@ impl SkunkBat {
             threat_detector: ThreatDetector::new(&config),
             defense: DefenseEngine::new(&config),
             observer: SecurityObserver::new(&config),
+            audit_log: AuditLog::new(),
             config,
             state: PrimalState::Created,
         }
@@ -131,6 +136,12 @@ impl SkunkBat {
             self.observer.record_threat_detected();
         }
         Ok(threats)
+    }
+
+    /// Access the audit log for event recording and querying (JH-5).
+    #[must_use]
+    pub const fn audit_log(&self) -> &AuditLog {
+        &self.audit_log
     }
 
     /// Respond to a detected threat.

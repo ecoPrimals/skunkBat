@@ -4,6 +4,10 @@
 //! Security observability for skunkBat.
 //!
 //! Provides security-focused metrics, traces, and logs.
+//! The [`audit_log`] submodule implements the JH-5 audit trail — a bounded
+//! ring buffer of structured security events queryable via RPC.
+
+pub mod audit_log;
 
 use crate::SkunkBatConfig;
 use crate::error::SkunkBatError;

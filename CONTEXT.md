@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-356 tests passing (172 core + 51 integrations + 113 server + 20 transport/integration), all workspace lib+bins.
+362 tests passing (178 core + 51 integrations + 113 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -100,7 +100,7 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 45 source files, max 725 lines/file (production).
+No magic numbers — all thresholds named. 46 source files, max 790 lines/file (production).
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
 integration ready. 356 tests (172+51+113+20), pure Rust crypto deps wired and tested
@@ -154,6 +154,8 @@ as Public (health.*, identity.get, capabilities.list, lifecycle.*, auth.*) or Pr
 `auth.mode`, `auth.peer_info` methods advertised. CallerContext carries connection origin
 (Unix/Loopback/Remote) and optional bearer token. Gate emits structured tracing events
 on every rejection — these are the primary signal for JH-5 security audit ingestion.
-JH-5 (design): gate rejection events + BTSP tunnel logs + primal JSON-RPC audit trail
-will feed into rhizoCrypt DAG and sweetGrass provenance braids. Implementation deferred
-pending ionic token infrastructure (JH-1 → JH-4 chain from BearDog).
+JH-5 (implemented — Phase 1): `AuditLog` ring buffer (1024 events) in `observability::audit_log`.
+Structured `SecurityEvent` types: GateRejection, GatePermissiveAllow, ThreatDetected, DefenseAction,
+BtspNegotiate, BtspDecryptFailure, LifecycleTransition. Events recorded automatically by dispatch
+on gate decisions. `security.audit_log` RPC method exposes cursor-based event polling (since_seq + limit).
+Downstream forwarding to rhizoCrypt DAG / sweetGrass provenance braids remains pending ionic tokens.

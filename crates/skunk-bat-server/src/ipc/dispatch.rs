@@ -9,11 +9,12 @@
 use serde::Serialize;
 use skunk_bat_core::PrimalHealth;
 use skunk_bat_core::SkunkBat;
+use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::jsonrpc::{self, Request, Response};
-use super::method_gate::{CallerContext, MethodGate};
+use super::method_gate::{CallerContext, EnforcementMode, MethodGate};
 
 /// Application-layer methods routed through `dispatch()`.
 const METHODS: &[&str] = &[
@@ -24,6 +25,7 @@ const METHODS: &[&str] = &[
     "security.detect",
     "security.respond",
     "security.metrics",
+    "security.audit_log",
     "lifecycle.state",
     "lifecycle.capabilities",
     "capabilities.list",
@@ -88,8 +90,44 @@ pub(super) async fn dispatch(
 
     let id = request.id_or_null();
 
-    if let Err(resp) = gate.check(&request.method, id.clone(), caller) {
-        return resp;
+    match gate.check(&request.method, id.clone(), caller) {
+        Err(resp) => {
+            let audit = state.read().await;
+            audit
+                .audit_log()
+                .record(
+                    EventSource::MethodGate,
+                    EventSeverity::Warn,
+                    EventKind::GateRejection {
+                        method: request.method.clone(),
+                        origin: format!("{:?}", caller.origin),
+                    },
+                )
+                .await;
+            drop(audit);
+            return resp;
+        }
+        Ok(()) => {
+            if gate.mode() == EnforcementMode::Permissive
+                && caller.bearer_token.is_none()
+                && super::method_gate::classify_method(&request.method)
+                    == super::method_gate::MethodAccessLevel::Protected
+            {
+                let audit = state.read().await;
+                audit
+                    .audit_log()
+                    .record(
+                        EventSource::MethodGate,
+                        EventSeverity::Info,
+                        EventKind::GatePermissiveAllow {
+                            method: request.method.clone(),
+                            origin: format!("{:?}", caller.origin),
+                        },
+                    )
+                    .await;
+                drop(audit);
+            }
+        }
     }
 
     match request.method.as_str() {
@@ -108,6 +146,7 @@ pub(super) async fn dispatch(
         "security.detect" => try_serialize(id, state.read().await.detect_threats().await),
         "security.respond" => dispatch_respond(state, id, request.params).await,
         "security.metrics" => serialize(id, state.read().await.get_security_metrics()),
+        "security.audit_log" => dispatch_audit_log(state, id, request.params).await,
 
         "lifecycle.state" => {
             let state_str = state.read().await.state().to_string();
@@ -208,6 +247,44 @@ async fn dispatch_respond(
         Ok(()) => Response::success(id, serde_json::json!({"status": "ok"})),
         Err(e) => Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string()),
     }
+}
+
+/// Handle `security.audit_log` — query the audit event trail.
+///
+/// Params (all optional):
+/// - `since_seq`: sequence cursor (default 0, returns events after this seq)
+/// - `limit`: max events to return (default 100, max 1000)
+async fn dispatch_audit_log(
+    state: &Arc<RwLock<SkunkBat>>,
+    id: serde_json::Value,
+    params: Option<serde_json::Value>,
+) -> Response {
+    let since_seq = params
+        .as_ref()
+        .and_then(|p| p.get("since_seq"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    let limit = params
+        .as_ref()
+        .and_then(|p| p.get("limit"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(100)
+        .min(1000) as usize;
+
+    let sb = state.read().await;
+    let events = sb.audit_log().query(since_seq, limit).await;
+    let latest_seq = sb.audit_log().latest_seq().await;
+    drop(sb);
+
+    serialize(
+        id,
+        serde_json::json!({
+            "events": events,
+            "latest_seq": latest_seq,
+            "count": events.len()
+        }),
+    )
 }
 
 #[cfg(test)]
