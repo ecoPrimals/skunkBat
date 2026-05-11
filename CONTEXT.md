@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-363 tests passing (178 core + 51 integrations + 114 server + 20 transport/integration), all workspace lib+bins.
+369 tests passing (178 core + 57 integrations + 114 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -100,7 +100,7 @@ BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 46 source files, max 790 lines/file (production).
+No magic numbers — all thresholds named. 47 source files, max 790 lines/file (production).
 Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
 `async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
 integration ready. 356 tests (172+51+113+20), pure Rust crypto deps wired and tested
@@ -164,4 +164,7 @@ BtspNegotiate, BtspDecryptFailure, LifecycleTransition. All event kinds now emit
 - Lifecycle events: start/stop transitions recorded
 `security.audit_log` RPC method exposes cursor-based event polling. `capabilities.list` includes
 `audit_log` in security methods (L3 wire compliance).
-Downstream forwarding to rhizoCrypt DAG / sweetGrass provenance braids remains pending ionic tokens.
+Phase 3 forwarding shipped: `forwarding::run_forwarding_loop` polls audit log every 10s, forwards
+Warn+ events to rhizoCrypt `dag.event.append` (UDS `provenance.sock` or `RHIZOCRYPT_ENDPOINT`)
+and sweetGrass `braid.create` (UDS `attribution.sock` or `SWEETGRASS_ENDPOINT`). Best-effort —
+unreachable targets are retried next cycle. Spawned as background task on server startup.

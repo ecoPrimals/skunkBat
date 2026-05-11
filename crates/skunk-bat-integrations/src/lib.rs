@@ -12,6 +12,7 @@
 //! | [`beardog`] | `lineage-verification` | `LINEAGE_ENDPOINT` env var |
 //! | [`songbird`] | `federation` | `FEDERATION_ENDPOINT` env var |
 //! | [`toadstool`] | `discovery` | `DISCOVERY_ENDPOINT` env var |
+//! | [`forwarding`] | `provenance` + `attribution` | `RHIZOCRYPT_ENDPOINT` / `SWEETGRASS_ENDPOINT` |
 //!
 //! ## Example
 //!
@@ -25,6 +26,7 @@
 //! ```
 
 pub mod beardog;
+pub mod forwarding;
 pub mod rpc;
 pub mod songbird;
 pub mod toadstool;

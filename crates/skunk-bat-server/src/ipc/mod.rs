@@ -21,6 +21,7 @@ pub mod transport;
 
 use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::SkunkBat;
+use skunk_bat_integrations::forwarding::{self, ForwardingConfig};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use transport::SessionRegistry;
@@ -68,6 +69,12 @@ pub async fn serve(
         |p| format!("unix://{p}"),
     );
     tokio::spawn(registration::self_register(register_endpoint));
+
+    let audit_log = state.read().await.audit_log().clone();
+    tokio::spawn(forwarding::run_forwarding_loop(
+        audit_log,
+        ForwardingConfig::default(),
+    ));
 
     tokio::select! {
         result = tcp_handle => {
