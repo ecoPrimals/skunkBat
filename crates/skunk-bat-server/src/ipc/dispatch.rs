@@ -603,7 +603,10 @@ mod tests {
         let security_cap = caps.iter().find(|c| c["type"] == "security").unwrap();
         let methods = security_cap["methods"].as_array().unwrap();
         let method_strs: Vec<&str> = methods.iter().filter_map(|m| m.as_str()).collect();
-        assert!(method_strs.contains(&"audit_log"), "security capability must include audit_log");
+        assert!(
+            method_strs.contains(&"audit_log"),
+            "security capability must include audit_log"
+        );
     }
 
     #[tokio::test]
@@ -698,6 +701,56 @@ mod tests {
         assert!(
             method_strs.contains(&"health.liveness"),
             "capabilities.list must advertise application methods"
+        );
+    }
+
+    #[tokio::test]
+    async fn enforced_gate_rejects_protected_without_token() {
+        let state = make_state();
+        let gate = MethodGate::new(EnforcementMode::Enforced);
+        let caller = CallerContext::remote();
+        let resp = dispatch(&state, &gate, &caller, make_request("security.scan")).await;
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.as_ref().unwrap().code, -32001);
+    }
+
+    #[tokio::test]
+    async fn enforced_gate_allows_public_without_token() {
+        let state = make_state();
+        let gate = MethodGate::new(EnforcementMode::Enforced);
+        let caller = CallerContext::remote();
+        let resp = dispatch(&state, &gate, &caller, make_request("health.liveness")).await;
+        assert!(resp.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn enforced_gate_allows_protected_with_token() {
+        use super::super::method_gate::ConnectionOrigin;
+        let state = make_state();
+        let gate = MethodGate::new(EnforcementMode::Enforced);
+        let caller = CallerContext {
+            bearer_token: Some("test-ionic-token".to_owned()),
+            origin: ConnectionOrigin::Remote,
+        };
+        let resp = dispatch(&state, &gate, &caller, make_request("security.scan")).await;
+        assert!(resp.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn enforced_gate_records_rejection_to_audit_log() {
+        let state = make_state();
+        let gate = MethodGate::new(EnforcementMode::Enforced);
+        let caller = CallerContext::remote();
+        let _ = dispatch(&state, &gate, &caller, make_request("security.detect")).await;
+
+        let sb = state.read().await;
+        let events = sb.audit_log().query(0, 10).await;
+        assert!(
+            events.iter().any(|e| matches!(
+                &e.kind,
+                skunk_bat_core::observability::audit_log::EventKind::GateRejection { .. }
+            )),
+            "enforced rejection must be recorded in audit log"
         );
     }
 }

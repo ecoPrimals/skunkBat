@@ -126,6 +126,8 @@ impl LineageVerifier for RemoteLineageVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_construction() {
@@ -167,5 +169,79 @@ mod tests {
         let result = verifier.is_family("test-peer").await;
         assert!(result.is_ok());
         assert!(!result.expect("ok"));
+    }
+
+    /// Integration test: mock bearDog server confirms family membership.
+    #[tokio::test]
+    async fn live_lineage_verify_family_member() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut reader = tokio::io::BufReader::new(&mut stream);
+            let mut line = String::new();
+            tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line)
+                .await
+                .unwrap();
+            let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(req["method"], "lineage.verify");
+            assert_eq!(req["params"]["peer_id"], "trusted-peer-01");
+
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {"is_family": true, "lineage_chain": ["root", "trusted-peer-01"]},
+                "id": req["id"]
+            });
+            let mut resp_line = serde_json::to_string(&resp).unwrap();
+            resp_line.push('\n');
+            stream.write_all(resp_line.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let verifier =
+            RemoteLineageVerifier::new(format!("127.0.0.1:{}", addr.port())).with_timeout(2000);
+        let result = verifier.is_family("trusted-peer-01").await.unwrap();
+        assert!(result, "mock bearDog should confirm family membership");
+
+        server.await.unwrap();
+    }
+
+    /// Integration test: mock bearDog server returns lineage chain.
+    #[tokio::test]
+    async fn live_lineage_get_chain() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut reader = tokio::io::BufReader::new(&mut stream);
+            let mut line = String::new();
+            tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line)
+                .await
+                .unwrap();
+            let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(req["method"], "lineage.list");
+
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {"lineage": "root → genome-alpha → trusted-peer-01"},
+                "id": req["id"]
+            });
+            let mut resp_line = serde_json::to_string(&resp).unwrap();
+            resp_line.push('\n');
+            stream.write_all(resp_line.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let verifier =
+            RemoteLineageVerifier::new(format!("127.0.0.1:{}", addr.port())).with_timeout(2000);
+        let lineage = verifier.get_lineage("trusted-peer-01").await.unwrap();
+        assert_eq!(
+            lineage.as_deref(),
+            Some("root → genome-alpha → trusted-peer-01")
+        );
+
+        server.await.unwrap();
     }
 }

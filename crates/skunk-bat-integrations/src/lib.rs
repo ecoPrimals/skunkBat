@@ -13,6 +13,7 @@
 //! | [`songbird`] | `federation` | `FEDERATION_ENDPOINT` env var |
 //! | [`toadstool`] | `discovery` | `DISCOVERY_ENDPOINT` env var |
 //! | [`forwarding`] | `provenance` + `attribution` | `RHIZOCRYPT_ENDPOINT` / `SWEETGRASS_ENDPOINT` |
+//! | [`nestgate`] | `content` | `NESTGATE_ENDPOINT` env var |
 //!
 //! ## Example
 //!
@@ -27,6 +28,7 @@
 
 pub mod beardog;
 pub mod forwarding;
+pub mod nestgate;
 pub mod rpc;
 pub mod songbird;
 pub mod toadstool;
