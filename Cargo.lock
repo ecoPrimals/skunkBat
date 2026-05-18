@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "skunk-bat-core"
-version = "0.2.0-dev"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "skunk-bat-integrations"
-version = "0.2.0-dev"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -651,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "skunk-bat-server"
-version = "0.2.0-dev"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "base64",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "skunk-bat-tests"
-version = "0.2.0-dev"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "skunk-bat-core",
