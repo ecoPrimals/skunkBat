@@ -168,3 +168,58 @@ Phase 3 forwarding shipped: `forwarding::run_forwarding_loop` polls audit log ev
 Warn+ events to rhizoCrypt `dag.event.append` (UDS `provenance.sock` or `RHIZOCRYPT_ENDPOINT`)
 and sweetGrass `braid.create` (UDS `attribution.sock` or `SWEETGRASS_ENDPOINT`). Best-effort —
 unreachable targets are retried next cycle. Spawned as background task on server startup.
+H2 niche: NestGate data protection module (`nestgate.rs`) — `ContentProtector` for content
+integrity scanning via `content.*` IPC. Live lineage integration tests prove bearDog wiring.
+Enforced mode integration tests prove full dispatch-level gate rejection + audit log recording.
+`btsp.capabilities` method added — advertises protocol version, supported ciphers, key derivation.
+
+## Stadial Composition Readiness
+
+### Method Stability Tiers
+
+| Method | Tier | Notes |
+|--------|------|-------|
+| `health.liveness` | Stable | Always returns `{"status":"alive"}` |
+| `health.readiness` | Stable | Returns primal state |
+| `health.check` | Stable | Full health report with dependency status |
+| `security.scan` | Stable | Network topology reconnaissance |
+| `security.detect` | Stable | Threat detection pipeline |
+| `security.respond` | Stable | Graduated defense response |
+| `security.metrics` | Stable | Observability counters |
+| `security.audit_log` | Stable | Cursor-based event polling (JH-5) |
+| `capabilities.list` | Stable | Wire Standard L3 compliant |
+| `identity.get` | Stable | Wire Standard L3 compliant |
+| `lifecycle.state` | Stable | Current primal state |
+| `lifecycle.capabilities` | Stable | All registered methods |
+| `auth.check` | Stable | Token presence + gate mode |
+| `auth.mode` | Stable | Current enforcement mode |
+| `auth.peer_info` | Stable | Connection origin + token status |
+| `btsp.negotiate` | Stable | Phase 3 cipher negotiation + encrypted framing |
+| `btsp.capabilities` | Stable | Protocol version, ciphers, key derivation |
+
+### Degradation Behavior
+
+When skunkBat is **down** in a composition:
+- Security events stop flowing to rhizoCrypt/sweetGrass (audit gap)
+- No threat detection or defense orchestration
+- Other primals continue operating normally (skunkBat is observability, not gate)
+- Health probes from biomeOS will report the primal as unreachable
+
+When **bearDog** is down: `RemoteLineageVerifier` degrades to local conservative
+default (all unknown peers treated as non-family). Threat detection continues
+but genetic lineage checks are unavailable.
+
+When **rhizoCrypt/sweetGrass** are down: audit events stay in local ring buffer
+(1024 events). Forwarding retries each poll cycle. No data loss unless the
+buffer fills before targets recover.
+
+### Downstream Pairing
+
+| Partner | Relationship |
+|---------|-------------|
+| cellMembrane | VPS audit trail — skunkBat monitors cellMembrane's exposed surface |
+| lithoSpore | Verification — skunkBat audit events are verification artifacts |
+| projectNUCLEUS | Sovereignty — skunkBat provides security observability for NUCLEUS deployments |
+| rhizoCrypt | DAG forwarding — security events as tamper-evident vertices |
+| sweetGrass | Braid attribution — security attestations in provenance chain |
+| bearDog | Lineage verification — genetic threat detection via `lineage.verify` |

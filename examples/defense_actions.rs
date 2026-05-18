@@ -16,7 +16,6 @@ use skunk_bat_core::{
 };
 use std::time::SystemTime;
 
-#[expect(clippy::too_many_lines, reason = "self-contained demo")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing

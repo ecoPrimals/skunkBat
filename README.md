@@ -175,6 +175,7 @@ No primal names are hardcoded in production code.
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — zero cross-repo path dependencies, no C dependencies
 - 382 tests passing, 90%+ function coverage (llvm-cov)
+- All 17 methods stability-tiered (Stable)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 - Self-registration with discovery (`ipc.register`) — standalone-safe

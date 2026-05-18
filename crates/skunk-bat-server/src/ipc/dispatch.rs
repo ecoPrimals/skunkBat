@@ -37,7 +37,7 @@ const METHODS: &[&str] = &[
 
 /// Transport-layer methods handled by the connection handler before dispatch.
 /// Listed here for `capabilities.list` completeness only — not routed by `dispatch()`.
-const TRANSPORT_METHODS: &[&str] = &["btsp.negotiate"];
+const TRANSPORT_METHODS: &[&str] = &["btsp.negotiate", "btsp.capabilities"];
 
 const PRIMAL_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PRIMAL_DOMAIN: &str = "security";
@@ -179,31 +179,43 @@ pub(super) async fn dispatch(
             Response::success(id, serde_json::json!({"capabilities": all}))
         }
 
-        "capabilities.list" | "capability.list" => Response::success(
-            id,
-            serde_json::json!({
-                "primal": skunk_bat_core::PRIMAL_ID,
-                "version": PRIMAL_VERSION,
-                "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
-                "provided_capabilities": [
-                    {
-                        "type": "security",
-                        "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
-                        "version": PRIMAL_VERSION,
-                        "description": "Network reconnaissance, threat detection, and automated defense"
-                    },
-                    {
-                        "type": "health",
-                        "methods": ["liveness", "readiness", "check"],
-                        "version": PRIMAL_VERSION,
-                        "description": "Health monitoring endpoints"
-                    }
-                ],
-                "consumed_capabilities": CONSUMED_CAPABILITIES,
-                "protocol": "jsonrpc-2.0",
-                "transport": ["uds", "tcp"]
-            }),
-        ),
+        "capabilities.list" | "capability.list" => {
+            let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
+            let count = all.len();
+            Response::success(
+                id,
+                serde_json::json!({
+                    "primal": skunk_bat_core::PRIMAL_ID,
+                    "version": PRIMAL_VERSION,
+                    "capabilities": all,
+                    "count": count,
+                    "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
+                    "provided_capabilities": [
+                        {
+                            "type": "security",
+                            "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
+                            "version": PRIMAL_VERSION,
+                            "description": "Network reconnaissance, threat detection, and automated defense"
+                        },
+                        {
+                            "type": "health",
+                            "methods": ["liveness", "readiness", "check"],
+                            "version": PRIMAL_VERSION,
+                            "description": "Health monitoring endpoints"
+                        },
+                        {
+                            "type": "btsp",
+                            "methods": ["negotiate", "capabilities"],
+                            "version": PRIMAL_VERSION,
+                            "description": "BTSP Phase 3 transport encryption"
+                        }
+                    ],
+                    "consumed_capabilities": CONSUMED_CAPABILITIES,
+                    "protocol": "jsonrpc-2.0",
+                    "transport": ["uds", "tcp"]
+                }),
+            )
+        }
 
         "identity.get" => Response::success(
             id,
@@ -235,6 +247,18 @@ pub(super) async fn dispatch(
             serde_json::json!({
                 "origin": format!("{:?}", caller.origin),
                 "has_token": caller.bearer_token.is_some()
+            }),
+        ),
+
+        "btsp.capabilities" => Response::success(
+            id,
+            serde_json::json!({
+                "protocol": "btsp-v1",
+                "phase": 3,
+                "ciphers": ["chacha20-poly1305", "hmac-plain", "null"],
+                "preferred": "chacha20-poly1305",
+                "key_derivation": "hkdf-sha256",
+                "handshake": "btsp.negotiate"
             }),
         ),
 
