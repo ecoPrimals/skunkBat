@@ -1,11 +1,12 @@
-# skunkBat — sporePrint Validation Summary
++++
+title = "skunkBat Validation Summary"
+description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 382 tests, 17 IPC methods."
+date = 2026-05-20
 
-**Primal**: skunkBat
-**Version**: 0.2.0
-**Domain**: Defense — metadata-only threat detection, lineage verification, composable anomaly primitives
-**License**: AGPL-3.0-or-later
-
----
+[taxonomies]
+primals = ["skunkbat"]
+springs = []
++++
 
 ## Status
 
@@ -15,7 +16,9 @@
 - **Tests**: 382 passing
 - **Source**: 48 files, max 790 lines
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
+- **Coverage**: 90%+ function coverage (llvm-cov)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
+- **Pure Rust**: `forbid(unsafe_code)` workspace-wide
 
 ## Capabilities
 
