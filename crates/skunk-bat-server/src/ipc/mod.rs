@@ -70,6 +70,13 @@ pub async fn serve(
     );
     tokio::spawn(registration::self_register(register_endpoint));
 
+    let announce_socket = socket_path
+        .clone()
+        .unwrap_or_else(|| format!("tcp://127.0.0.1:{port}"));
+    tokio::spawn(async move {
+        registration::neural_announce(&announce_socket).await;
+    });
+
     let audit_log = state.read().await.audit_log().clone();
     tokio::spawn(forwarding::run_forwarding_loop(
         audit_log,

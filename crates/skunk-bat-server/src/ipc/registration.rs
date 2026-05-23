@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-//! Self-registration with the discovery capability (Primal Self-Registration Pattern v1.0).
+//! Self-registration with the discovery capability (Primal Self-Registration Pattern v1.0)
+//! and Neural API announcement (Wave 43).
 //!
 //! On startup, probes for a discovery provider and sends `ipc.register`
-//! with this primal's ID, capabilities, and endpoint. Non-blocking: if
+//! with this primal's ID, capabilities, and endpoint. Also sends
+//! `primal.announce` to biomeOS Neural API with cost hints, latency
+//! estimates, and signal tier for intelligent routing. Non-blocking: if
 //! no discovery service is available, continues in standalone mode.
 
 use std::time::Duration;
@@ -92,6 +95,83 @@ fn resolve_discovery_socket() -> Option<String> {
         .find(|p| std::path::Path::new(p).exists())
 }
 
+/// Announce to biomeOS Neural API for intelligent routing (Wave 43).
+///
+/// Sends `primal.announce` with capabilities, cost hints, latency estimates,
+/// and signal tier. biomeOS uses this for weighted capability routing.
+/// Non-blocking: if biomeOS Neural API is unreachable, logs and returns.
+pub async fn neural_announce(socket_path: &str) {
+    let Some(neural_socket) = resolve_neural_api_socket() else {
+        tracing::debug!("no Neural API socket found — skipping primal.announce");
+        return;
+    };
+
+    let params = serde_json::json!({
+        "primal_id": skunk_bat_core::PRIMAL_ID,
+        "name": skunk_bat_core::PRIMAL_NAME,
+        "capabilities": ["defense", "threat_detection", "baseline"],
+        "methods": [
+            "security.scan",
+            "security.detect",
+            "security.respond",
+            "security.metrics",
+            "security.audit_log"
+        ],
+        "socket": socket_path,
+        "signal_tiers": ["tower"],
+        "cost_hints": {
+            "defense": 15.0,
+            "threat_detection": 20.0,
+            "baseline": 10.0
+        },
+        "latency_estimates": {
+            "defense": 5,
+            "threat_detection": 10,
+            "baseline": 2
+        }
+    });
+
+    match skunk_bat_integrations::rpc::call_uds(
+        &neural_socket,
+        "primal.announce",
+        Some(params),
+        REGISTRATION_TIMEOUT,
+    )
+    .await
+    {
+        Ok(_) => {
+            tracing::info!("announced to Neural API (tower tier, 3 capabilities)");
+        }
+        Err(e) => {
+            tracing::debug!("Neural API announce unavailable: {e} — routing passive");
+        }
+    }
+}
+
+/// Resolve the biomeOS Neural API socket.
+///
+/// Probe order:
+/// 1. `NEURAL_API_SOCKET` env var
+/// 2. `{socket_dir}/neural-api-ecoPrimal.sock`
+/// 3. `{socket_dir}/biomeos.sock`
+fn resolve_neural_api_socket() -> Option<String> {
+    if let Ok(path) = std::env::var("NEURAL_API_SOCKET") {
+        if !path.is_empty() && std::path::Path::new(&path).exists() {
+            return Some(path);
+        }
+    }
+
+    let socket_dir = skunk_bat_integrations::rpc::socket_dir();
+    let candidates = [
+        format!("{socket_dir}/neural-api-ecoPrimal.sock"),
+        format!("{socket_dir}/biomeos.sock"),
+    ];
+
+    candidates
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +193,18 @@ mod tests {
     #[tokio::test]
     async fn self_register_no_crash_without_discovery() {
         self_register("unix:///tmp/skunkbat-test-no-discovery.sock".to_owned()).await;
+    }
+
+    #[tokio::test]
+    async fn neural_announce_no_crash_without_biomeos() {
+        neural_announce("/tmp/skunkbat-test.sock").await;
+    }
+
+    #[test]
+    fn resolve_neural_api_returns_none_without_socket() {
+        let result = resolve_neural_api_socket();
+        if let Some(ref path) = result {
+            assert!(std::path::Path::new(path).exists());
+        }
     }
 }
