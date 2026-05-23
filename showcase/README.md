@@ -2,9 +2,7 @@
 
 # skunkBat Showcase
 
-Interactive demonstrations of defensive security architecture. Each tier
-builds on the previous one, progressing from single-primal demos to full
-production mesh scenarios.
+Interactive demonstrations of defensive security architecture.
 
 ---
 
@@ -12,39 +10,20 @@ production mesh scenarios.
 
 ```
 showcase/
-├── RUN_ALL.sh                              # Run every tier in sequence
-├── 00-local-primal/                        # Tier 0 — single-primal demos
+├── RUN_ALL.sh                              # Run all demos in sequence
+├── 00-local-primal/                        # Local single-primal demos
 │   ├── 01-hello-skunkbat/
 │   ├── 02-violation-detection/
 │   ├── 03-defense-actions/
 │   ├── 04-baseline-learning/
 │   ├── 05-local-federation/
 │   └── 06-defensive-vs-surveillance/
-├── 01-ecosystem-integration/               # Tier 1 — inter-primal IPC
-│   ├── 01-beardog-integration/
-│   ├── 02-toadstool-integration/
-│   ├── 03-songbird-integration/
-│   ├── 04-ecosystem-complete/
-│   └── 05-integration-testing/
-├── 02-federation-mesh/                     # Tier 2 — multi-node mesh
-│   ├── 01-multi-network/
-│   ├── 02-layered-security/
-│   ├── 03-ownership-breach/
-│   ├── 04-data-exfiltration/
-│   └── 05-federation-resilience/
-├── 03-production/                          # Tier 3 — ops and hardening
-│   ├── 01-configuration/
-│   ├── 02-monitoring-observability/
-│   ├── 03-performance-tuning/
-│   ├── 04-disaster-recovery/
-│   └── 05-production-checklist/
-└── 99-gaps-analysis/                       # Gap tracking
+└── 99-gaps-analysis/                       # Gap tracking (fossilized)
     └── README.md
 ```
 
 Each sub-directory contains a `README.md` explaining the scenario and a
-`demo.sh` script. Level 0 demos run `cargo run --example`; higher tiers
-demonstrate integration patterns via narrative walkthroughs.
+`demo.sh` script that runs the demo via `cargo run --example`.
 
 ---
 
@@ -55,7 +34,7 @@ demonstrate integration patterns via narrative walkthroughs.
 cd showcase/00-local-primal/01-hello-skunkbat
 ./demo.sh
 
-# All demos in a tier
+# All local demos
 cd showcase/00-local-primal
 ./RUN_ALL_LOCAL.sh
 
@@ -65,14 +44,16 @@ cd showcase/00-local-primal
 
 ---
 
-## Tier Overview
+## What These Demos Show
 
-| Tier | Focus | External Primals Required |
-|------|-------|--------------------------|
-| 00 — Local Primal | Core detection, defense, baselines | None |
-| 01 — Ecosystem | BearDog, ToadStool, Songbird IPC | Yes (`#[ignore]` gated) |
-| 02 — Federation Mesh | Multi-network coordination | Yes |
-| 03 — Production | Config, monitoring, chaos, DR | Varies |
+| Demo | Focus |
+|------|-------|
+| 01 — Hello skunkBat | Basic startup, health check, shutdown |
+| 02 — Violation Detection | 5 threat types in action |
+| 03 — Defense Actions | Graduated response (monitor → quarantine → block) |
+| 04 — Baseline Learning | Statistical profiler learns normal patterns |
+| 05 — Local Federation | Threat intelligence sharing pattern |
+| 06 — Defensive vs Surveillance | Architectural proof of defensive nature |
 
 ---
 
@@ -95,3 +76,12 @@ The showcase demonstrates that skunkBat:
 
 See `RECONNAISSANCE_NOT_SURVEILLANCE.md` in the repo root for the full
 ethical framework.
+
+---
+
+## Note on Higher Tiers
+
+Tiers 1–3 (ecosystem integration, federation mesh, production ops) were
+fossilized to `ecoPrimals/infra/fossilRecord/` as narrative design documents.
+Live ecosystem integration is now exercised through composition in the delta
+springs (wetSpring, hotSpring, etc.) rather than standalone showcase scripts.

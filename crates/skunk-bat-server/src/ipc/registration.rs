@@ -106,30 +106,7 @@ pub async fn neural_announce(socket_path: &str) {
         return;
     };
 
-    let params = serde_json::json!({
-        "primal_id": skunk_bat_core::PRIMAL_ID,
-        "name": skunk_bat_core::PRIMAL_NAME,
-        "capabilities": ["defense", "threat_detection", "baseline"],
-        "methods": [
-            "security.scan",
-            "security.detect",
-            "security.respond",
-            "security.metrics",
-            "security.audit_log"
-        ],
-        "socket": socket_path,
-        "signal_tiers": ["tower"],
-        "cost_hints": {
-            "defense": 15.0,
-            "threat_detection": 20.0,
-            "baseline": 10.0
-        },
-        "latency_estimates": {
-            "defense": 5,
-            "threat_detection": 10,
-            "baseline": 2
-        }
-    });
+    let params = announce_payload(socket_path);
 
     match skunk_bat_integrations::rpc::call_uds(
         &neural_socket,
@@ -146,6 +123,50 @@ pub async fn neural_announce(socket_path: &str) {
             tracing::debug!("Neural API announce unavailable: {e} — routing passive");
         }
     }
+}
+
+/// Build the `primal.announce` payload (v3.68 wire schema).
+///
+/// Visible for testing — validates payload structure.
+pub(super) fn announce_payload(socket_path: &str) -> serde_json::Value {
+    serde_json::json!({
+        "primal": skunk_bat_core::PRIMAL_ID,
+        "version": env!("CARGO_PKG_VERSION"),
+        "pid": std::process::id(),
+        "capabilities": ["defense", "threat_detection", "baseline"],
+        "methods": [
+            "health.liveness",
+            "health.readiness",
+            "health.check",
+            "security.scan",
+            "security.detect",
+            "security.respond",
+            "security.metrics",
+            "security.audit_log",
+            "capabilities.list",
+            "identity.get",
+            "lifecycle.state",
+            "lifecycle.capabilities",
+            "auth.check",
+            "auth.mode",
+            "auth.peer_info",
+            "btsp.negotiate",
+            "btsp.capabilities"
+        ],
+        "socket": socket_path,
+        "signal_tiers": ["tower"],
+        "cost_hints": {
+            "defense": 15.0,
+            "threat_detection": 20.0,
+            "baseline": 10.0
+        },
+        "latency_estimates": {
+            "defense": 5,
+            "threat_detection": 10,
+            "baseline": 2
+        },
+        "attestation": null
+    })
 }
 
 /// Resolve the biomeOS Neural API socket.
@@ -206,5 +227,51 @@ mod tests {
         if let Some(ref path) = result {
             assert!(std::path::Path::new(path).exists());
         }
+    }
+
+    #[test]
+    fn announce_payload_has_primal_field() {
+        let payload = announce_payload("/tmp/test.sock");
+        assert_eq!(payload["primal"], "skunkbat");
+        assert!(payload.get("primal_id").is_none(), "must not use primal_id");
+        assert!(payload.get("name").is_none(), "must not use name");
+    }
+
+    #[test]
+    fn announce_payload_methods_complete() {
+        let payload = announce_payload("/tmp/test.sock");
+        let methods = payload["methods"].as_array().expect("methods array");
+        assert_eq!(methods.len(), 17, "all 17 registered methods");
+        let strs: Vec<&str> = methods.iter().filter_map(|m| m.as_str()).collect();
+        assert!(strs.contains(&"btsp.capabilities"));
+        assert!(strs.contains(&"security.audit_log"));
+        assert!(strs.contains(&"health.liveness"));
+    }
+
+    #[test]
+    fn announce_payload_has_pid_and_version() {
+        let payload = announce_payload("/tmp/test.sock");
+        assert!(payload["pid"].as_u64().unwrap() > 0);
+        assert!(!payload["version"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn announce_payload_signal_tiers_tower() {
+        let payload = announce_payload("/tmp/test.sock");
+        let tiers = payload["signal_tiers"].as_array().unwrap();
+        assert_eq!(tiers[0], "tower");
+    }
+
+    #[test]
+    fn announce_payload_cost_hints_and_latency() {
+        let payload = announce_payload("/tmp/test.sock");
+        let hints = &payload["cost_hints"];
+        assert_eq!(hints["defense"], 15.0);
+        assert_eq!(hints["threat_detection"], 20.0);
+        assert_eq!(hints["baseline"], 10.0);
+        let latency = &payload["latency_estimates"];
+        assert_eq!(latency["defense"], 5);
+        assert_eq!(latency["threat_detection"], 10);
+        assert_eq!(latency["baseline"], 2);
     }
 }
