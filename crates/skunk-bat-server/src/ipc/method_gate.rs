@@ -67,7 +67,7 @@ pub(super) fn classify_method(method: &str) -> MethodAccessLevel {
 pub(super) enum ConnectionOrigin {
     /// Local Unix domain socket.
     Unix,
-    /// TCP loopback (127.0.0.1 / ::1).
+    /// TCP loopback (127.0.0.1 / `::1`).
     Loopback,
     /// Remote TCP connection.
     Remote,

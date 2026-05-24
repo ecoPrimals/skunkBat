@@ -313,8 +313,8 @@ async fn test_plaintext_rejected_after_upgrade() {
                 "server should close connection on decrypt failure"
             );
         }
-        Err(_timeout) => {
-            panic!("expected EOF, got timeout — server may be hanging");
+        Err(e) => {
+            panic!("expected EOF, got error: {e} — server may be hanging");
         }
     }
 
@@ -377,6 +377,8 @@ async fn test_null_cipher_stays_ndjson() {
 
 #[tokio::test]
 async fn test_encrypted_batch_request() {
+    use tokio::io::AsyncReadExt;
+
     let (mut writer, mut reader, keys, handle) =
         setup_encrypted_session("batch-session", vec![0xCC; 32], 0x04).await;
 
@@ -388,7 +390,6 @@ async fn test_encrypted_batch_request() {
         writer.write_all(&encrypted).await.unwrap();
         writer.flush().await.unwrap();
 
-        use tokio::io::AsyncReadExt;
         let resp_len = tokio::time::timeout(Duration::from_secs(5), reader.read_u32())
             .await
             .expect("timeout")
@@ -415,10 +416,10 @@ async fn test_encrypted_batch_request() {
 
 #[tokio::test]
 async fn test_encrypted_notification_no_response() {
+    use tokio::io::AsyncReadExt;
+
     let (mut writer, mut reader, keys, handle) =
         setup_encrypted_session("notif-session", vec![0xDD; 32], 0x05).await;
-
-    use tokio::io::AsyncReadExt;
 
     let notification = r#"{"jsonrpc":"2.0","method":"health.liveness"}"#;
     let encrypted = negotiate::encrypt_frame(&keys.decrypt_key, notification.as_bytes()).unwrap();

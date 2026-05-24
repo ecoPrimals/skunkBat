@@ -73,6 +73,42 @@ fn serialize<T: Serialize>(id: serde_json::Value, value: T) -> Response {
     }
 }
 
+/// Build the Capability Wire Standard L2/L3 response body.
+fn capabilities_response() -> serde_json::Value {
+    let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
+    let count = all.len();
+    serde_json::json!({
+        "primal": skunk_bat_core::PRIMAL_ID,
+        "version": PRIMAL_VERSION,
+        "capabilities": all,
+        "count": count,
+        "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
+        "provided_capabilities": [
+            {
+                "type": "security",
+                "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
+                "version": PRIMAL_VERSION,
+                "description": "Network reconnaissance, threat detection, and automated defense"
+            },
+            {
+                "type": "health",
+                "methods": ["liveness", "readiness", "check"],
+                "version": PRIMAL_VERSION,
+                "description": "Health monitoring endpoints"
+            },
+            {
+                "type": "btsp",
+                "methods": ["negotiate", "capabilities"],
+                "version": PRIMAL_VERSION,
+                "description": "BTSP Phase 3 transport encryption"
+            }
+        ],
+        "consumed_capabilities": CONSUMED_CAPABILITIES,
+        "protocol": "jsonrpc-2.0",
+        "transport": ["uds", "tcp"]
+    })
+}
+
 /// Dispatch a JSON-RPC request to the appropriate handler.
 ///
 /// The [`MethodGate`] performs pre-dispatch authorization. In permissive mode
@@ -190,41 +226,7 @@ pub(super) async fn dispatch(
         }
 
         "capabilities.list" | "capability.list" => {
-            let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
-            let count = all.len();
-            Response::success(
-                id,
-                serde_json::json!({
-                    "primal": skunk_bat_core::PRIMAL_ID,
-                    "version": PRIMAL_VERSION,
-                    "capabilities": all,
-                    "count": count,
-                    "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
-                    "provided_capabilities": [
-                        {
-                            "type": "security",
-                            "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
-                            "version": PRIMAL_VERSION,
-                            "description": "Network reconnaissance, threat detection, and automated defense"
-                        },
-                        {
-                            "type": "health",
-                            "methods": ["liveness", "readiness", "check"],
-                            "version": PRIMAL_VERSION,
-                            "description": "Health monitoring endpoints"
-                        },
-                        {
-                            "type": "btsp",
-                            "methods": ["negotiate", "capabilities"],
-                            "version": PRIMAL_VERSION,
-                            "description": "BTSP Phase 3 transport encryption"
-                        }
-                    ],
-                    "consumed_capabilities": CONSUMED_CAPABILITIES,
-                    "protocol": "jsonrpc-2.0",
-                    "transport": ["uds", "tcp"]
-                }),
-            )
+            Response::success(id, capabilities_response())
         }
 
         "identity.get" => Response::success(
@@ -483,7 +485,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_possible_truncation, reason = "test assertion narrowing")]
     async fn test_security_audit_log() {
         let state = make_state();
         let resp = dispatch(
@@ -636,9 +638,8 @@ mod tests {
 
         let security_cap = caps.iter().find(|c| c["type"] == "security").unwrap();
         let methods = security_cap["methods"].as_array().unwrap();
-        let method_strs: Vec<&str> = methods.iter().filter_map(|m| m.as_str()).collect();
         assert!(
-            method_strs.contains(&"audit_log"),
+            methods.iter().filter_map(|m| m.as_str()).any(|m| m == "audit_log"),
             "security capability must include audit_log"
         );
     }
@@ -777,8 +778,7 @@ mod tests {
         let caller = CallerContext::remote();
         let _ = dispatch(&state, &gate, &caller, make_request("security.detect")).await;
 
-        let sb = state.read().await;
-        let events = sb.audit_log().query(0, 10).await;
+        let events = state.read().await.audit_log().query(0, 10).await;
         assert!(
             events.iter().any(|e| matches!(
                 &e.kind,

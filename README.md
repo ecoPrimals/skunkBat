@@ -66,8 +66,11 @@ skunkBat/
 ### Run the Server
 
 ```bash
-# Start JSON-RPC server (TCP + UDS)
-cargo run -p skunk-bat-server -- server --port 9140
+# Start JSON-RPC server (TCP + UDS, default port 9750)
+cargo run -p skunk-bat-server -- server
+
+# Override bind/port/socket
+cargo run -p skunk-bat-server -- server --bind 0.0.0.0 --port 9750 --socket /tmp/skunkbat.sock
 
 # Health check
 cargo run -p skunk-bat-server -- health
@@ -130,8 +133,8 @@ cargo deny check
 ### Environment Variables
 
 ```bash
-# Server port (default: 9140, or SKUNKBAT_PORT)
-export SKUNKBAT_PORT=9140
+# Server port (default: 9750, or SKUNKBAT_PORT)
+export SKUNKBAT_PORT=9750
 
 # BTSP Phase 1
 export FAMILY_ID=your-family-id
@@ -167,19 +170,20 @@ No primal names are hardcoded in production code.
 
 - Edition 2024, `forbid(unsafe_code)` workspace-wide
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
-- All `#[allow]` migrated to `#[expect(reason)]`
-- `cargo deny` advisory/ban/license/source checks pass
-- 48 source files, all under 1000 lines (largest: 790)
+- `#[expect(reason)]` lint suppression standard (target-conditional `#[allow]` only)
+- `cargo deny` advisory/ban/license/source checks pass; `ring` explicitly banned
+- 48 source files, all under 1000 lines (largest: 815)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
-- Pure Rust — zero cross-repo path dependencies, no C dependencies
-- 382 tests passing, 90%+ function coverage (llvm-cov)
-- All 17 methods stability-tiered (Stable)
+- Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
+- 389 tests passing, 90%+ function coverage (llvm-cov)
+- All 18 IPC methods stability-tiered (Stable)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
-- Self-registration with discovery (`ipc.register`) — standalone-safe
-- Discovery Escalation Hierarchy support: tier 1 (Songbird `ipc.resolve`), tier 3 (UDS filesystem), tier 5 (TCP probing on port 9140)
+- Self-registration with discovery (`ipc.register`) + Neural API `primal.announce`
+- Discovery Escalation Hierarchy support: tier 1 (Songbird `ipc.resolve`), tier 3 (UDS filesystem), tier 5 (TCP probing on port 9750)
+- SIGTERM graceful shutdown, `lifecycle.status` health endpoint
 
 ---
 

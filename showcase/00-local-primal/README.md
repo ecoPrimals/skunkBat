@@ -40,13 +40,13 @@ cd 01-hello-skunkbat && ./demo.sh
 
 ---
 
-### 🟢 Demo 02: Threat Detection Types (10 min)
-**File**: `02-threat-detection-types/demo.sh`
+### 🟢 Demo 02: Violation Detection (10 min)
+**File**: `02-violation-detection/demo.sh`
 
 See all 5 threat detection mechanisms in action with real scenarios.
 
 ```bash
-cd 02-threat-detection-types && ./demo.sh
+cd 02-violation-detection && ./demo.sh
 ```
 
 **What it shows**:
@@ -114,73 +114,41 @@ Result: HIGH confidence anomaly detected
 
 ---
 
-### 🟡 Demo 05: Metrics & Observability (10 min)
-**File**: `05-metrics-observability/demo.sh`
+### 🟡 Demo 05: Local Federation (10 min)
+**File**: `05-local-federation/demo.sh`
 
-Monitor security posture in real-time with comprehensive metrics.
+Two skunkBat instances coordinating threat intelligence locally.
 
 ```bash
-cd 05-metrics-observability && ./demo.sh
+cd 05-local-federation && ./demo.sh
 ```
 
 **What it shows**:
-- 📊 **Real-time metrics** - Scans, threats, defenses
-- 🔍 **Audit logging** - Structured security events
-- 💚 **Health monitoring** - System status tracking
-- 📈 **Metric evolution** - Watch metrics update over time
+- 🔗 **Peer coordination** - Two instances sharing intel
+- 📡 **Threat broadcast** - Propagate detections to peers
+- 🤝 **Consensus actions** - Coordinated defense responses
+- 🔒 **Trust boundaries** - Only trusted peers accepted
 
-**Metrics Dashboard**:
-```
-Security Metrics
-────────────────
-Scans Performed:     127
-Threats Detected:    3
-  ├─ Critical:       1
-  ├─ High:           1
-  └─ Medium:         1
-Actions Taken:       2
-  ├─ Quarantined:    1
-  ├─ Blocked:        1
-  └─ Alerted:        1
-False Positives:     0
-Last Updated:        2025-12-28 15:05:11
-```
-
-**Key Insight**: Complete observability into security operations!
+**Key Insight**: Federation starts local — same patterns scale to mesh!
 
 ---
 
-### 🔵 Demo 06: Zero-Knowledge Bootstrap (10 min)
-**File**: `06-zero-knowledge-bootstrap/demo.sh`
+### 🔵 Demo 06: Defensive vs Surveillance (10 min)
+**File**: `06-defensive-vs-surveillance/demo.sh`
 
-Watch skunkBat discover its own identity from the system.
+Architectural proof that skunkBat is defensive, not surveillance.
 
 ```bash
-cd 06-zero-knowledge-bootstrap && ./demo.sh
+cd 06-defensive-vs-surveillance && ./demo.sh
 ```
 
 **What it shows**:
-- 🔍 **Self-discovery** - No hardcoded identity
-- 🌐 **Network interfaces** - Discovers own IP addresses
-- 📦 **Environment vars** - Reads optional config
-- 🎲 **Generated IDs** - Creates unique ID from PID+timestamp
+- 🛡️ **Defensive** - Monitors YOUR perimeter, not others'
+- 🚫 **Not surveillance** - Cannot inspect content by design
+- 👤 **User authority** - Owner approves all major actions
+- 🏛️ **Sovereignty** - Data stays local, no call-home
 
-**Discovery Process**:
-```
-1. Check SKUNKBAT_ID env var
-   └─ Not set? Generate: skunkbat-{pid}-{timestamp}
-
-2. Check SKUNKBAT_ADDRESS env var
-   └─ Not set? Query network interfaces
-   └─ Fallback: 127.0.0.1
-
-3. Check SKUNKBAT_OWNED_NETWORKS env var
-   └─ Not set? Empty list (zero knowledge)
-
-Result: Fully operational with ZERO hardcoded config!
-```
-
-**Key Insight**: Sovereign primals discover themselves, not told who they are!
+**Key Insight**: Privacy is architectural, not policy — skunkBat structurally cannot surveil!
 
 ---
 
@@ -203,7 +171,7 @@ Result: Fully operational with ZERO hardcoded config!
 ### Individual Execution
 ```bash
 # Run any single demo
-cd 02-threat-detection-types && ./demo.sh
+cd 02-violation-detection && ./demo.sh
 
 # Or with debug logging
 RUST_LOG=debug ./demo.sh
@@ -285,51 +253,16 @@ After completing Level 0, you should be able to:
 
 ## ➡️ What's Next?
 
-### Option A: Ecosystem Integration (Level 1)
-Ready to see skunkBat work with other primals?
+### Live Ecosystem Integration
 
-```bash
-cd ../01-ecosystem-integration
-cat README.md
-```
+Levels 1–3 (ecosystem integration, federation mesh, production ops) are now
+exercised through live compositions in the delta springs. See:
 
-**You'll learn**:
-- Beardog lineage verification
-- Toadstool primal discovery
-- Songbird threat coordination
-- Full ecosystem orchestration
-
----
-
-### Option B: Federation Mesh (Level 2)
-Want to see multiple skunkBats coordinating?
-
-```bash
-cd ../02-federation-mesh
-cat README.md
-```
-
-**You'll learn**:
-- Multi-node mesh formation
-- Threat intelligence sharing
-- Coordinated defense responses
-- Layered security architecture
-
----
-
-### Option C: Production Deployment (Level 3)
-Ready for real-world deployment?
-
-```bash
-cd ../03-production
-cat README.md
-```
-
-**You'll learn**:
-- Configuration management
-- Monitoring integration
-- Performance tuning
-- Chaos testing patterns
+- `examples/beardog_integration.rs` — BearDog lineage verification
+- `examples/toadstool_integration.rs` — ToadStool primal discovery
+- `examples/songbird_integration.rs` — Songbird federation
+- `examples/local_federation.rs` — Multi-instance coordination
+- `tests/` — Integration and chaos tests
 
 ---
 

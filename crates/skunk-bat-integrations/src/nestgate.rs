@@ -38,15 +38,15 @@ pub struct ContentProtector {
 
 impl ContentProtector {
     /// Create from environment with capability-socket discovery.
+    ///
+    /// Probes `$BIOMEOS_SOCKET_DIR/content.sock`; uses it only if present.
+    /// Falls back to TCP via `NESTGATE_ENDPOINT` env var.
     #[must_use]
     pub fn from_env() -> Self {
         let tcp_endpoint = std::env::var(NESTGATE_ENDPOINT_ENV).ok();
         let uds_path = {
             let path = rpc::capability_socket(CONTENT_CAPABILITY);
-            std::path::Path::new(&path)
-                .exists()
-                .then_some(path)
-                .or_else(|| Some(rpc::capability_socket(CONTENT_CAPABILITY)))
+            std::path::Path::new(&path).exists().then_some(path)
         };
         Self {
             uds_path,
@@ -182,7 +182,8 @@ mod tests {
     #[test]
     fn from_env_construction() {
         let protector = ContentProtector::from_env();
-        assert!(protector.uds_path.is_some());
+        // UDS is only Some if the socket file exists on this host
+        let _ = protector.uds_path;
     }
 
     #[test]

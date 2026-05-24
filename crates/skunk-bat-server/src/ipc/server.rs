@@ -154,24 +154,24 @@ where
         )
     };
 
-    {
-        let sb = state.read().await;
-        sb.audit_log()
-            .record(
-                EventSource::Transport,
-                if success {
-                    EventSeverity::Info
-                } else {
-                    EventSeverity::Warn
-                },
-                EventKind::BtspNegotiate {
-                    session_id: String::new(),
-                    cipher,
-                    success,
-                },
-            )
-            .await;
-    }
+    state
+        .read()
+        .await
+        .audit_log()
+        .record(
+            EventSource::Transport,
+            if success {
+                EventSeverity::Info
+            } else {
+                EventSeverity::Warn
+            },
+            EventKind::BtspNegotiate {
+                session_id: String::new(),
+                cipher,
+                success,
+            },
+        )
+        .await;
 
     let mut bytes = serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec());
     bytes.push(b'\n');

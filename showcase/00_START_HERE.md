@@ -43,35 +43,12 @@ Standalone capabilities — no ecosystem required.
 5. `00-local-primal/05-local-federation/` — Two skunkBats coordinating
 6. `00-local-primal/06-defensive-vs-surveillance/` — Ethics proof
 
-### Level 1: Ecosystem Integration (1 hour)
+### Levels 1–3: Fossilized
 
-Inter-primal communication via JSON-RPC.
-
-1. `01-ecosystem-integration/01-beardog-integration/` — Genetic verification
-2. `01-ecosystem-integration/02-toadstool-integration/` — Primal discovery
-3. `01-ecosystem-integration/03-songbird-integration/` — Federation
-4. `01-ecosystem-integration/04-ecosystem-complete/` — Full ecosystem demo
-5. `01-ecosystem-integration/05-integration-testing/` — Cross-primal tests
-
-### Level 2: Federation Mesh (1.5 hours)
-
-Multi-node defense coordination.
-
-1. `02-federation-mesh/01-multi-network/` — Multi-node federation
-2. `02-federation-mesh/02-layered-security/` — Defense in depth
-3. `02-federation-mesh/03-ownership-breach/` — Breach handling
-4. `02-federation-mesh/04-data-exfiltration/` — Exfiltration detection
-5. `02-federation-mesh/05-federation-resilience/` — Resilience testing
-
-### Level 3: Production (2 hours)
-
-Production deployment patterns.
-
-1. `03-production/01-configuration/` — Production config
-2. `03-production/02-monitoring-observability/` — Metrics export
-3. `03-production/03-performance-tuning/` — Optimization
-4. `03-production/04-disaster-recovery/` — Recovery patterns
-5. `03-production/05-production-checklist/` — Deployment checklist
+Ecosystem integration, federation mesh, and production deployment showcases
+were fossilized to `ecoPrimals/infra/fossilRecord/` as narrative design
+documents. Live ecosystem integration is now exercised through composition
+in the delta springs (wetSpring, hotSpring, etc.) and NUCLEUS deployments.
 
 ---
 

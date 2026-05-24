@@ -12,6 +12,7 @@
 //! keys and the connection upgrades to encrypted framing. Falls back to
 //! authenticated NULL cipher when no key material is present.
 
+use chacha20poly1305::aead::rand_core::RngCore;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -29,18 +30,6 @@ pub enum CipherSuite {
 }
 
 impl CipherSuite {
-    /// Parse from the wire representation.
-    #[must_use]
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "chacha20-poly1305" | "chacha20_poly1305" | "BTSP_CHACHA20_POLY1305" => {
-                Self::ChaCha20Poly1305
-            }
-            "hmac-plain" | "hmac_plain" | "BTSP_HMAC_PLAIN" => Self::HmacPlain,
-            _ => Self::Null,
-        }
-    }
-
     /// Wire representation for JSON-RPC responses.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -52,11 +41,28 @@ impl CipherSuite {
     }
 }
 
+impl std::str::FromStr for CipherSuite {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "chacha20-poly1305" | "chacha20_poly1305" | "BTSP_CHACHA20_POLY1305" => {
+                Self::ChaCha20Poly1305
+            }
+            "hmac-plain" | "hmac_plain" | "BTSP_HMAC_PLAIN" => Self::HmacPlain,
+            _ => Self::Null,
+        })
+    }
+}
+
+impl std::fmt::Display for CipherSuite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Bond types that determine minimum cipher requirements.
-#[allow(
-    dead_code,
-    reason = "used in tests + future bond-type policy enforcement"
-)]
+#[allow(dead_code, reason = "target-conditional: used in tests, enforcement planned")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BondType {
     /// Covalent (genetic lineage) — any cipher allowed including null.
@@ -68,24 +74,36 @@ pub enum BondType {
 }
 
 impl BondType {
-    #[must_use]
-    #[allow(dead_code, reason = "used in tests + future bond-type policy")]
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "Metallic" | "metallic" => Self::Metallic,
-            "Ionic" | "ionic" => Self::Ionic,
-            _ => Self::Covalent,
-        }
-    }
-
     /// Minimum cipher required by this bond type.
     #[must_use]
-    #[allow(dead_code, reason = "used in tests + future bond-type policy")]
+    #[allow(dead_code, reason = "target-conditional: used in tests, enforcement planned")]
     pub const fn minimum_cipher(self) -> CipherSuite {
         match self {
             Self::Covalent => CipherSuite::Null,
             Self::Metallic => CipherSuite::HmacPlain,
             Self::Ionic => CipherSuite::ChaCha20Poly1305,
+        }
+    }
+}
+
+impl std::str::FromStr for BondType {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "Metallic" | "metallic" => Self::Metallic,
+            "Ionic" | "ionic" => Self::Ionic,
+            _ => Self::Covalent,
+        })
+    }
+}
+
+impl std::fmt::Display for BondType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Covalent => f.write_str("Covalent"),
+            Self::Metallic => f.write_str("Metallic"),
+            Self::Ionic => f.write_str("Ionic"),
         }
     }
 }
@@ -150,13 +168,13 @@ impl SessionRegistry {
     }
 
     /// Remove a session (on disconnect or timeout).
-    #[allow(dead_code, reason = "used in tests + future session TTL cleanup")]
+    #[allow(dead_code, reason = "target-conditional: used in tests + future session TTL")]
     pub async fn remove(&self, session_id: &str) {
         self.sessions.write().await.remove(session_id);
     }
 
     /// Number of active sessions.
-    #[allow(dead_code, reason = "used in tests + future metrics")]
+    #[allow(dead_code, reason = "target-conditional: used in tests + future metrics")]
     pub async fn len(&self) -> usize {
         self.sessions.read().await.len()
     }
@@ -255,8 +273,9 @@ pub async fn handle_negotiate(
     }
 
     let mut server_nonce = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut server_nonce);
+    chacha20poly1305::aead::OsRng.fill_bytes(&mut server_nonce);
     let server_nonce_b64 = BASE64.encode(server_nonce);
+
 
     let derived_keys = if let Some(ref handshake_key) = session.session_key {
         match derive_session_keys(handshake_key, &client_nonce, &server_nonce) {
@@ -300,10 +319,10 @@ fn extract_offered_ciphers(params: &serde_json::Value) -> Vec<CipherSuite> {
     if let Some(arr) = params.get("ciphers").and_then(|v| v.as_array()) {
         arr.iter()
             .filter_map(|v| v.as_str())
-            .map(CipherSuite::from_str)
+            .map(|s| s.parse().unwrap_or(CipherSuite::Null))
             .collect()
     } else if let Some(cipher) = params.get("preferred_cipher").and_then(|v| v.as_str()) {
-        vec![CipherSuite::from_str(cipher)]
+        vec![cipher.parse().unwrap_or(CipherSuite::Null)]
     } else {
         vec![CipherSuite::Null]
     }
@@ -330,10 +349,8 @@ fn select_best_cipher(offered: &[CipherSuite], has_key: bool) -> CipherSuite {
 #[derive(Clone)]
 pub struct SessionKeys {
     /// Key for encrypting outbound frames (server → client).
-    #[allow(dead_code, reason = "read when encrypted framing is activated")]
     pub encrypt_key: [u8; 32],
     /// Key for decrypting inbound frames (client → server).
-    #[allow(dead_code, reason = "read when encrypted framing is activated")]
     pub decrypt_key: [u8; 32],
 }
 
@@ -457,19 +474,26 @@ mod tests {
     #[test]
     fn cipher_suite_roundtrip() {
         assert_eq!(
-            CipherSuite::from_str("chacha20-poly1305"),
+            "chacha20-poly1305".parse::<CipherSuite>().unwrap(),
             CipherSuite::ChaCha20Poly1305
         );
         assert_eq!(
-            CipherSuite::from_str("chacha20_poly1305"),
+            "chacha20_poly1305".parse::<CipherSuite>().unwrap(),
             CipherSuite::ChaCha20Poly1305
         );
-        assert_eq!(CipherSuite::from_str("hmac-plain"), CipherSuite::HmacPlain);
-        assert_eq!(CipherSuite::from_str("null"), CipherSuite::Null);
-        assert_eq!(CipherSuite::from_str("unknown"), CipherSuite::Null);
+        assert_eq!(
+            "hmac-plain".parse::<CipherSuite>().unwrap(),
+            CipherSuite::HmacPlain
+        );
+        assert_eq!("null".parse::<CipherSuite>().unwrap(), CipherSuite::Null);
+        assert_eq!(
+            "unknown".parse::<CipherSuite>().unwrap(),
+            CipherSuite::Null
+        );
         assert_eq!(CipherSuite::ChaCha20Poly1305.as_str(), "chacha20-poly1305");
         assert_eq!(CipherSuite::HmacPlain.as_str(), "hmac-plain");
         assert_eq!(CipherSuite::Null.as_str(), "null");
+        assert_eq!(CipherSuite::ChaCha20Poly1305.to_string(), "chacha20-poly1305");
     }
 
     #[test]
@@ -484,11 +508,12 @@ mod tests {
 
     #[test]
     fn bond_type_parsing() {
-        assert_eq!(BondType::from_str("Covalent"), BondType::Covalent);
-        assert_eq!(BondType::from_str("Metallic"), BondType::Metallic);
-        assert_eq!(BondType::from_str("Ionic"), BondType::Ionic);
-        assert_eq!(BondType::from_str("ionic"), BondType::Ionic);
-        assert_eq!(BondType::from_str("garbage"), BondType::Covalent);
+        assert_eq!("Covalent".parse::<BondType>().unwrap(), BondType::Covalent);
+        assert_eq!("Metallic".parse::<BondType>().unwrap(), BondType::Metallic);
+        assert_eq!("Ionic".parse::<BondType>().unwrap(), BondType::Ionic);
+        assert_eq!("ionic".parse::<BondType>().unwrap(), BondType::Ionic);
+        assert_eq!("garbage".parse::<BondType>().unwrap(), BondType::Covalent);
+        assert_eq!(BondType::Ionic.to_string(), "Ionic");
     }
 
     #[tokio::test]

@@ -22,7 +22,7 @@ observability — all metadata-only, no content inspection by architecture.
 
 ## IPC Surface
 
-- **Transport**: TCP (`--port`, default 9140) + UDS (`$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`)
+- **Transport**: TCP (`--port`, default 9750) + UDS (`--socket` or `$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`)
 - **BTSP Phase 1**: `FAMILY_ID` socket scoping, `BIOMEOS_INSECURE` guard, `XDG_RUNTIME_DIR` fallback
 - **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with first-byte peek (`{` → plain JSON-RPC for biomeOS composition bypass)
 - **BTSP Phase 3**: `btsp.negotiate` server handler with encrypted frame upgrade — session registry, cipher selection, HKDF key derivation, `ChaCha20-Poly1305` AEAD framing wired into connection loop (`[4B len][12B nonce][ct+tag]`)
@@ -44,7 +44,7 @@ All integration is capability-based runtime discovery. No primal names hardcoded
 2. biomeOS Neural API (`capability.discover`)
 3. UDS filesystem convention (`skunkbat-{family_id}.sock`) ← we support this
 4. Socket registry / manifests
-5. TCP probing (port 9140) ← we support this
+5. TCP probing (port 9750) ← we support this
 
 skunkBat supports tiers 1 (via `ipc.register`), 3, and 5 out of the box.
 
@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-382 tests passing (178 core + 66 integrations + 118 server + 20 transport/integration), all workspace lib+bins.
+389 tests passing (178 core + 66 integrations + 125 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -93,18 +93,20 @@ and encrypted notification (no-response) verification.
 
 ## Status
 
-v0.2.0-dev — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
-workspace-wide. All `#[allow]` migrated to `#[expect(reason)]`. JSON-RPC IPC server with
-BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated handshake aligned with v0.9.0,
-`btsp.negotiate` server handler with session registry and ChaCha20-Poly1305 infrastructure)
+v0.2.0 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
+JSON-RPC IPC server with BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated
+handshake aligned with v0.9.0, `btsp.negotiate` server handler with session registry and
+ChaCha20-Poly1305 AEAD framing). `rand` eliminated — OsRng via RustCrypto re-export.
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 48 source files, max 790 lines/file (production).
-Zero cross-repo path dependencies — `sourdough-core` types internalized as `primal_foundation`.
-`async-trait` eliminated and banned — native RPITIT throughout. `RemoteLineageVerifier`
-integration ready. 356 tests (172+51+113+20), pure Rust crypto deps wired and tested
-(chacha20poly1305, hkdf, sha2, rand, base64 — HKDF key derivation, AEAD exercised).
+No magic numbers — all thresholds named. 48 source files, max 815 lines/file (negotiate.rs
+with crypto+tests). Zero cross-repo path dependencies — `sourdough-core` types internalized
+as `primal_foundation`. `async-trait` eliminated and banned — native RPITIT throughout.
+`RemoteLineageVerifier` integration ready. 389 tests (178+66+125+20), pure Rust crypto deps
+wired and tested (chacha20poly1305, hkdf, sha2, base64 — HKDF key derivation, AEAD exercised;
+`rand` crate eliminated — `OsRng` via `chacha20poly1305::aead::rand_core`).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.
 `server.rs` refactored (945→322L production, tests extracted to `server_tests.rs` with DRY
 helpers). `derive_session_keys` evolved from `.expect()` to `Result<_, TransportError>`.
@@ -189,6 +191,7 @@ Enforced mode integration tests prove full dispatch-level gate rejection + audit
 | `security.audit_log` | Stable | Cursor-based event polling (JH-5) |
 | `capabilities.list` | Stable | Wire Standard L3 compliant |
 | `identity.get` | Stable | Wire Standard L3 compliant |
+| `lifecycle.status` | Stable | Deployment convergence health endpoint |
 | `lifecycle.state` | Stable | Current primal state |
 | `lifecycle.capabilities` | Stable | All registered methods |
 | `auth.check` | Stable | Token presence + gate mode |

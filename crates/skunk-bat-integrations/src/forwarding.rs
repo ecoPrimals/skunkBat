@@ -93,7 +93,7 @@ pub async fn forward_to_dag(
     let (uds, tcp) = resolve_rhizocrypt();
     let params = serde_json::json!({
         "event_type": "security_audit",
-        "source_primal": "skunkbat",
+        "source_primal": skunk_bat_core::PRIMAL_ID,
         "seq": event.seq,
         "timestamp": event.timestamp,
         "severity": event.severity,
@@ -126,7 +126,7 @@ pub async fn forward_to_braid(
     let (uds, tcp) = resolve_sweetgrass();
     let params = serde_json::json!({
         "braid_type": "security_attestation",
-        "source": "skunkbat",
+        "source": skunk_bat_core::PRIMAL_ID,
         "anchor": {
             "seq": event.seq,
             "timestamp": event.timestamp,

@@ -8,7 +8,7 @@
 //! `is_established()` gate returns false and zero anomalies are detected.
 //!
 //! The normal observations model typical inter-primal IPC traffic:
-//! low connection rates, standard ports (UDS/TCP 9140), modest volume.
+//! low connection rates, standard ports (UDS/TCP 9750), modest volume.
 //!
 //! The pen-test attack patterns (PG-57) model the 7 malformed-payload +
 //! enumeration scenarios that should trigger detection once the baseline
@@ -23,7 +23,7 @@ use super::types::Observation;
 /// Represents ~60 seconds of typical ecosystem activity:
 /// - Connection rate: 2–8 conn/s (IPC heartbeats, capability queries)
 /// - Traffic volume: 1–5 KB/s (JSON-RPC payloads, health checks)
-/// - Ports: 9140 (skunkBat TCP), plus UDS (represented as port 0)
+/// - Ports: 9750 (skunkBat TCP), plus UDS (represented as port 0)
 #[must_use]
 pub fn normal_baseline() -> Vec<Observation> {
     let now = SystemTime::now();
@@ -31,31 +31,31 @@ pub fn normal_baseline() -> Vec<Observation> {
         Observation {
             connection_rate: 3.2,
             traffic_volume: 2048,
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
         Observation {
             connection_rate: 2.8,
             traffic_volume: 1536,
-            ports_accessed: vec![9140, 0],
+            ports_accessed: vec![9750, 0],
             timestamp: now,
         },
         Observation {
             connection_rate: 4.1,
             traffic_volume: 3072,
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.5,
             traffic_volume: 2560,
-            ports_accessed: vec![9140, 0],
+            ports_accessed: vec![9750, 0],
             timestamp: now,
         },
         Observation {
             connection_rate: 5.0,
             traffic_volume: 4096,
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
         Observation {
@@ -67,13 +67,13 @@ pub fn normal_baseline() -> Vec<Observation> {
         Observation {
             connection_rate: 4.8,
             traffic_volume: 3584,
-            ports_accessed: vec![9140, 0],
+            ports_accessed: vec![9750, 0],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.9,
             traffic_volume: 2816,
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
         Observation {
@@ -85,19 +85,19 @@ pub fn normal_baseline() -> Vec<Observation> {
         Observation {
             connection_rate: 4.3,
             traffic_volume: 3328,
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.0,
             traffic_volume: 2048,
-            ports_accessed: vec![9140, 0],
+            ports_accessed: vec![9750, 0],
             timestamp: now,
         },
         Observation {
             connection_rate: 5.2,
             traffic_volume: 4352,
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
     ]
@@ -126,8 +126,8 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             connection_rate: 150.0,
             traffic_volume: 8192,
             ports_accessed: vec![
-                22, 80, 443, 8080, 8443, 9140, 9141, 9142, 9143, 9144, 9145, 9146, 9147, 9148,
-                9149, 9150, 9200, 9300, 9400, 9500,
+                22, 80, 443, 8080, 8443, 9750, 9751, 9752, 9753, 9754, 9755, 9756, 9757, 9758,
+                9759, 9760, 9200, 9300, 9400, 9500,
             ],
             timestamp: now,
         },
@@ -135,35 +135,35 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
         Observation {
             connection_rate: 5.0,
             traffic_volume: 10_485_760, // 10 MB/s
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
         // 3: Malformed JSON-RPC burst — rapid small payloads
         Observation {
             connection_rate: 500.0,
             traffic_volume: 512,
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
         // 4: Service enumeration — methodical probing at moderate rate
         Observation {
             connection_rate: 45.0,
             traffic_volume: 4096,
-            ports_accessed: vec![9140, 9141, 9142, 9143, 9144, 9145],
+            ports_accessed: vec![9750, 9751, 9752, 9753, 9754, 9755],
             timestamp: now,
         },
         // 5: Amplification attempt — tiny request, expecting large response
         Observation {
             connection_rate: 80.0,
             traffic_volume: 128,
-            ports_accessed: vec![9140],
+            ports_accessed: vec![9750],
             timestamp: now,
         },
         // 6: Slow-rate exhaustion — sustained elevated connections
         Observation {
             connection_rate: 25.0,
             traffic_volume: 2048,
-            ports_accessed: vec![9140, 0],
+            ports_accessed: vec![9750, 0],
             timestamp: now,
         },
         // 7: Protocol confusion — unexpected ports, moderate rate
