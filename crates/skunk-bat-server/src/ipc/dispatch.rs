@@ -27,6 +27,7 @@ const METHODS: &[&str] = &[
     "security.metrics",
     "security.audit_log",
     "lifecycle.state",
+    "lifecycle.status",
     "lifecycle.capabilities",
     "capabilities.list",
     "identity.get",
@@ -173,6 +174,15 @@ pub(super) async fn dispatch(
             let state_str = state.read().await.state().to_string();
             Response::success(id, serde_json::json!({"state": state_str}))
         }
+
+        "lifecycle.status" => Response::success(
+            id,
+            serde_json::json!({
+                "primal": skunk_bat_core::PRIMAL_ID,
+                "version": PRIMAL_VERSION,
+                "status": "running"
+            }),
+        ),
 
         "lifecycle.capabilities" => {
             let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();

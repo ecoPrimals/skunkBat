@@ -15,8 +15,8 @@ use tracing_subscriber::EnvFilter;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Default TCP port for JSON-RPC when `SKUNKBAT_PORT` is unset.
-const DEFAULT_PORT: u16 = 9140;
+/// Default TCP port for JSON-RPC (aligned with `ports.env`).
+const DEFAULT_PORT: u16 = 9750;
 
 fn default_port() -> u16 {
     std::env::var("SKUNKBAT_PORT")
@@ -55,6 +55,10 @@ enum Commands {
         #[arg(long, default_value_t = default_port())]
         port: u16,
 
+        /// Explicit UDS socket path (overrides BTSP-derived path).
+        #[arg(long)]
+        socket: Option<String>,
+
         /// Disable Unix domain socket listener.
         #[arg(long)]
         no_uds: bool,
@@ -87,21 +91,31 @@ async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Server { bind, port, no_uds } => run_server(&bind, port, no_uds).await,
+        Commands::Server {
+            bind,
+            port,
+            socket,
+            no_uds,
+        } => run_server(&bind, port, socket.as_deref(), no_uds).await,
         Commands::Health => run_health().await,
         Commands::Scan => run_scan().await,
         Commands::Detect => run_detect().await,
     }
 }
 
-async fn run_server(bind: &str, port: u16, no_uds: bool) -> Result<(), BoxError> {
+async fn run_server(
+    bind: &str,
+    port: u16,
+    socket: Option<&str>,
+    no_uds: bool,
+) -> Result<(), BoxError> {
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
 
     tracing::info!("skunkBat server starting on {bind}:{port}");
 
-    ipc::serve(skunkbat, bind.to_owned(), port, no_uds).await
+    ipc::serve(skunkbat, bind.to_owned(), port, socket, no_uds).await
 }
 
 async fn run_health() -> Result<(), BoxError> {

@@ -33,6 +33,7 @@ pub async fn serve(
     skunkbat: SkunkBat,
     addr: String,
     port: u16,
+    socket_override: Option<&str>,
     no_uds: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = Arc::new(RwLock::new(skunkbat));
@@ -40,6 +41,8 @@ pub async fn serve(
 
     let socket_path = if no_uds {
         None
+    } else if let Some(path) = socket_override {
+        Some(path.to_owned())
     } else {
         transport::BtspConfig::from_env()
             .ok()
@@ -83,6 +86,9 @@ pub async fn serve(
         ForwardingConfig::default(),
     ));
 
+    let mut sigterm =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
     tokio::select! {
         result = tcp_handle => {
             result??;
@@ -96,7 +102,10 @@ pub async fn serve(
             result??;
         }
         _ = tokio::signal::ctrl_c() => {
-            tracing::info!("shutdown signal received, stopping skunkBat");
+            tracing::info!("SIGINT received, stopping skunkBat");
+        }
+        _ = sigterm.recv() => {
+            tracing::info!("SIGTERM received, stopping skunkBat");
         }
     }
 

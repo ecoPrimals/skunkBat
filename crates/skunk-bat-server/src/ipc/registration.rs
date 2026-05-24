@@ -146,6 +146,7 @@ pub(super) fn announce_payload(socket_path: &str) -> serde_json::Value {
             "capabilities.list",
             "identity.get",
             "lifecycle.state",
+            "lifecycle.status",
             "lifecycle.capabilities",
             "auth.check",
             "auth.mode",
@@ -241,7 +242,7 @@ mod tests {
     fn announce_payload_methods_complete() {
         let payload = announce_payload("/tmp/test.sock");
         let methods = payload["methods"].as_array().expect("methods array");
-        assert_eq!(methods.len(), 17, "all 17 registered methods");
+        assert_eq!(methods.len(), 18, "all 18 registered methods");
         let strs: Vec<&str> = methods.iter().filter_map(|m| m.as_str()).collect();
         assert!(strs.contains(&"btsp.capabilities"));
         assert!(strs.contains(&"security.audit_log"));

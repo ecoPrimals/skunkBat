@@ -41,6 +41,7 @@ const PUBLIC_METHODS: &[&str] = &[
     "capabilities.list",
     "capability.list",
     "lifecycle.state",
+    "lifecycle.status",
     "lifecycle.capabilities",
     "auth.check",
     "auth.mode",
