@@ -48,7 +48,6 @@ skunkBat/
 │   ├── skunk-bat-integrations/  # JSON-RPC client, discovery, federation
 │   └── skunk-bat-server/        # UniBin server (TCP + UDS + BTSP)
 ├── examples/                    # 12 working examples
-├── showcase/                    # 4-tier interactive demos (21 scenarios)
 ├── tests/                       # Integration, e2e, chaos tests
 └── specs/                       # Technical specifications
 ```
