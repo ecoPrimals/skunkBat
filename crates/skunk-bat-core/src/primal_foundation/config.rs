@@ -33,7 +33,7 @@ impl Default for CommonConfig {
             instance_id: new_instance_id(),
             log_level: "info".to_owned(),
             data_dir: "./data".to_owned(),
-            listen_addr: std::env::var("SKUNKBAT_LISTEN_ADDR")
+            listen_addr: std::env::var(crate::env_keys::SKUNKBAT_LISTEN_ADDR)
                 .unwrap_or_else(|_| "127.0.0.1".to_owned()),
             listen_port: 0,
             identity_service_endpoint: None,

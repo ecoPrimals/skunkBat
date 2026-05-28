@@ -125,7 +125,7 @@ impl EnforcementMode {
     /// Defaults to `Permissive` if unset or unrecognized.
     #[must_use]
     pub fn from_env() -> Self {
-        match std::env::var("SKUNKBAT_AUTH_MODE")
+        match std::env::var(skunk_bat_core::env_keys::SKUNKBAT_AUTH_MODE)
             .unwrap_or_default()
             .to_lowercase()
             .as_str()

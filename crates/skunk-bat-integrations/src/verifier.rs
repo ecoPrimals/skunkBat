@@ -35,7 +35,7 @@ impl RuntimeVerifier {
     /// [`LocalLineageVerifier`] otherwise.
     #[must_use]
     pub fn from_env() -> Self {
-        let has_tcp = std::env::var("LINEAGE_ENDPOINT")
+        let has_tcp = std::env::var(skunk_bat_core::env_keys::LINEAGE_ENDPOINT)
             .map(|v| !v.is_empty())
             .unwrap_or(false);
 

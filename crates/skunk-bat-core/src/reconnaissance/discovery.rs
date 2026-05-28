@@ -44,7 +44,7 @@ impl LocalDiscovery {
     ///
     /// Priority: `SKUNKBAT_ID` env → generated from pid+timestamp.
     fn discover_self_id() -> String {
-        std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| {
+        std::env::var(crate::env_keys::SKUNKBAT_ID).unwrap_or_else(|_| {
             let pid = std::process::id();
             let now = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -58,7 +58,7 @@ impl LocalDiscovery {
     ///
     /// Priority: `SKUNKBAT_ADDRESS` env → loopback fallback.
     fn discover_self_address() -> String {
-        std::env::var("SKUNKBAT_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_owned())
+        std::env::var(crate::env_keys::SKUNKBAT_ADDRESS).unwrap_or_else(|_| "127.0.0.1".to_owned())
     }
 }
 

@@ -82,7 +82,7 @@ fn resolve_discovery_socket() -> Option<String> {
     }
 
     let socket_dir = skunk_bat_integrations::rpc::socket_dir();
-    let family_id = std::env::var("FAMILY_ID").unwrap_or_default();
+    let family_id = std::env::var(skunk_bat_core::env_keys::FAMILY_ID).unwrap_or_default();
 
     let mut candidates = vec![format!("{socket_dir}/songbird.sock")];
     if !family_id.is_empty() && family_id != "default" {
@@ -177,7 +177,7 @@ pub(super) fn announce_payload(socket_path: &str) -> serde_json::Value {
 /// 2. `{socket_dir}/neural-api-ecoPrimal.sock`
 /// 3. `{socket_dir}/biomeos.sock`
 fn resolve_neural_api_socket() -> Option<String> {
-    if let Ok(path) = std::env::var("NEURAL_API_SOCKET")
+    if let Ok(path) = std::env::var(skunk_bat_core::env_keys::NEURAL_API_SOCKET)
         && !path.is_empty()
         && std::path::Path::new(&path).exists()
     {

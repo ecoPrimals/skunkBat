@@ -101,7 +101,7 @@ pub fn derive_handshake_key_from_env() -> Option<Vec<u8>> {
     use hkdf::Hkdf;
     use sha2::Sha256;
 
-    let seed_str = std::env::var("FAMILY_SEED").ok()?;
+    let seed_str = std::env::var(skunk_bat_core::env_keys::FAMILY_SEED).ok()?;
     if seed_str.len() < 16 {
         tracing::warn!("FAMILY_SEED too short for BTSP key derivation (minimum 16 bytes)");
         return None;
@@ -179,7 +179,7 @@ where
 
     let client_ephemeral_pub = json_str(&client_hello, "client_ephemeral_pub");
 
-    let family_seed = std::env::var("FAMILY_SEED").unwrap_or_default();
+    let family_seed = std::env::var(skunk_bat_core::env_keys::FAMILY_SEED).unwrap_or_default();
 
     let create_result = provider_call(
         &config.provider_socket,

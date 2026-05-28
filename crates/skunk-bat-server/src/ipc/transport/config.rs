@@ -26,11 +26,11 @@ impl BtspConfig {
     ///
     /// Returns `Err` when both `FAMILY_ID` and `BIOMEOS_INSECURE=1` are set.
     pub fn from_env() -> Result<Self, TransportError> {
-        let family_id = std::env::var("FAMILY_ID")
+        let family_id = std::env::var(skunk_bat_core::env_keys::FAMILY_ID)
             .ok()
             .filter(|v| !v.is_empty() && v != "default");
 
-        let insecure = std::env::var("BIOMEOS_INSECURE")
+        let insecure = std::env::var(skunk_bat_core::env_keys::BIOMEOS_INSECURE)
             .map(|v| v == "1")
             .unwrap_or(false);
 
@@ -40,8 +40,8 @@ impl BtspConfig {
             ));
         }
 
-        let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
-            let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        let socket_dir = std::env::var(skunk_bat_core::env_keys::BIOMEOS_SOCKET_DIR).unwrap_or_else(|_| {
+            let runtime_dir = std::env::var(skunk_bat_core::env_keys::XDG_RUNTIME_DIR)
                 .unwrap_or_else(|_| format!("/run/user/{}", proc_uid()));
             format!("{runtime_dir}/biomeos")
         });
@@ -124,17 +124,19 @@ impl BtspHandshakeConfig {
     /// Provider socket is resolved by capability, not by primal name.
     #[must_use]
     pub fn from_env() -> Option<Self> {
-        let fid = std::env::var("FAMILY_ID")
+        let fid = std::env::var(skunk_bat_core::env_keys::FAMILY_ID)
             .ok()
             .filter(|v| !v.is_empty() && v != "default")?;
 
-        let provider_socket = std::env::var("BTSP_PROVIDER_SOCKET").ok().map_or_else(
+        let provider_socket = std::env::var(skunk_bat_core::env_keys::BTSP_PROVIDER_SOCKET)
+            .ok()
+            .map_or_else(
             || {
-                let capability = std::env::var("BTSP_PROVIDER")
+                let capability = std::env::var(skunk_bat_core::env_keys::BTSP_PROVIDER)
                     .unwrap_or_else(|_| DEFAULT_BTSP_CAPABILITY.to_owned());
-                let socket_dir = std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
+                let socket_dir = std::env::var(skunk_bat_core::env_keys::BIOMEOS_SOCKET_DIR).unwrap_or_else(|_| {
                     let xdg =
-                        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
+                        std::env::var(skunk_bat_core::env_keys::XDG_RUNTIME_DIR).unwrap_or_else(|_| "/tmp".to_owned());
                     format!("{xdg}/biomeos")
                 });
                 std::path::PathBuf::from(format!("{socket_dir}/{capability}-{fid}.sock"))

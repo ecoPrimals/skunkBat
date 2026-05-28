@@ -64,8 +64,8 @@ struct RpcResponseError {
 /// Priority: `BIOMEOS_SOCKET_DIR` → `$XDG_RUNTIME_DIR/biomeos` → `/run/user/{uid}/biomeos`.
 #[must_use]
 pub fn socket_dir() -> String {
-    std::env::var("BIOMEOS_SOCKET_DIR").unwrap_or_else(|_| {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+    std::env::var(skunk_bat_core::env_keys::BIOMEOS_SOCKET_DIR).unwrap_or_else(|_| {
+        let runtime_dir = std::env::var(skunk_bat_core::env_keys::XDG_RUNTIME_DIR)
             .unwrap_or_else(|_| format!("/run/user/{}", proc_uid()));
         format!("{runtime_dir}/biomeos")
     })

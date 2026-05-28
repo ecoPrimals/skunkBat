@@ -19,14 +19,15 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 const DEFAULT_PORT: u16 = 9750;
 
 fn default_port() -> u16 {
-    std::env::var("SKUNKBAT_PORT")
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_PORT)
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_PORT)
 }
 
 fn default_bind() -> String {
-    std::env::var("SKUNKBAT_LISTEN_ADDR").unwrap_or_else(|_| "127.0.0.1".to_owned())
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_LISTEN_ADDR)
+        .unwrap_or_else(|_| "127.0.0.1".to_owned())
 }
 
 /// skunkBat — Reconnaissance & Automated Defense

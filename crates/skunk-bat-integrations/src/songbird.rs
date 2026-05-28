@@ -74,9 +74,9 @@ impl FederationClient {
     /// and probes `$BIOMEOS_SOCKET_DIR/federation.sock` for UDS.
     #[must_use]
     pub fn from_env() -> Self {
-        let endpoint = std::env::var("FEDERATION_ENDPOINT").unwrap_or_default();
+        let endpoint = std::env::var(skunk_bat_core::env_keys::FEDERATION_ENDPOINT).unwrap_or_default();
         let node_id =
-            std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| skunk_bat_core::PRIMAL_ID.to_owned());
+            std::env::var(skunk_bat_core::env_keys::SKUNKBAT_ID).unwrap_or_else(|_| skunk_bat_core::PRIMAL_ID.to_owned());
         let uds_path = {
             let path = crate::rpc::capability_socket("federation");
             std::path::Path::new(&path).exists().then_some(path)

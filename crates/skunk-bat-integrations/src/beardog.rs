@@ -50,7 +50,7 @@ impl RemoteLineageVerifier {
     /// `$BIOMEOS_SOCKET_DIR/lineage-verification.sock` for UDS.
     #[must_use]
     pub fn from_env() -> Self {
-        let endpoint = std::env::var("LINEAGE_ENDPOINT").unwrap_or_default();
+        let endpoint = std::env::var(skunk_bat_core::env_keys::LINEAGE_ENDPOINT).unwrap_or_default();
         let uds_path = {
             let path = crate::rpc::capability_socket("lineage-verification");
             std::path::Path::new(&path).exists().then_some(path)
