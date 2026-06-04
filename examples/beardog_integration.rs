@@ -84,43 +84,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  • Service: data-access\n");
 
     println!("🦨 → 🐻 Requesting lineage verification...");
-    let is_family = verifier.is_family(node_id).await?;
-    let lineage = verifier.get_lineage(node_id).await?;
+    let verification = verifier.is_family(node_id).await;
 
-    println!("🐻 → 🦨 Response (stub behavior):");
-    if is_family {
-        println!("  ✓ Valid lineage\n");
-    } else {
-        println!("  ✗ NOT FAMILY");
-        println!("  • Lineage: {lineage:?}");
-        println!("  • Reason: Conservative default (no verification available)\n");
+    println!("🐻 → 🦨 Response (local stub behavior):");
+    match verification {
+        Ok(true) => {
+            println!("  ✓ Valid lineage\n");
+        }
+        Ok(false) => {
+            println!("  ✗ NOT FAMILY (authoritative denial)\n");
+        }
+        Err(ref e) => {
+            println!("  ⚠ NO AUTHORITY AVAILABLE: {e}");
+            println!("  • Reason: No lineage provider discovered at runtime\n");
 
-        // Create threat
-        let threat = Threat {
-            id: "beardog-threat-1".to_string(),
-            threat_type: ThreatType::UnknownLineage {
-                peer_id: node_id.to_string(),
-                lineage: None,
-            },
-            severity: Severity::High,
-            source: node_id.to_string(),
-            target: "local-node".to_string(),
-            detected_at: SystemTime::now(),
-            description: "Connection from node with unverified genetic lineage".to_string(),
-            confidence: 0.9,
-        };
+            let threat = Threat {
+                id: "beardog-threat-1".to_string(),
+                threat_type: ThreatType::UnknownLineage {
+                    peer_id: node_id.to_string(),
+                    lineage: None,
+                },
+                severity: Severity::High,
+                source: node_id.to_string(),
+                target: "local-node".to_string(),
+                detected_at: SystemTime::now(),
+                description: "Connection from node with unverified genetic lineage".to_string(),
+                confidence: 0.9,
+            };
 
-        println!("🦨 Threat Detected:");
-        println!("  • Type: UnknownLineage");
-        println!("  • Severity: High");
-        println!("  • Confidence: 90%\n");
+            println!("🦨 Threat Detected:");
+            println!("  • Type: UnknownLineage");
+            println!("  • Severity: High");
+            println!("  • Confidence: 90%\n");
 
-        skunkbat.respond_to_threat(&threat)?;
+            skunkbat.respond_to_threat(&threat)?;
 
-        println!("🦨 Decision: ⚠️ CONNECTION QUARANTINED");
-        println!("  • Reason: Cannot verify genetic lineage");
-        println!("  • Action: Isolate for owner review");
-        println!("  • Note: With real Beardog, this could be approved\n");
+            println!("🦨 Decision: ⚠️ CONNECTION QUARANTINED");
+            println!("  • Reason: Cannot verify genetic lineage");
+            println!("  • Action: Isolate for owner review");
+            println!("  • Note: With real Beardog, this could be approved\n");
+        }
     }
 
     // ════════════════════════════════════════

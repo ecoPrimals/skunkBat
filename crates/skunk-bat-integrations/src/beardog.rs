@@ -106,8 +106,10 @@ impl LineageVerifier for RemoteLineageVerifier {
         match self.rpc_call("lineage.verify", Some(params)).await {
             Ok(value) => Ok(value["is_family"].as_bool().unwrap_or(false)),
             Err(e) => {
-                tracing::debug!("Lineage verification unavailable ({e}), conservative deny");
-                Ok(false)
+                tracing::debug!("Lineage verification provider unreachable: {e}");
+                Err(SkunkBatError::LineageVerification(format!(
+                    "provider unreachable: {e}"
+                )))
             }
         }
     }
@@ -117,8 +119,10 @@ impl LineageVerifier for RemoteLineageVerifier {
         match self.rpc_call("lineage.list", Some(params)).await {
             Ok(value) => Ok(value["lineage"].as_str().map(String::from)),
             Err(e) => {
-                tracing::debug!("Lineage query unavailable ({e}), returning None");
-                Ok(None)
+                tracing::debug!("Lineage query provider unreachable: {e}");
+                Err(SkunkBatError::LineageVerification(format!(
+                    "provider unreachable: {e}"
+                )))
             }
         }
     }
@@ -149,27 +153,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_family_graceful_degradation() {
+    async fn test_is_family_returns_err_when_unreachable() {
         let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999".into());
         let result = verifier.is_family("unknown-peer").await;
-        assert!(result.is_ok());
-        assert!(!result.expect("ok"), "should conservatively deny");
+        assert!(result.is_err(), "unreachable provider → Err (not false)");
     }
 
     #[tokio::test]
-    async fn test_get_lineage_graceful_degradation() {
+    async fn test_get_lineage_returns_err_when_unreachable() {
         let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999".into());
         let result = verifier.get_lineage("unknown-peer").await;
-        assert!(result.is_ok());
-        assert!(result.expect("ok").is_none());
+        assert!(result.is_err(), "unreachable provider → Err (not None)");
     }
 
     #[tokio::test]
-    async fn test_from_env_verify() {
+    async fn test_from_env_verify_returns_err() {
         let verifier = RemoteLineageVerifier::from_env();
         let result = verifier.is_family("test-peer").await;
-        assert!(result.is_ok());
-        assert!(!result.expect("ok"));
+        assert!(result.is_err(), "no provider in test env → Err");
     }
 
     /// Integration test: mock bearDog server confirms family membership.

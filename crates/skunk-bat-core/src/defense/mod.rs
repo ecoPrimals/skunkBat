@@ -19,11 +19,15 @@ const CRITICAL_CONFIDENCE_THRESHOLD: f64 = 0.9;
 /// Confidence threshold for automatic quarantine of high-severity threats.
 const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.7;
 
+/// Number of repeat quarantines before escalating to block.
+const ESCALATION_THRESHOLD: u32 = 3;
+
 /// Defense engine with thread-safe quarantine tracking.
 pub struct DefenseEngine {
     enabled: bool,
     auto_response_enabled: bool,
     quarantine_map: Mutex<HashMap<String, QuarantineRecord>>,
+    escalation_counts: Mutex<HashMap<String, u32>>,
 }
 
 impl DefenseEngine {
@@ -34,6 +38,7 @@ impl DefenseEngine {
             enabled: config.features.auto_defense,
             auto_response_enabled: true,
             quarantine_map: Mutex::new(HashMap::new()),
+            escalation_counts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -69,6 +74,9 @@ impl DefenseEngine {
 
     /// Respond to a threat.
     ///
+    /// Implements graduated escalation: repeated threats from the same source
+    /// escalate through Monitor → Quarantine → Block.
+    ///
     /// # Errors
     ///
     /// Returns an error if the threat response fails.
@@ -85,15 +93,45 @@ impl DefenseEngine {
             threat.confidence
         );
 
-        let action = Self::determine_action(threat);
+        let escalation_count = self.increment_escalation(&threat.source);
+        let action = self.determine_action(threat, escalation_count);
         self.execute_action(&action, threat);
 
         Ok(action.action_type)
     }
 
-    /// Determine appropriate defense action.
-    fn determine_action(threat: &Threat) -> DefenseAction {
-        // Critical threats: immediate quarantine
+    fn increment_escalation(&self, source: &str) -> u32 {
+        self.escalation_counts.lock().map_or(1, |mut counts| {
+            let count = counts.entry(source.to_owned()).or_insert(0);
+            *count += 1;
+            *count
+        })
+    }
+
+    /// Get the escalation count for a source.
+    #[must_use]
+    pub fn escalation_count(&self, source: &str) -> u32 {
+        self.escalation_counts
+            .lock()
+            .ok()
+            .and_then(|c| c.get(source).copied())
+            .unwrap_or(0)
+    }
+
+    /// Determine appropriate defense action with escalation awareness.
+    fn determine_action(&self, threat: &Threat, escalation_count: u32) -> DefenseAction {
+        if escalation_count >= ESCALATION_THRESHOLD {
+            return DefenseAction {
+                action_type: ActionType::Block,
+                target: threat.source.clone(),
+                requires_approval: false,
+                reason: format!(
+                    "Escalated to block after {} repeated threats: {}",
+                    escalation_count, threat.description
+                ),
+            };
+        }
+
         if threat.severity == Severity::Critical
             && threat.confidence > CRITICAL_CONFIDENCE_THRESHOLD
         {
@@ -105,7 +143,6 @@ impl DefenseEngine {
             };
         }
 
-        // High severity: quarantine with alert
         if threat.severity == Severity::High && threat.confidence > HIGH_CONFIDENCE_THRESHOLD {
             return DefenseAction {
                 action_type: ActionType::QuarantineAndAlert,
@@ -115,11 +152,10 @@ impl DefenseEngine {
             };
         }
 
-        // Medium/Low: monitor and alert
         DefenseAction {
             action_type: ActionType::MonitorAndAlert,
             target: threat.source.clone(),
-            requires_approval: true,
+            requires_approval: self.auto_response_enabled,
             reason: format!("Potential threat detected: {}", threat.description),
         }
     }
@@ -324,8 +360,10 @@ mod tests {
 
     #[test]
     fn test_critical_threat_response() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::Critical, 0.95);
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat, 1);
 
         assert_eq!(action.action_type, ActionType::Quarantine);
         assert!(!action.requires_approval);
@@ -333,8 +371,10 @@ mod tests {
 
     #[test]
     fn test_high_severity_response() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::High, 0.8);
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat, 1);
 
         assert_eq!(action.action_type, ActionType::QuarantineAndAlert);
         assert!(!action.requires_approval);
@@ -342,20 +382,40 @@ mod tests {
 
     #[test]
     fn test_medium_severity_response() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::Medium, 0.6);
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat, 1);
 
         assert_eq!(action.action_type, ActionType::MonitorAndAlert);
-        assert!(action.requires_approval);
     }
 
     #[test]
     fn test_low_confidence_threat() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::Critical, 0.5);
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat, 1);
 
-        // Low confidence, even critical, should require approval
         assert_eq!(action.action_type, ActionType::MonitorAndAlert);
+    }
+
+    #[test]
+    fn test_escalation_to_block() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::High, 0.8);
+
+        for _ in 0..ESCALATION_THRESHOLD {
+            engine.respond(&threat).unwrap();
+        }
+
+        assert_eq!(
+            engine.escalation_count(&threat.source),
+            ESCALATION_THRESHOLD
+        );
+        let action = engine.determine_action(&threat, ESCALATION_THRESHOLD);
+        assert_eq!(action.action_type, ActionType::Block);
     }
 
     #[test]
@@ -486,7 +546,7 @@ mod tests {
 
         engine.respond(&threat).expect("respond should succeed");
 
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat, 1);
         assert_eq!(action.action_type, ActionType::QuarantineAndAlert);
     }
 

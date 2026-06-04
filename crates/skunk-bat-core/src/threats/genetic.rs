@@ -11,20 +11,27 @@ use super::traits::{LineageVerifier, TopologyValidator};
 use super::types::PathValidation;
 use crate::error::SkunkBatError;
 
-/// Local-only lineage verifier (no external dependencies).
+/// Local-only lineage verifier (no external authority).
 ///
-/// Always returns "not family" for unknown peers — the conservative
-/// default.  Trust must be explicitly verified via a runtime-discovered
-/// capability provider.
+/// Returns `Err` for all queries — the conservative default when no
+/// capability provider is discovered at runtime. Callers should treat
+/// errors as "inconclusive" (degraded mode) rather than "denied."
+///
+/// A real authority (e.g. a primal announcing `lineage-verification`)
+/// replaces this at runtime via [`RuntimeVerifier`](crate) enum dispatch.
 pub struct LocalLineageVerifier;
 
 impl LineageVerifier for LocalLineageVerifier {
     async fn is_family(&self, _peer_id: &str) -> Result<bool, SkunkBatError> {
-        Ok(false)
+        Err(SkunkBatError::LineageVerification(
+            "no lineage authority available (local-only mode)".to_owned(),
+        ))
     }
 
     async fn get_lineage(&self, _peer_id: &str) -> Result<Option<String>, SkunkBatError> {
-        Ok(None)
+        Err(SkunkBatError::LineageVerification(
+            "no lineage authority available (local-only mode)".to_owned(),
+        ))
     }
 }
 
@@ -73,16 +80,23 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn local_lineage_always_denies() {
+    async fn local_lineage_returns_err_no_authority() {
         let verifier = LocalLineageVerifier;
-        assert!(!verifier.is_family("any-peer").await.unwrap());
-        assert!(!verifier.is_family("trusted-peer").await.unwrap());
+        let result = verifier.is_family("any-peer").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no lineage authority")
+        );
     }
 
     #[tokio::test]
-    async fn local_lineage_returns_no_lineage() {
+    async fn local_lineage_get_lineage_returns_err() {
         let verifier = LocalLineageVerifier;
-        assert!(verifier.get_lineage("any-peer").await.unwrap().is_none());
+        let result = verifier.get_lineage("any-peer").await;
+        assert!(result.is_err());
     }
 
     #[test]

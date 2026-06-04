@@ -81,17 +81,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_variant_denies_by_default() {
+    async fn local_variant_returns_err_no_authority() {
         let verifier = RuntimeVerifier::Local(LocalLineageVerifier);
-        assert!(!verifier.is_family("test-peer").await.unwrap());
+        let result = verifier.is_family("test-peer").await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn remote_variant_degrades_gracefully() {
+    async fn remote_variant_returns_err_when_unreachable() {
         let verifier =
             RuntimeVerifier::Remote(RemoteLineageVerifier::new("unreachable.invalid:1".into()));
         let result = verifier.is_family("test-peer").await;
-        assert!(result.is_ok());
-        assert!(!result.unwrap());
+        assert!(result.is_err());
     }
 }

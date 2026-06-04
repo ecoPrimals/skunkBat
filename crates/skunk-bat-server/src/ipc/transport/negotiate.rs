@@ -62,10 +62,6 @@ impl std::fmt::Display for CipherSuite {
 }
 
 /// Bond types that determine minimum cipher requirements.
-#[allow(
-    dead_code,
-    reason = "target-conditional: used in tests, enforcement planned"
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BondType {
     /// Covalent (genetic lineage) — any cipher allowed including null.
@@ -79,10 +75,6 @@ pub enum BondType {
 impl BondType {
     /// Minimum cipher required by this bond type.
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "target-conditional: used in tests, enforcement planned"
-    )]
     pub const fn minimum_cipher(self) -> CipherSuite {
         match self {
             Self::Covalent => CipherSuite::Null,
@@ -263,12 +255,37 @@ pub async fn handle_negotiate(
     };
 
     let offered_ciphers = extract_offered_ciphers(&params);
+    let bond_type: BondType = params
+        .get("bond_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Covalent")
+        .parse()
+        .unwrap_or(BondType::Covalent);
 
     let Some(session) = registry.get(session_id).await else {
         return negotiate_error("unknown_session", "session_id not found in registry");
     };
 
     let selected = select_best_cipher(&offered_ciphers, session.session_key.is_some());
+
+    if cipher_strength(selected) < cipher_strength(bond_type.minimum_cipher()) {
+        tracing::warn!(
+            session_id = %session_id,
+            bond = %bond_type,
+            selected = %selected,
+            minimum = %bond_type.minimum_cipher(),
+            "Bond-type cipher requirement not met"
+        );
+        return negotiate_error(
+            "cipher_below_bond_minimum",
+            format!(
+                "bond type {} requires at least {}, but best available is {}",
+                bond_type,
+                bond_type.minimum_cipher(),
+                selected
+            ),
+        );
+    }
 
     if selected == CipherSuite::Null {
         tracing::info!(
@@ -336,6 +353,15 @@ pub fn extract_offered_ciphers(params: &serde_json::Value) -> Vec<CipherSuite> {
         vec![cipher.parse().unwrap_or(CipherSuite::Null)]
     } else {
         vec![CipherSuite::Null]
+    }
+}
+
+/// Ordinal strength of a cipher suite for comparison.
+const fn cipher_strength(cipher: CipherSuite) -> u8 {
+    match cipher {
+        CipherSuite::Null => 0,
+        CipherSuite::HmacPlain => 1,
+        CipherSuite::ChaCha20Poly1305 => 2,
     }
 }
 

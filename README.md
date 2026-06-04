@@ -171,12 +171,12 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - `#[expect(reason)]` lint suppression standard (target-conditional `#[allow]` only)
 - `cargo deny` advisory/ban/license/source checks pass; `ring` explicitly banned
-- 49 source files, all under 800 lines (largest: 791)
+- 51 source files, all under 800 lines (largest: 791)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 389 tests passing, 90%+ function coverage (llvm-cov)
+- 390 tests passing, 90%+ function coverage (llvm-cov)
 - All 18 IPC methods stability-tiered (Stable)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
