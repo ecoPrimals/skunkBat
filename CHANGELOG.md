@@ -2,6 +2,22 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.2] — 2026-06-04
+
+### Added
+
+- **`defense.status` method** — dedicated health probe for gate deployment; returns
+  defense engine health, threat detection status, auto-response mode, quarantine count,
+  and aggregated metrics (threats_detected, threats_mitigated, scans_performed)
+- Delegate accessors on `SkunkBat`: `defense_healthy()`, `threat_detection_healthy()`,
+  `auto_response_enabled()`, `defense_quarantine_snapshot()`
+- `test_defense_status_responds` — validates gate health probe contract
+
+### Changed
+
+- Extracted dispatch tests to `dispatch_tests.rs` (391L production → 391L, tests in 453L sibling)
+- File count: 52 source files, max 670 lines/file
+
 ## [0.2.1] — 2026-06-03
 
 ### Added

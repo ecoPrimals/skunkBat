@@ -27,7 +27,7 @@ observability — all metadata-only, no content inspection by architecture.
 - **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with first-byte peek (`{` → plain JSON-RPC for biomeOS composition bypass)
 - **BTSP Phase 3**: `btsp.negotiate` server handler with encrypted frame upgrade — session registry, cipher selection, HKDF key derivation, `ChaCha20-Poly1305` AEAD framing wired into connection loop (`[4B len][12B nonce][ct+tag]`)
 - **Wire Standard**: `capabilities.list` (L2) and `identity.get` (L3) methods
-- **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `btsp.*`
+- **Domain Methods**: `health.*`, `defense.status`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `btsp.*`
 - **Capability Symlinks**: `security.sock` domain symlink created on bind
 
 ## Ecosystem Integration
@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-390 tests passing (179 core + 66 integrations + 125 server + 20 transport/integration), all workspace lib+bins.
+391 tests passing (179 core + 66 integrations + 126 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -101,7 +101,7 @@ ChaCha20-Poly1305 AEAD framing). `rand` eliminated — OsRng via RustCrypto re-e
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 51 source files, max 791 lines/file (dispatch.rs).
+No magic numbers — all thresholds named. 52 source files, max 670 lines/file (btsp.rs).
 Zero cross-repo path dependencies — `sourdough-core` types internalized
 as `primal_foundation`. `async-trait` eliminated and banned — native RPITIT throughout.
 `RemoteLineageVerifier` integration ready; verifier semantics evolved (Err = no authority,
@@ -109,7 +109,7 @@ Ok(false) = authoritative denial). All 5 threat categories implemented: genetic 
 authority), behavioral (statistical profiler), intrusion (port-scan metadata), topology
 (layer-bypass validation), resource (DoS). Defense graduated escalation: Monitor → Quarantine
 → Block (3+ repeated offenses). BTSP bond-type enforcement active (Covalent/Metallic/Ionic
-cipher minimums). 390 tests (179+66+125+20), pure Rust crypto deps
+cipher minimums). 391 tests (179+66+126+20), pure Rust crypto deps
 wired and tested (chacha20poly1305, hkdf, sha2, base64 — HKDF key derivation, AEAD exercised;
 `rand` crate eliminated — `OsRng` via `chacha20poly1305::aead::rand_core`).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.

@@ -192,6 +192,32 @@ impl SkunkBat {
         self.observer.get_metrics()
     }
 
+    /// Snapshot of currently quarantined sources.
+    #[must_use]
+    pub fn defense_quarantine_snapshot(
+        &self,
+    ) -> std::collections::HashMap<String, defense::QuarantineRecord> {
+        self.defense.quarantine_snapshot()
+    }
+
+    /// Whether the defense engine is enabled and healthy.
+    #[must_use]
+    pub const fn defense_healthy(&self) -> bool {
+        self.defense.is_healthy()
+    }
+
+    /// Whether threat detection is enabled and healthy.
+    #[must_use]
+    pub const fn threat_detection_healthy(&self) -> bool {
+        self.threat_detector.is_healthy()
+    }
+
+    /// Whether auto-response is enabled on the defense engine.
+    #[must_use]
+    pub const fn auto_response_enabled(&self) -> bool {
+        self.defense.auto_response_enabled()
+    }
+
     /// Access the configuration.
     #[must_use]
     pub const fn config(&self) -> &SkunkBatConfig {

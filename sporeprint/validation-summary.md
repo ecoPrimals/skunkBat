@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 389 tests, 18 IPC methods."
-date = 2026-06-03
+description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 391 tests, 19 IPC methods."
+date = 2026-06-04
 
 [taxonomies]
 primals = ["skunkbat"]
@@ -13,8 +13,8 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 390 passing
-- **Source**: 51 files, max 791 lines
+- **Tests**: 391 passing
+- **Source**: 52 files, max 670 lines
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **Coverage**: 90%+ function coverage (llvm-cov)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
@@ -33,9 +33,10 @@ springs = []
 | `audit` | JH-5 structured security event trail + cross-primal forwarding |
 | `btsp` | Phase 3 cipher negotiation + encrypted framing |
 
-## Methods (18 — all Stable tier)
+## Methods (19 — all Stable tier)
 
 - `health.liveness`, `health.readiness`, `health.check`
+- `defense.status`
 - `security.scan`, `security.detect`, `security.respond`, `security.metrics`, `security.audit_log`
 - `capabilities.list`, `identity.get`
 - `lifecycle.status`, `lifecycle.state`, `lifecycle.capabilities`

@@ -13,6 +13,8 @@
 //! - Standalone startup (degrades gracefully without ecosystem)
 
 mod dispatch;
+#[cfg(test)]
+mod dispatch_tests;
 mod jsonrpc;
 mod method_gate;
 mod registration;
