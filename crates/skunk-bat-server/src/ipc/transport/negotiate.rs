@@ -62,7 +62,10 @@ impl std::fmt::Display for CipherSuite {
 }
 
 /// Bond types that determine minimum cipher requirements.
-#[allow(dead_code, reason = "target-conditional: used in tests, enforcement planned")]
+#[allow(
+    dead_code,
+    reason = "target-conditional: used in tests, enforcement planned"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BondType {
     /// Covalent (genetic lineage) — any cipher allowed including null.
@@ -76,7 +79,10 @@ pub enum BondType {
 impl BondType {
     /// Minimum cipher required by this bond type.
     #[must_use]
-    #[allow(dead_code, reason = "target-conditional: used in tests, enforcement planned")]
+    #[allow(
+        dead_code,
+        reason = "target-conditional: used in tests, enforcement planned"
+    )]
     pub const fn minimum_cipher(self) -> CipherSuite {
         match self {
             Self::Covalent => CipherSuite::Null,
@@ -168,13 +174,19 @@ impl SessionRegistry {
     }
 
     /// Remove a session (on disconnect or timeout).
-    #[allow(dead_code, reason = "target-conditional: used in tests + future session TTL")]
+    #[allow(
+        dead_code,
+        reason = "target-conditional: used in tests + future session TTL"
+    )]
     pub async fn remove(&self, session_id: &str) {
         self.sessions.write().await.remove(session_id);
     }
 
     /// Number of active sessions.
-    #[allow(dead_code, reason = "target-conditional: used in tests + future metrics")]
+    #[allow(
+        dead_code,
+        reason = "target-conditional: used in tests + future metrics"
+    )]
     pub async fn len(&self) -> usize {
         self.sessions.read().await.len()
     }
@@ -275,7 +287,6 @@ pub async fn handle_negotiate(
     let mut server_nonce = [0u8; 32];
     chacha20poly1305::aead::OsRng.fill_bytes(&mut server_nonce);
     let server_nonce_b64 = BASE64.encode(server_nonce);
-
 
     let derived_keys = if let Some(ref handshake_key) = session.session_key {
         match derive_session_keys(handshake_key, &client_nonce, &server_nonce) {
@@ -486,14 +497,14 @@ mod tests {
             CipherSuite::HmacPlain
         );
         assert_eq!("null".parse::<CipherSuite>().unwrap(), CipherSuite::Null);
-        assert_eq!(
-            "unknown".parse::<CipherSuite>().unwrap(),
-            CipherSuite::Null
-        );
+        assert_eq!("unknown".parse::<CipherSuite>().unwrap(), CipherSuite::Null);
         assert_eq!(CipherSuite::ChaCha20Poly1305.as_str(), "chacha20-poly1305");
         assert_eq!(CipherSuite::HmacPlain.as_str(), "hmac-plain");
         assert_eq!(CipherSuite::Null.as_str(), "null");
-        assert_eq!(CipherSuite::ChaCha20Poly1305.to_string(), "chacha20-poly1305");
+        assert_eq!(
+            CipherSuite::ChaCha20Poly1305.to_string(),
+            "chacha20-poly1305"
+        );
     }
 
     #[test]

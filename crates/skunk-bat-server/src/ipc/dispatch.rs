@@ -225,9 +225,7 @@ pub(super) async fn dispatch(
             Response::success(id, serde_json::json!({"capabilities": all}))
         }
 
-        "capabilities.list" | "capability.list" => {
-            Response::success(id, capabilities_response())
-        }
+        "capabilities.list" | "capability.list" => Response::success(id, capabilities_response()),
 
         "identity.get" => Response::success(
             id,
@@ -639,7 +637,10 @@ mod tests {
         let security_cap = caps.iter().find(|c| c["type"] == "security").unwrap();
         let methods = security_cap["methods"].as_array().unwrap();
         assert!(
-            methods.iter().filter_map(|m| m.as_str()).any(|m| m == "audit_log"),
+            methods
+                .iter()
+                .filter_map(|m| m.as_str())
+                .any(|m| m == "audit_log"),
             "security capability must include audit_log"
         );
     }

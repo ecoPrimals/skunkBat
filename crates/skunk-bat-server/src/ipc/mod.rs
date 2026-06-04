@@ -86,8 +86,7 @@ pub async fn serve(
         ForwardingConfig::default(),
     ));
 
-    let mut sigterm =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     tokio::select! {
         result = tcp_handle => {
