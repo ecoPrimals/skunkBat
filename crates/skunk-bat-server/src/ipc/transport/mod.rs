@@ -16,6 +16,8 @@ mod btsp;
 mod config;
 mod error;
 pub mod negotiate;
+#[cfg(test)]
+mod negotiate_tests;
 mod peek;
 mod sys;
 

@@ -101,8 +101,8 @@ ChaCha20-Poly1305 AEAD framing). `rand` eliminated — OsRng via RustCrypto re-e
 and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 48 source files, max 815 lines/file (negotiate.rs
-with crypto+tests). Zero cross-repo path dependencies — `sourdough-core` types internalized
+No magic numbers — all thresholds named. 49 source files, max 791 lines/file (dispatch.rs).
+Zero cross-repo path dependencies — `sourdough-core` types internalized
 as `primal_foundation`. `async-trait` eliminated and banned — native RPITIT throughout.
 `RemoteLineageVerifier` integration ready. 389 tests (178+66+125+20), pure Rust crypto deps
 wired and tested (chacha20poly1305, hkdf, sha2, base64 — HKDF key derivation, AEAD exercised;
