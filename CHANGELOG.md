@@ -2,6 +2,34 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.1] — 2026-06-03
+
+### Added
+
+- **5-category threat pipeline complete** — intrusion detection (port-scan metadata),
+  topology validation (layer-bypass via `TopologyValidator`), all wired into `detect()`
+- **Defense escalation** — Block reachable via graduated escalation (3 repeated threats
+  from same source auto-escalate Monitor → Quarantine → Block)
+- **BTSP bond-type enforcement** — `handle_negotiate` validates cipher meets bond minimum
+  (Covalent=null, Metallic≥hmac, Ionic=chacha20); rejects with `cipher_below_bond_minimum`
+- **`test_escalation_to_block`** — coverage for the new escalation path
+
+### Changed
+
+- `LocalLineageVerifier` returns `Err` (no authority) instead of `Ok(false)`
+- `RemoteLineageVerifier` returns `Err` when provider is unreachable (not `Ok(false)`)
+- Genetic detection correctly skips in degraded mode (no false Critical alarms)
+- `ThreatDetector` now generic over 3 axes: `LineageVerifier`, `BaselineProfiler`, `TopologyValidator`
+- `DefenseEngine::determine_action` is instance method (escalation-aware)
+- `negotiate.rs` tests extracted to `negotiate_tests.rs` (826L → 479L production)
+- `threats/mod.rs` tests extracted to `mod_tests.rs` (851L → 452L production)
+- All source files under 800L (max 791)
+
+### Fixed
+
+- Perpetual false Critical genetic threat in standalone mode (LocalLineageVerifier `Ok(false)` semantics)
+- `BondType` and `minimum_cipher()` dead-code annotations removed (now active)
+
 ## [0.2.0] — 2026-05-17
 
 ### Added

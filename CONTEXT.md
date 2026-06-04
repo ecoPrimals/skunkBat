@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-389 tests passing (178 core + 66 integrations + 125 server + 20 transport/integration), all workspace lib+bins.
+390 tests passing (179 core + 66 integrations + 125 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -104,7 +104,12 @@ and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`
 No magic numbers — all thresholds named. 51 source files, max 791 lines/file (dispatch.rs).
 Zero cross-repo path dependencies — `sourdough-core` types internalized
 as `primal_foundation`. `async-trait` eliminated and banned — native RPITIT throughout.
-`RemoteLineageVerifier` integration ready. 389 tests (178+66+125+20), pure Rust crypto deps
+`RemoteLineageVerifier` integration ready; verifier semantics evolved (Err = no authority,
+Ok(false) = authoritative denial). All 5 threat categories implemented: genetic (lineage
+authority), behavioral (statistical profiler), intrusion (port-scan metadata), topology
+(layer-bypass validation), resource (DoS). Defense graduated escalation: Monitor → Quarantine
+→ Block (3+ repeated offenses). BTSP bond-type enforcement active (Covalent/Metallic/Ionic
+cipher minimums). 390 tests (179+66+125+20), pure Rust crypto deps
 wired and tested (chacha20poly1305, hkdf, sha2, base64 — HKDF key derivation, AEAD exercised;
 `rand` crate eliminated — `OsRng` via `chacha20poly1305::aead::rand_core`).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.
