@@ -93,8 +93,9 @@ and encrypted notification (no-response) verification.
 
 ## Status
 
-v0.2.0 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
-workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
+v0.2.5 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+workspace-wide. `#[expect(reason)]` lint standard (zero `#[allow]` in production; target-conditional
+`#[cfg_attr(not(test), expect(...))]` only).
 JSON-RPC IPC server with BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated
 handshake aligned with v0.9.0, `btsp.negotiate` server handler with session registry and
 ChaCha20-Poly1305 AEAD framing). `rand` eliminated — OsRng via RustCrypto re-export.

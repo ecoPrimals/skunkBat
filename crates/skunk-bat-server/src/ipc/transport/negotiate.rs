@@ -166,19 +166,16 @@ impl SessionRegistry {
     }
 
     /// Remove a session (on disconnect or timeout).
-    #[allow(
-        dead_code,
-        reason = "target-conditional: used in tests + future session TTL"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for session TTL cleanup")
     )]
     pub async fn remove(&self, session_id: &str) {
         self.sessions.write().await.remove(session_id);
     }
 
     /// Number of active sessions.
-    #[allow(
-        dead_code,
-        reason = "target-conditional: used in tests + future metrics"
-    )]
+    #[cfg_attr(not(test), expect(dead_code, reason = "reserved for metrics"))]
     pub async fn len(&self) -> usize {
         self.sessions.read().await.len()
     }

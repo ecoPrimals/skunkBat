@@ -2,6 +2,21 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.5] — 2026-06-05
+
+### Changed
+
+- **Runtime transport metadata** — `identity.get` and `capabilities.list` now
+  reflect actual active transports from `--no-tcp`/`--no-uds` flags rather than
+  hardcoding `["uds", "tcp"]`
+- **Lock contention reduction** — dispatch audit recording clones `AuditLog`
+  (Arc-backed) and drops `RwLockReadGuard<SkunkBat>` before async `.record()`
+  calls, eliminating unnecessary lock-hold across await points
+- **Capabilities response dedup** — `capabilities_response()` constructs the
+  methods Vec once and reuses it for both `capabilities` and `methods` fields
+- Migrated last two `#[allow(dead_code)]` to target-conditional
+  `#[cfg_attr(not(test), expect(dead_code))]` — zero `#[allow]` in production
+
 ## [0.2.4] — 2026-06-05
 
 ### Added

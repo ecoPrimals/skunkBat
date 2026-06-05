@@ -45,6 +45,8 @@ pub async fn serve(
     no_uds: bool,
     no_tcp: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    dispatch::set_active_transports(no_tcp, no_uds);
+
     let state = Arc::new(RwLock::new(skunkbat));
     let sessions = Arc::new(SessionRegistry::new());
 

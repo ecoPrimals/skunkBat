@@ -10,8 +10,27 @@ use serde::Serialize;
 use skunk_bat_core::PrimalHealth;
 use skunk_bat_core::SkunkBat;
 use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
+
+static ACTIVE_TRANSPORTS: OnceLock<&'static [&'static str]> = OnceLock::new();
+
+/// Initialize the runtime transport metadata from CLI flags.
+///
+/// Called once at server startup. Subsequent calls are no-ops.
+pub(super) fn set_active_transports(no_tcp: bool, no_uds: bool) {
+    let transports: &'static [&'static str] = match (no_tcp, no_uds) {
+        (false, false) => &["uds", "tcp"],
+        (true, false) => &["uds"],
+        (false, true) => &["tcp"],
+        (true, true) => &[],
+    };
+    ACTIVE_TRANSPORTS.get_or_init(|| transports);
+}
+
+fn active_transports() -> &'static [&'static str] {
+    ACTIVE_TRANSPORTS.get().copied().unwrap_or(&["uds", "tcp"])
+}
 
 use super::jsonrpc::{self, Request, Response};
 use super::method_gate::{CallerContext, EnforcementMode, MethodGate};
@@ -77,13 +96,12 @@ fn serialize<T: Serialize>(id: serde_json::Value, value: T) -> Response {
 /// Build the Capability Wire Standard L2/L3 response body.
 fn capabilities_response() -> serde_json::Value {
     let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
-    let count = all.len();
     serde_json::json!({
         "primal": skunk_bat_core::PRIMAL_ID,
         "version": PRIMAL_VERSION,
-        "capabilities": all,
-        "count": count,
-        "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
+        "capabilities": &all,
+        "count": all.len(),
+        "methods": &all,
         "provided_capabilities": [
             {
                 "type": "security",
@@ -106,7 +124,7 @@ fn capabilities_response() -> serde_json::Value {
         ],
         "consumed_capabilities": CONSUMED_CAPABILITIES,
         "protocol": "jsonrpc-2.0",
-        "transport": ["uds", "tcp"]
+        "transport": active_transports()
     })
 }
 
@@ -130,19 +148,16 @@ pub(super) async fn dispatch(
 
     match gate.check(&request.method, id.clone(), caller) {
         Err(resp) => {
-            let audit = state.read().await;
-            audit
-                .audit_log()
-                .record(
-                    EventSource::MethodGate,
-                    EventSeverity::Warn,
-                    EventKind::GateRejection {
-                        method: request.method.clone(),
-                        origin: format!("{:?}", caller.origin),
-                    },
-                )
-                .await;
-            drop(audit);
+            let log = state.read().await.audit_log().clone();
+            log.record(
+                EventSource::MethodGate,
+                EventSeverity::Warn,
+                EventKind::GateRejection {
+                    method: request.method.clone(),
+                    origin: format!("{:?}", caller.origin),
+                },
+            )
+            .await;
             return resp;
         }
         Ok(()) => {
@@ -151,19 +166,16 @@ pub(super) async fn dispatch(
                 && super::method_gate::classify_method(&request.method)
                     == super::method_gate::MethodAccessLevel::Protected
             {
-                let audit = state.read().await;
-                audit
-                    .audit_log()
-                    .record(
-                        EventSource::MethodGate,
-                        EventSeverity::Info,
-                        EventKind::GatePermissiveAllow {
-                            method: request.method.clone(),
-                            origin: format!("{:?}", caller.origin),
-                        },
-                    )
-                    .await;
-                drop(audit);
+                let log = state.read().await.audit_log().clone();
+                log.record(
+                    EventSource::MethodGate,
+                    EventSeverity::Info,
+                    EventKind::GatePermissiveAllow {
+                        method: request.method.clone(),
+                        origin: format!("{:?}", caller.origin),
+                    },
+                )
+                .await;
             }
         }
     }
@@ -184,23 +196,23 @@ pub(super) async fn dispatch(
         "security.detect" => {
             let sb = state.read().await;
             let result = sb.detect_threats().await;
+            let log = sb.audit_log().clone();
+            drop(sb);
             if let Ok(ref threats) = result {
                 for t in threats {
-                    sb.audit_log()
-                        .record(
-                            EventSource::ThreatDetection,
-                            EventSeverity::Warn,
-                            EventKind::ThreatDetected {
-                                threat_id: t.id.clone(),
-                                threat_type: format!("{:?}", t.threat_type),
-                                severity: format!("{:?}", t.severity),
-                                source: t.source.clone(),
-                            },
-                        )
-                        .await;
+                    log.record(
+                        EventSource::ThreatDetection,
+                        EventSeverity::Warn,
+                        EventKind::ThreatDetected {
+                            threat_id: t.id.clone(),
+                            threat_type: format!("{:?}", t.threat_type),
+                            severity: format!("{:?}", t.severity),
+                            source: t.source.clone(),
+                        },
+                    )
+                    .await;
                 }
             }
-            drop(sb);
             try_serialize(id, result)
         }
         "security.respond" => dispatch_respond(state, id, request.params).await,
@@ -238,7 +250,7 @@ pub(super) async fn dispatch(
                 "domain": PRIMAL_DOMAIN,
                 "license": PRIMAL_LICENSE,
                 "protocol": "jsonrpc-2.0",
-                "transport": ["uds", "tcp"]
+                "transport": active_transports()
             }),
         ),
 
@@ -330,25 +342,24 @@ async fn dispatch_respond(
     };
 
     let sb = state.read().await;
-    match sb.respond_to_threat(&threat) {
+    let result = sb.respond_to_threat(&threat);
+    let log = sb.audit_log().clone();
+    drop(sb);
+
+    match result {
         Ok(()) => {
-            sb.audit_log()
-                .record(
-                    EventSource::DefenseEngine,
-                    EventSeverity::Info,
-                    EventKind::DefenseAction {
-                        threat_id: threat.id.clone(),
-                        action: "responded".to_owned(),
-                    },
-                )
-                .await;
-            drop(sb);
+            log.record(
+                EventSource::DefenseEngine,
+                EventSeverity::Info,
+                EventKind::DefenseAction {
+                    threat_id: threat.id.clone(),
+                    action: "responded".to_owned(),
+                },
+            )
+            .await;
             Response::success(id, serde_json::json!({"status": "ok"}))
         }
-        Err(e) => {
-            drop(sb);
-            Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string())
-        }
+        Err(e) => Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string()),
     }
 }
 
@@ -375,10 +386,9 @@ async fn dispatch_audit_log(
         .unwrap_or(100)
         .min(1000) as usize;
 
-    let sb = state.read().await;
-    let events = sb.audit_log().query(since_seq, limit).await;
-    let latest_seq = sb.audit_log().latest_seq().await;
-    drop(sb);
+    let log = state.read().await.audit_log().clone();
+    let events = log.query(since_seq, limit).await;
+    let latest_seq = log.latest_seq().await;
 
     serialize(
         id,

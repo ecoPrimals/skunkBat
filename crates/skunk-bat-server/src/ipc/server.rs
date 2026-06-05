@@ -154,24 +154,21 @@ where
         )
     };
 
-    state
-        .read()
-        .await
-        .audit_log()
-        .record(
-            EventSource::Transport,
-            if success {
-                EventSeverity::Info
-            } else {
-                EventSeverity::Warn
-            },
-            EventKind::BtspNegotiate {
-                session_id: String::new(),
-                cipher,
-                success,
-            },
-        )
-        .await;
+    let log = state.read().await.audit_log().clone();
+    log.record(
+        EventSource::Transport,
+        if success {
+            EventSeverity::Info
+        } else {
+            EventSeverity::Warn
+        },
+        EventKind::BtspNegotiate {
+            session_id: String::new(),
+            cipher,
+            success,
+        },
+    )
+    .await;
 
     let mut bytes = serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec());
     bytes.push(b'\n');
@@ -213,17 +210,15 @@ async fn run_encrypted_frame_loop<R, W>(
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!("BTSP decrypt error: {e}");
-                let sb = state.read().await;
-                sb.audit_log()
-                    .record(
-                        EventSource::Transport,
-                        EventSeverity::Error,
-                        EventKind::BtspDecryptFailure {
-                            reason: e.to_string(),
-                        },
-                    )
-                    .await;
-                drop(sb);
+                let log = state.read().await.audit_log().clone();
+                log.record(
+                    EventSource::Transport,
+                    EventSeverity::Error,
+                    EventKind::BtspDecryptFailure {
+                        reason: e.to_string(),
+                    },
+                )
+                .await;
                 break;
             }
         };
