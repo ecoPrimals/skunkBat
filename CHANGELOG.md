@@ -2,6 +2,23 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.3] — 2026-06-05
+
+### Added
+
+- **`config/capability_registry.toml`** — machine-readable capability declaration
+  per Wave 78 ecosystem standard (biomeOS dispatch compatibility)
+- **Test scale sprint**: 391 → 500 tests across defense escalation edge cases,
+  audit log coverage, topology validation, behavioral profiler boundaries,
+  reconnaissance serialization, and dispatch auth methods
+- `defense.status` classified as Public in MethodGate (health probe accessible
+  without auth for gate deployment)
+
+### Changed
+
+- File count: 52 source files, max 670 lines/file
+- Zero `#[allow]` in production (Wave 78 compliant, only `#[expect]` with reasons)
+
 ## [0.2.2] — 2026-06-04
 
 ### Added

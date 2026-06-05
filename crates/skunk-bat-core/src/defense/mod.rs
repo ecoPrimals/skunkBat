@@ -581,4 +581,193 @@ mod tests {
             engine.execute_action(&action, &threat);
         }
     }
+
+    #[test]
+    fn test_multiple_sources_independent_escalation() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+
+        let mut threat_a = test_threat(Severity::High, 0.8);
+        threat_a.source = "10.0.0.1".to_string();
+        let mut threat_b = test_threat(Severity::High, 0.8);
+        threat_b.source = "10.0.0.2".to_string();
+
+        engine.respond(&threat_a).unwrap();
+        engine.respond(&threat_a).unwrap();
+        engine.respond(&threat_b).unwrap();
+
+        assert_eq!(engine.escalation_count("10.0.0.1"), 2);
+        assert_eq!(engine.escalation_count("10.0.0.2"), 1);
+    }
+
+    #[test]
+    fn test_block_clears_quarantine_entry() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::High, 0.8);
+
+        engine.quarantine_connection(&threat.source, &threat);
+        assert!(!engine.quarantine_snapshot().is_empty());
+
+        engine.block_connection(&threat.source);
+        assert!(engine.quarantine_snapshot().is_empty());
+    }
+
+    #[test]
+    fn test_escalation_count_unknown_source() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        assert_eq!(engine.escalation_count("never-seen"), 0);
+    }
+
+    #[test]
+    fn test_critical_low_confidence_stays_monitor() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::Critical, 0.3);
+        let action = engine.determine_action(&threat, 1);
+        assert_eq!(action.action_type, ActionType::MonitorAndAlert);
+    }
+
+    #[test]
+    fn test_high_low_confidence_stays_monitor() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::High, 0.5);
+        let action = engine.determine_action(&threat, 1);
+        assert_eq!(action.action_type, ActionType::MonitorAndAlert);
+    }
+
+    #[test]
+    fn test_low_severity_always_monitor() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::Low, 0.99);
+        let action = engine.determine_action(&threat, 1);
+        assert_eq!(action.action_type, ActionType::MonitorAndAlert);
+    }
+
+    #[test]
+    fn test_escalation_at_exact_threshold() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::Low, 0.3);
+        let action = engine.determine_action(&threat, ESCALATION_THRESHOLD);
+        assert_eq!(action.action_type, ActionType::Block);
+    }
+
+    #[test]
+    fn test_escalation_above_threshold() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::Low, 0.1);
+        let action = engine.determine_action(&threat, ESCALATION_THRESHOLD + 5);
+        assert_eq!(action.action_type, ActionType::Block);
+    }
+
+    #[test]
+    fn test_multiple_quarantine_entries() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+
+        let mut threat_1 = test_threat(Severity::High, 0.8);
+        threat_1.source = "10.0.0.1".to_string();
+        let mut threat_2 = test_threat(Severity::High, 0.8);
+        threat_2.source = "10.0.0.2".to_string();
+        let mut threat_3 = test_threat(Severity::High, 0.8);
+        threat_3.source = "10.0.0.3".to_string();
+
+        engine.respond(&threat_1).unwrap();
+        engine.respond(&threat_2).unwrap();
+        engine.respond(&threat_3).unwrap();
+
+        let snapshot = engine.quarantine_snapshot();
+        assert_eq!(snapshot.len(), 3);
+    }
+
+    #[test]
+    fn test_respond_returns_action_type() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+
+        let threat = test_threat(Severity::Critical, 0.95);
+        let action_type = engine.respond(&threat).unwrap();
+        assert_eq!(action_type, ActionType::Quarantine);
+    }
+
+    #[test]
+    fn test_medium_confidence_boundary() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::High, HIGH_CONFIDENCE_THRESHOLD + 0.01);
+        let action = engine.determine_action(&threat, 1);
+        assert_eq!(action.action_type, ActionType::QuarantineAndAlert);
+    }
+
+    #[test]
+    fn test_critical_confidence_boundary() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+        let threat = test_threat(Severity::Critical, CRITICAL_CONFIDENCE_THRESHOLD + 0.01);
+        let action = engine.determine_action(&threat, 1);
+        assert_eq!(action.action_type, ActionType::Quarantine);
+    }
+
+    #[test]
+    fn test_quarantine_overwrites_same_source() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
+
+        let mut threat_1 = test_threat(Severity::High, 0.8);
+        threat_1.id = "first".to_string();
+        let mut threat_2 = test_threat(Severity::High, 0.8);
+        threat_2.id = "second".to_string();
+
+        engine.respond(&threat_1).unwrap();
+        engine.respond(&threat_2).unwrap();
+
+        let snapshot = engine.quarantine_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[&threat_2.source].threat_id, "second");
+    }
+
+    #[test]
+    fn test_defense_action_debug_format() {
+        let action = DefenseAction {
+            action_type: ActionType::Block,
+            target: "attacker".to_string(),
+            requires_approval: true,
+            reason: "malicious".to_string(),
+        };
+        let debug = format!("{action:?}");
+        assert!(debug.contains("Block"));
+        assert!(debug.contains("attacker"));
+    }
+
+    #[test]
+    fn test_action_type_serialize_roundtrip() {
+        for action_type in [
+            ActionType::Quarantine,
+            ActionType::QuarantineAndAlert,
+            ActionType::MonitorAndAlert,
+            ActionType::Block,
+        ] {
+            let json = serde_json::to_string(&action_type).unwrap();
+            let back: ActionType = serde_json::from_str(&json).unwrap();
+            assert_eq!(action_type, back);
+        }
+    }
+
+    #[test]
+    fn test_quarantine_record_serialize() {
+        let record = QuarantineRecord {
+            source: "10.0.0.1".to_string(),
+            started_at: SystemTime::UNIX_EPOCH,
+            reason: "port scan".to_string(),
+            threat_id: "threat-1".to_string(),
+        };
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["source"], "10.0.0.1");
+        assert_eq!(json["threat_id"], "threat-1");
+    }
 }

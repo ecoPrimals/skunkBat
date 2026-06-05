@@ -94,4 +94,27 @@ mod tests {
         let result = verifier.is_family("test-peer").await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn local_variant_get_lineage_returns_err() {
+        let verifier = RuntimeVerifier::Local(LocalLineageVerifier);
+        let result = verifier.get_lineage("any-peer").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn remote_variant_get_lineage_err_when_unreachable() {
+        let verifier =
+            RuntimeVerifier::Remote(RemoteLineageVerifier::new("unreachable.invalid:1".into()));
+        let result = verifier.get_lineage("test-peer").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_env_returns_deterministic_variant() {
+        let v1 = RuntimeVerifier::from_env();
+        let v2 = RuntimeVerifier::from_env();
+        assert!(matches!(v1, RuntimeVerifier::Local(_)));
+        assert!(matches!(v2, RuntimeVerifier::Local(_)));
+    }
 }

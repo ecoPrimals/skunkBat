@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-391 tests passing (179 core + 66 integrations + 126 server + 20 transport/integration), all workspace lib+bins.
+500 tests passing (265 core + 79 integrations + 136 server + 20 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
@@ -109,7 +109,7 @@ Ok(false) = authoritative denial). All 5 threat categories implemented: genetic 
 authority), behavioral (statistical profiler), intrusion (port-scan metadata), topology
 (layer-bypass validation), resource (DoS). Defense graduated escalation: Monitor → Quarantine
 → Block (3+ repeated offenses). BTSP bond-type enforcement active (Covalent/Metallic/Ionic
-cipher minimums). 391 tests (179+66+126+20), pure Rust crypto deps
+cipher minimums). 500 tests (265+79+136+20), pure Rust crypto deps
 wired and tested (chacha20poly1305, hkdf, sha2, base64 — HKDF key derivation, AEAD exercised;
 `rand` crate eliminated — `OsRng` via `chacha20poly1305::aead::rand_core`).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.

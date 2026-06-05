@@ -1,0 +1,166 @@
+# skunkBat Capability Registry
+# biomeOS-compatible runtime capability overlay.
+# See: wateringHole SPRING_AS_NICHE_DEPLOYMENT_STANDARD
+#
+# biomeOS reads this file to discover skunkBat capabilities
+# without requiring the primal to be running.
+
+[primal]
+name = "skunkbat"
+version = "0.2.3"
+description = "Defensive network security — metadata-only threat detection, graduated response, security observability"
+license = "AGPL-3.0-or-later"
+protocol = "jsonrpc-2.0"
+transport = ["uds", "tcp"]
+
+[domains.health]
+description = "Health, liveness, and readiness probes"
+methods = ["liveness", "readiness", "check"]
+
+[domains.defense]
+description = "Defense subsystem health probe for gate deployment"
+methods = ["status"]
+
+[domains.security]
+description = "Threat detection, response, metrics, and audit trail"
+methods = ["scan", "detect", "respond", "metrics", "audit_log"]
+
+[domains.lifecycle]
+description = "Runtime lifecycle state and capability listing"
+methods = ["state", "status", "capabilities"]
+
+[domains.capabilities]
+description = "Capability discovery (canonical per wateringHole v2.1)"
+methods = ["list"]
+
+[domains.capability]
+description = "Capability discovery (alias)"
+methods = ["list"]
+
+[domains.identity]
+description = "Primal identity"
+methods = ["get"]
+
+[domains.auth]
+description = "Authorization and method gate status"
+methods = ["check", "mode", "peer_info"]
+
+[domains.btsp]
+description = "BTSP Phase 3 transport encryption"
+methods = ["negotiate", "capabilities"]
+
+# Capabilities consumed from other primals (runtime-discovered)
+[consumed]
+primals = ["bearDog", "songBird", "toadStool"]
+methods = [
+    "btsp.server.verify",
+    "lineage.verify",
+    "lineage.list",
+    "capabilities.list",
+    "federation.broadcast",
+    "discovery.find_by_capability",
+]
+
+# Per-operation metadata for biomeOS dispatch graph
+# Stability tiers: "stable" (Wire Standard locked), "beta" (API may evolve),
+#                  "experimental" (subject to change)
+
+[operations."health.liveness"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."health.readiness"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."health.check"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."defense.status"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."security.scan"]
+depends_on = []
+cost = "medium"
+stability = "stable"
+
+[operations."security.detect"]
+depends_on = ["security.scan"]
+cost = "high"
+stability = "stable"
+
+[operations."security.respond"]
+depends_on = ["security.detect"]
+cost = "medium"
+stability = "stable"
+
+[operations."security.metrics"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."security.audit_log"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."lifecycle.state"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."lifecycle.status"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."lifecycle.capabilities"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."capabilities.list"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."capability.list"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."identity.get"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."auth.check"]
+depends_on = []
+cost = "low"
+stability = "beta"
+
+[operations."auth.mode"]
+depends_on = []
+cost = "low"
+stability = "beta"
+
+[operations."auth.peer_info"]
+depends_on = []
+cost = "low"
+stability = "beta"
+
+[operations."btsp.negotiate"]
+depends_on = []
+cost = "medium"
+stability = "stable"
+
+[operations."btsp.capabilities"]
+depends_on = []
+cost = "low"
+stability = "stable"

@@ -138,4 +138,75 @@ mod tests {
         assert!(!result.is_valid);
         assert!(result.bypassed_layers.is_empty());
     }
+
+    #[tokio::test]
+    async fn topology_single_layer_valid() {
+        let validator = LayerTopologyValidator::new(vec![1]);
+        let result = validator.validate_path(&[1]).await.unwrap();
+        assert!(result.is_valid);
+    }
+
+    #[tokio::test]
+    async fn topology_single_layer_bypass() {
+        let validator = LayerTopologyValidator::new(vec![1, 2]);
+        let result = validator.validate_path(&[2]).await.unwrap();
+        assert!(!result.is_valid);
+        assert_eq!(result.bypassed_layers, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn topology_superset_actual_path_invalid() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3]);
+        let result = validator.validate_path(&[1, 2, 3, 4, 5]).await.unwrap();
+        assert!(!result.is_valid);
+        assert!(result.bypassed_layers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn topology_partial_overlap() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3, 4]);
+        let result = validator.validate_path(&[1, 2, 4]).await.unwrap();
+        assert!(!result.is_valid);
+        assert_eq!(result.bypassed_layers, vec![3]);
+    }
+
+    #[tokio::test]
+    async fn local_lineage_error_message_content() {
+        let verifier = LocalLineageVerifier;
+        let err = verifier.is_family("test-peer").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("local-only mode"));
+    }
+
+    #[tokio::test]
+    async fn local_get_lineage_error_message() {
+        let verifier = LocalLineageVerifier;
+        let err = verifier.get_lineage("test-peer").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("local-only mode"));
+    }
+
+    #[test]
+    fn topology_validator_expected_path_accessor() {
+        let validator = LayerTopologyValidator::new(vec![0, 1, 2, 3]);
+        assert_eq!(validator.expected_path().len(), 4);
+        assert_eq!(validator.expected_path()[0], 0);
+        assert_eq!(validator.expected_path()[3], 3);
+    }
+
+    #[tokio::test]
+    async fn topology_unordered_is_invalid() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3]);
+        let result = validator.validate_path(&[3, 1, 2]).await.unwrap();
+        assert!(!result.is_valid);
+        assert!(result.bypassed_layers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn topology_duplicate_layers_invalid() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3]);
+        let result = validator.validate_path(&[1, 1, 2, 2, 3, 3]).await.unwrap();
+        assert!(!result.is_valid);
+        assert!(result.bypassed_layers.is_empty());
+    }
 }

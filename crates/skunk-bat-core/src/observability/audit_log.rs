@@ -352,4 +352,177 @@ mod tests {
         assert_eq!(parsed.source, EventSource::MethodGate);
         assert_eq!(parsed.severity, EventSeverity::Critical);
     }
+
+    #[tokio::test]
+    async fn empty_query_returns_empty() {
+        let log = AuditLog::new();
+        let events = log.query(0, 100).await;
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn is_empty_tracks_state() {
+        let log = AuditLog::new();
+        assert!(log.is_empty().await);
+
+        log.record(
+            EventSource::Lifecycle,
+            EventSeverity::Info,
+            EventKind::LifecycleTransition {
+                from_state: "init".to_owned(),
+                to_state: "running".to_owned(),
+            },
+        )
+        .await;
+
+        assert!(!log.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn query_zero_limit_returns_empty() {
+        let log = AuditLog::new();
+        log.record(
+            EventSource::Transport,
+            EventSeverity::Info,
+            EventKind::BtspNegotiate {
+                session_id: "s1".to_owned(),
+                cipher: "null".to_owned(),
+                success: true,
+            },
+        )
+        .await;
+
+        let events = log.query(0, 0).await;
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sequential_seq_numbers() {
+        let log = AuditLog::new();
+        for _ in 0..10 {
+            log.record(
+                EventSource::ThreatDetection,
+                EventSeverity::Warn,
+                EventKind::ThreatDetected {
+                    threat_id: "t".to_owned(),
+                    threat_type: "test".to_owned(),
+                    severity: "Low".to_owned(),
+                    source: "local".to_owned(),
+                },
+            )
+            .await;
+        }
+
+        let events = log.query(0, 100).await;
+        for (i, event) in events.iter().enumerate() {
+            assert_eq!(event.seq, (i + 1) as u64);
+        }
+    }
+
+    #[tokio::test]
+    async fn cursor_beyond_latest_returns_empty() {
+        let log = AuditLog::new();
+        log.record(
+            EventSource::Lifecycle,
+            EventSeverity::Info,
+            EventKind::LifecycleTransition {
+                from_state: "a".to_owned(),
+                to_state: "b".to_owned(),
+            },
+        )
+        .await;
+
+        let events = log.query(999, 100).await;
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_severity_levels_recordable() {
+        let log = AuditLog::new();
+        for severity in [
+            EventSeverity::Info,
+            EventSeverity::Warn,
+            EventSeverity::Error,
+            EventSeverity::Critical,
+        ] {
+            log.record(
+                EventSource::DefenseEngine,
+                severity,
+                EventKind::DefenseAction {
+                    threat_id: "t".to_owned(),
+                    action: "test".to_owned(),
+                },
+            )
+            .await;
+        }
+        assert_eq!(log.len().await, 4);
+    }
+
+    #[tokio::test]
+    async fn all_event_sources_recordable() {
+        let log = AuditLog::new();
+        for source in [
+            EventSource::MethodGate,
+            EventSource::ThreatDetection,
+            EventSource::DefenseEngine,
+            EventSource::Transport,
+            EventSource::Lifecycle,
+        ] {
+            log.record(
+                source,
+                EventSeverity::Info,
+                EventKind::LifecycleTransition {
+                    from_state: "x".to_owned(),
+                    to_state: "y".to_owned(),
+                },
+            )
+            .await;
+        }
+        assert_eq!(log.len().await, 5);
+    }
+
+    #[tokio::test]
+    async fn correlation_id_none_by_default() {
+        let log = AuditLog::new();
+        log.record(
+            EventSource::Lifecycle,
+            EventSeverity::Info,
+            EventKind::LifecycleTransition {
+                from_state: "a".to_owned(),
+                to_state: "b".to_owned(),
+            },
+        )
+        .await;
+
+        let events = log.query(0, 1).await;
+        assert!(events[0].correlation_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn default_and_new_equivalent() {
+        let log1 = AuditLog::new();
+        let log2 = AuditLog::default();
+        assert_eq!(log1.latest_seq().await, log2.latest_seq().await);
+        assert_eq!(log1.len().await, log2.len().await);
+    }
+
+    #[tokio::test]
+    async fn limit_caps_results() {
+        let log = AuditLog::new();
+        for _ in 0..20 {
+            log.record(
+                EventSource::Transport,
+                EventSeverity::Info,
+                EventKind::BtspNegotiate {
+                    session_id: "s".to_owned(),
+                    cipher: "null".to_owned(),
+                    success: true,
+                },
+            )
+            .await;
+        }
+
+        let events = log.query(0, 5).await;
+        assert_eq!(events.len(), 5);
+    }
 }

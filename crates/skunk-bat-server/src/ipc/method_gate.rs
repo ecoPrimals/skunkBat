@@ -40,6 +40,7 @@ const PUBLIC_METHODS: &[&str] = &[
     "identity.get",
     "capabilities.list",
     "capability.list",
+    "defense.status",
     "lifecycle.state",
     "lifecycle.status",
     "lifecycle.capabilities",

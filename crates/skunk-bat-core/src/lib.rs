@@ -630,4 +630,118 @@ mod tests {
         assert!(CAPABILITIES.contains(&"reconnaissance"));
         assert!(CAPABILITIES.contains(&"defense"));
     }
+
+    #[test]
+    fn test_defense_healthy_accessor() {
+        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        assert!(skunkbat.defense_healthy());
+    }
+
+    #[test]
+    fn test_threat_detection_healthy_accessor() {
+        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        assert!(skunkbat.threat_detection_healthy());
+    }
+
+    #[test]
+    fn test_auto_response_enabled_accessor() {
+        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        assert!(skunkbat.auto_response_enabled());
+    }
+
+    #[test]
+    fn test_defense_quarantine_snapshot_empty() {
+        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        assert!(skunkbat.defense_quarantine_snapshot().is_empty());
+    }
+
+    #[test]
+    fn test_defense_unhealthy_when_disabled() {
+        let config = SkunkBatConfig {
+            common: CommonConfig::default(),
+            features: crate::config::FeatureFlags {
+                reconnaissance: true,
+                threat_detection: true,
+                auto_defense: false,
+                observability: true,
+            },
+            lineage_id: None,
+        };
+        let skunkbat = SkunkBat::new(config);
+        assert!(!skunkbat.defense_healthy());
+    }
+
+    #[test]
+    fn test_threat_detection_unhealthy_when_disabled() {
+        let config = SkunkBatConfig {
+            common: CommonConfig::default(),
+            features: crate::config::FeatureFlags {
+                reconnaissance: true,
+                threat_detection: false,
+                auto_defense: true,
+                observability: true,
+            },
+            lineage_id: None,
+        };
+        let skunkbat = SkunkBat::new(config);
+        assert!(!skunkbat.threat_detection_healthy());
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_populated_after_lifecycle() {
+        let mut skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        skunkbat.start().await.unwrap();
+        skunkbat.stop().await.unwrap();
+
+        let events = skunkbat.audit_log().query(0, 100).await;
+        assert!(
+            events.len() >= 2,
+            "start+stop should produce at least 2 audit events"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_health_check_contains_subsystems() {
+        let mut skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        skunkbat.start().await.unwrap();
+
+        let report = skunkbat.health_check().await.unwrap();
+        let json = serde_json::to_value(&report).unwrap();
+        assert!(json["name"].is_string());
+        assert!(json["status"].is_string());
+    }
+
+    #[test]
+    fn test_metrics_initial_zero() {
+        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        let metrics = skunkbat.get_security_metrics();
+        assert_eq!(metrics.threats_detected, 0);
+        assert_eq!(metrics.threats_mitigated, 0);
+        assert_eq!(metrics.scans_performed, 0);
+        assert_eq!(metrics.connections_quarantined, 0);
+        assert_eq!(metrics.alerts_sent, 0);
+    }
+
+    #[tokio::test]
+    async fn test_scan_increments_metric() {
+        let mut skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        skunkbat.start().await.unwrap();
+
+        skunkbat.scan_network().await.unwrap();
+        let metrics = skunkbat.get_security_metrics();
+        assert!(metrics.scans_performed >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_restart() {
+        let mut skunkbat = SkunkBat::new(SkunkBatConfig::default());
+        skunkbat.start().await.unwrap();
+        assert_eq!(skunkbat.state(), PrimalState::Running);
+
+        skunkbat.stop().await.unwrap();
+        assert_eq!(skunkbat.state(), PrimalState::Stopped);
+
+        skunkbat.start().await.unwrap();
+        assert_eq!(skunkbat.state(), PrimalState::Running);
+    }
 }

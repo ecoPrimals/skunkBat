@@ -451,3 +451,166 @@ async fn test_defense_status_responds() {
     assert!(result["quarantine_count"].is_number());
     assert!(result["metrics"]["threats_detected"].is_number());
 }
+
+#[tokio::test]
+async fn test_auth_check_unauthenticated() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("auth.check"),
+    )
+    .await;
+    assert!(resp.error.is_none());
+    let result = resp.result.expect("result");
+    assert_eq!(result["authenticated"], false);
+    assert_eq!(result["mode"], "permissive");
+}
+
+#[tokio::test]
+async fn test_auth_mode() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("auth.mode"),
+    )
+    .await;
+    assert!(resp.error.is_none());
+    let result = resp.result.expect("result");
+    assert_eq!(result["mode"], "permissive");
+}
+
+#[tokio::test]
+async fn test_auth_peer_info_loopback() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("auth.peer_info"),
+    )
+    .await;
+    assert!(resp.error.is_none());
+    let result = resp.result.expect("result");
+    assert_eq!(result["has_token"], false);
+}
+
+#[tokio::test]
+async fn test_lifecycle_status_content() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("lifecycle.status"),
+    )
+    .await;
+    assert!(resp.error.is_none());
+    let result = resp.result.expect("result");
+    assert_eq!(result["primal"], "skunkbat");
+    assert_eq!(result["status"], "running");
+    assert!(result["version"].is_string());
+}
+
+#[tokio::test]
+async fn test_btsp_capabilities_content() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("btsp.capabilities"),
+    )
+    .await;
+    assert!(resp.error.is_none());
+    let result = resp.result.expect("result");
+    assert_eq!(result["protocol"], "btsp-v1");
+    assert_eq!(result["phase"], 3);
+    assert_eq!(result["preferred"], "chacha20-poly1305");
+}
+
+#[tokio::test]
+async fn test_defense_status_all_metrics_present() {
+    let state = make_state();
+    let mut sb = state.write().await;
+    let _ = sb.start().await;
+    drop(sb);
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("defense.status"),
+    )
+    .await;
+    let result = resp.result.expect("result");
+    assert_eq!(result["primal"], "skunkbat");
+    assert!(result["version"].is_string());
+    assert!(result["auto_response"].is_boolean());
+    assert!(result["metrics"]["threats_mitigated"].is_number());
+    assert!(result["metrics"]["scans_performed"].is_number());
+}
+
+#[tokio::test]
+async fn test_capabilities_list_includes_defense_status() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("capabilities.list"),
+    )
+    .await;
+    let result = resp.result.expect("result");
+    let methods = result["methods"].as_array().expect("methods");
+    assert!(
+        methods.iter().any(|m| m == "defense.status"),
+        "capabilities must include defense.status"
+    );
+}
+
+#[tokio::test]
+async fn test_identity_get_includes_transport() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("identity.get"),
+    )
+    .await;
+    let result = resp.result.expect("result");
+    assert_eq!(result["protocol"], "jsonrpc-2.0");
+    let transport = result["transport"].as_array().expect("transport array");
+    assert!(transport.iter().any(|t| t == "uds"));
+    assert!(transport.iter().any(|t| t == "tcp"));
+}
+
+#[tokio::test]
+async fn test_lifecycle_state_content() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("lifecycle.state"),
+    )
+    .await;
+    assert!(resp.error.is_none());
+    let result = resp.result.expect("result");
+    assert!(result["state"].is_string());
+}
+
+#[tokio::test]
+async fn test_enforced_gate_allows_defense_status_loopback() {
+    let state = make_state();
+    let gate = MethodGate::new(EnforcementMode::Enforced);
+    let caller = CallerContext::loopback();
+    let resp = dispatch(&state, &gate, &caller, make_request("defense.status")).await;
+    assert!(
+        resp.error.is_none(),
+        "loopback should always pass enforced gate"
+    );
+}

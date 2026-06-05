@@ -346,4 +346,110 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn new_profiler_not_established() {
+        let profiler = StatisticalProfiler::new(3.0);
+        assert!(!profiler.is_established());
+    }
+
+    #[test]
+    fn new_profiler_no_latest_observation() {
+        let profiler = StatisticalProfiler::new(3.0);
+        assert!(profiler.latest_observation().is_none());
+    }
+
+    #[tokio::test]
+    async fn profiler_different_thresholds() {
+        let mut strict = StatisticalProfiler::new(1.0);
+        let mut lenient = StatisticalProfiler::new(5.0);
+
+        for _ in 0..20 {
+            strict.update(&observation(10.0)).await.unwrap();
+            lenient.update(&observation(10.0)).await.unwrap();
+        }
+
+        let spike = observation(30.0);
+        let strict_anomalies = strict.detect_anomalies(&spike).await.unwrap();
+        let lenient_anomalies = lenient.detect_anomalies(&spike).await.unwrap();
+
+        assert!(
+            strict_anomalies.len() >= lenient_anomalies.len(),
+            "stricter threshold should detect more anomalies"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_returns_ok() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        let result = profiler.update(&observation(10.0)).await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn calculate_stats_known_values() {
+        let values = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+        let (mean, _std_dev) = StatisticalProfiler::calculate_stats(&values).unwrap();
+        assert!((mean - 5.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn detect_anomalies_on_traffic_volume() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        for _ in 0..20 {
+            profiler
+                .update(&Observation {
+                    connection_rate: 10.0,
+                    traffic_volume: 1000,
+                    ports_accessed: vec![80],
+                    timestamp: SystemTime::now(),
+                })
+                .await
+                .unwrap();
+        }
+
+        let anomalies = profiler
+            .detect_anomalies(&Observation {
+                connection_rate: 10.0,
+                traffic_volume: 100_000_000,
+                ports_accessed: vec![80],
+                timestamp: SystemTime::now(),
+            })
+            .await
+            .unwrap();
+        assert!(!anomalies.is_empty(), "traffic volume spike should trigger");
+    }
+
+    #[tokio::test]
+    async fn seed_then_detect_normal() {
+        use super::super::baseline;
+
+        let mut profiler = StatisticalProfiler::new(2.5);
+        profiler.seed_baseline(&baseline::normal_baseline());
+        assert!(profiler.is_established());
+
+        let anomalies = profiler.detect_anomalies(&observation(3.0)).await.unwrap();
+        assert!(anomalies.is_empty());
+    }
+
+    #[tokio::test]
+    async fn negative_deviation_no_anomaly() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        for _ in 0..20 {
+            profiler.update(&observation(100.0)).await.unwrap();
+        }
+
+        let anomalies = profiler.detect_anomalies(&observation(1.0)).await.unwrap();
+        assert!(
+            !anomalies.is_empty(),
+            "drop to near-zero should flag anomaly"
+        );
+    }
+
+    #[test]
+    fn calculate_stats_two_values() {
+        let (mean, std_dev) = StatisticalProfiler::calculate_stats(&[10.0, 20.0]).unwrap();
+        assert!((mean - 15.0).abs() < f64::EPSILON);
+        assert!(std_dev > 0.0);
+    }
 }
