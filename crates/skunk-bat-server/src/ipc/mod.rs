@@ -31,12 +31,19 @@ use transport::SessionRegistry;
 /// Start IPC listeners and serve until shutdown signal.
 ///
 /// Traps `SIGINT`/`SIGTERM` for graceful lifecycle stop and UDS socket cleanup.
+///
+/// Supports four deployment modes:
+/// - Default: both TCP and UDS listeners
+/// - `--no-uds`: TCP-only (legacy, non-compliant)
+/// - `--no-tcp`: UDS-only (port-free, compliant with Tower Atomic)
+/// - `--no-tcp --socket /run/membrane/skunkbat.sock`: launcher-injected port-free
 pub async fn serve(
     skunkbat: SkunkBat,
     addr: String,
     port: u16,
     socket_override: Option<&str>,
     no_uds: bool,
+    no_tcp: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = Arc::new(RwLock::new(skunkbat));
     let sessions = Arc::new(SessionRegistry::new());
@@ -51,12 +58,16 @@ pub async fn serve(
             .map(|c| c.socket_path())
     };
 
-    let tcp_handle = tokio::spawn(transport::serve_tcp(
-        Arc::clone(&state),
-        Arc::clone(&sessions),
-        addr,
-        port,
-    ));
+    let tcp_handle = if no_tcp {
+        None
+    } else {
+        Some(tokio::spawn(transport::serve_tcp(
+            Arc::clone(&state),
+            Arc::clone(&sessions),
+            addr,
+            port,
+        )))
+    };
 
     let uds_handle = if no_uds {
         None
@@ -64,10 +75,17 @@ pub async fn serve(
         Some(tokio::spawn(transport::serve_uds(
             Arc::clone(&state),
             Arc::clone(&sessions),
+            socket_path.clone(),
         )))
     };
 
-    tracing::info!("skunkBat IPC ready (TCP :{port}, UDS: {})", !no_uds);
+    let mode_label = match (no_tcp, no_uds) {
+        (true, false) => "UDS-only (port-free)".to_owned(),
+        (false, true) => format!("TCP-only :{port}"),
+        (false, false) => format!("TCP :{port} + UDS"),
+        (true, true) => "ERROR: no listeners".to_owned(),
+    };
+    tracing::info!("skunkBat IPC ready ({mode_label})");
 
     let register_endpoint = socket_path.as_ref().map_or_else(
         || format!("tcp://0.0.0.0:{port}"),
@@ -91,7 +109,12 @@ pub async fn serve(
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     tokio::select! {
-        result = tcp_handle => {
+        result = async {
+            match tcp_handle {
+                Some(h) => h.await,
+                None => std::future::pending().await,
+            }
+        } => {
             result??;
         }
         result = async {

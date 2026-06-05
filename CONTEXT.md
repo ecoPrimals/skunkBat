@@ -22,7 +22,7 @@ observability — all metadata-only, no content inspection by architecture.
 
 ## IPC Surface
 
-- **Transport**: TCP (`--port`, default 9750) + UDS (`--socket` or `$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`)
+- **Transport**: TCP (`--port`, default 9750) + UDS (`--socket` or `$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`); `--no-tcp` for port-free deployment
 - **BTSP Phase 1**: `FAMILY_ID` socket scoping, `BIOMEOS_INSECURE` guard, `XDG_RUNTIME_DIR` fallback
 - **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with first-byte peek (`{` → plain JSON-RPC for biomeOS composition bypass)
 - **BTSP Phase 3**: `btsp.negotiate` server handler with encrypted frame upgrade — session registry, cipher selection, HKDF key derivation, `ChaCha20-Poly1305` AEAD framing wired into connection loop (`[4B len][12B nonce][ct+tag]`)

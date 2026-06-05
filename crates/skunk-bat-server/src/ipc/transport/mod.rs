@@ -102,18 +102,36 @@ pub async fn serve_tcp(
 /// Uses first-byte peek (via `PeekedStream`) to auto-detect protocol:
 /// `{` → plain JSON-RPC (biomeOS composition), otherwise BTSP framed
 /// handshake. Matches the TCP behavior exactly.
+///
+/// When `socket_override` is provided (via `--socket` CLI flag), it takes
+/// priority over the BTSP-derived path — enabling launcher-injected paths
+/// like `/run/membrane/skunkbat.sock` for port-free deployment.
 #[cfg(unix)]
 pub async fn serve_uds(
     state: Arc<RwLock<SkunkBat>>,
     sessions: Arc<BtspSessionRegistry>,
+    socket_override: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     use tokio::io::AsyncReadExt;
     use tokio::net::UnixListener;
 
-    let btsp = BtspConfig::from_env()?;
-    btsp.log_mode();
+    let has_override = socket_override.is_some();
+    let btsp = BtspConfig::from_env().ok();
 
-    let socket_path = btsp.socket_path();
+    let socket_path = socket_override.unwrap_or_else(|| {
+        btsp.as_ref().map_or_else(
+            || "/tmp/biomeos/skunkbat.sock".to_owned(),
+            BtspConfig::socket_path,
+        )
+    });
+
+    if has_override {
+        tracing::info!("UDS: launcher-injected socket path: {socket_path}");
+    } else if let Some(ref cfg) = btsp {
+        cfg.log_mode();
+    } else {
+        tracing::info!("UDS: standalone mode, socket={socket_path}");
+    }
 
     if let Some(parent) = std::path::Path::new(&socket_path).parent() {
         tokio::fs::create_dir_all(parent).await.ok();
@@ -123,7 +141,13 @@ pub async fn serve_uds(
     let listener = UnixListener::bind(&socket_path)?;
     tracing::info!("UDS JSON-RPC listening on {socket_path}");
 
-    create_capability_symlink(&btsp);
+    if has_override {
+        create_standalone_symlink(&socket_path);
+    } else if let Some(ref cfg) = btsp {
+        create_capability_symlink(cfg);
+    } else {
+        create_standalone_symlink(&socket_path);
+    }
 
     let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
     if let Some(ref cfg) = btsp_config {
@@ -179,9 +203,27 @@ pub async fn serve_uds(
 pub async fn serve_uds(
     _state: Arc<RwLock<SkunkBat>>,
     _sessions: Arc<BtspSessionRegistry>,
+    _socket_override: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     tracing::warn!("Unix domain sockets not available on this platform");
     std::future::pending().await
+}
+
+/// Create capability-domain symlink when using `--socket` override (no `BtspConfig`).
+#[cfg(unix)]
+fn create_standalone_symlink(socket_path: &str) {
+    if let Some(parent) = std::path::Path::new(socket_path).parent() {
+        let symlink_path = parent.join("security.sock");
+        let socket_name = std::path::Path::new(socket_path).file_name().map_or_else(
+            || "skunkbat.sock".to_owned(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        std::fs::remove_file(&symlink_path).ok();
+        match std::os::unix::fs::symlink(&socket_name, &symlink_path) {
+            Ok(()) => tracing::info!("Capability symlink: security.sock -> {socket_name}"),
+            Err(e) => tracing::warn!("Failed to create capability symlink: {e}"),
+        }
+    }
 }
 
 /// Create capability-domain symlink: `security.sock` → `skunkbat[-{fid}].sock`

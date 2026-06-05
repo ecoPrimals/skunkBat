@@ -2,6 +2,23 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.4] — 2026-06-05
+
+### Added
+
+- **`--no-tcp` flag** — port-free UDS-only deployment mode for Tower Atomic compliance
+- **`--socket` passthrough** — launcher-injected paths now reach the UDS listener
+  directly (e.g. `--socket /run/membrane/skunkbat.sock --no-tcp`)
+- Standalone capability symlink (`security.sock → skunkbat.sock`) when using
+  `--socket` without `BtspConfig`
+
+### Changed
+
+- `serve_uds()` accepts `socket_override` parameter — no longer ignores `--socket` flag
+- `serve()` accepts `no_tcp` parameter — full 4-mode deployment matrix
+  (TCP+UDS, TCP-only, UDS-only, error)
+- Deployment modes: UDS-only (port-free), TCP-only (legacy), TCP+UDS (default)
+
 ## [0.2.3] — 2026-06-05
 
 ### Added

@@ -57,12 +57,22 @@ enum Commands {
         port: u16,
 
         /// Explicit UDS socket path (overrides BTSP-derived path).
+        ///
+        /// Use for launcher-injected paths:
+        /// `--socket /run/membrane/skunkbat.sock`
         #[arg(long)]
         socket: Option<String>,
 
         /// Disable Unix domain socket listener.
         #[arg(long)]
         no_uds: bool,
+
+        /// Disable TCP listener (port-free deployment).
+        ///
+        /// Requires UDS to be active. Use with `--socket` for
+        /// launcher-injected port-free operation.
+        #[arg(long)]
+        no_tcp: bool,
     },
 
     /// One-shot health check (exits 0 if healthy).
@@ -97,7 +107,8 @@ async fn main() -> Result<(), BoxError> {
             port,
             socket,
             no_uds,
-        } => run_server(&bind, port, socket.as_deref(), no_uds).await,
+            no_tcp,
+        } => run_server(&bind, port, socket.as_deref(), no_uds, no_tcp).await,
         Commands::Health => run_health().await,
         Commands::Scan => run_scan().await,
         Commands::Detect => run_detect().await,
@@ -109,14 +120,23 @@ async fn run_server(
     port: u16,
     socket: Option<&str>,
     no_uds: bool,
+    no_tcp: bool,
 ) -> Result<(), BoxError> {
+    if no_tcp && no_uds {
+        return Err("cannot disable both TCP and UDS — no listeners would be active".into());
+    }
+
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
 
-    tracing::info!("skunkBat server starting on {bind}:{port}");
+    if no_tcp {
+        tracing::info!("skunkBat server starting (port-free UDS mode)");
+    } else {
+        tracing::info!("skunkBat server starting on {bind}:{port}");
+    }
 
-    ipc::serve(skunkbat, bind.to_owned(), port, socket, no_uds).await
+    ipc::serve(skunkbat, bind.to_owned(), port, socket, no_uds, no_tcp).await
 }
 
 async fn run_health() -> Result<(), BoxError> {
