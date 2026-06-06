@@ -10,15 +10,18 @@ springs = []
 
 ## Status
 
+- **Version**: v0.2.6 (Wave 79c)
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
 - **Tests**: 500 passing
-- **Source**: 52 files, max 670 lines
+- **Source**: 52 files, max 773 lines (296L production + tests)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **Coverage**: 90%+ function coverage (llvm-cov)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)
+- **Transport**: UDS + TCP; `--socket` implies port-free (ecosystem convention)
+- **VPS deploy**: `skunkbat server --socket /run/membrane/skunkbat.sock`
 
 ## Capabilities
 
