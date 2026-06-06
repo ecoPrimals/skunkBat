@@ -2,6 +2,17 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.6] — 2026-06-05
+
+### Changed
+
+- **`--socket` implies `--no-tcp`** — providing `--socket /path` now defaults
+  to UDS-only (port-free) mode, matching the ecosystem deployment convention
+  used by bearDog, songBird, and other primals. Add explicit `--port` to
+  re-enable TCP alongside UDS.
+- Resolves Wave 79b gate-crossing blurb: `skunkbat server --socket
+  /run/membrane/skunkbat.sock` now starts port-free without needing `--no-tcp`.
+
 ## [0.2.5] — 2026-06-05
 
 ### Changed

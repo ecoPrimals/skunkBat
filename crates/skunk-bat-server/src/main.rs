@@ -58,8 +58,10 @@ enum Commands {
 
         /// Explicit UDS socket path (overrides BTSP-derived path).
         ///
-        /// Use for launcher-injected paths:
-        /// `--socket /run/membrane/skunkbat.sock`
+        /// Implies `--no-tcp` (port-free deployment) matching the ecosystem
+        /// convention. Add `--port` to re-enable TCP alongside UDS.
+        ///
+        /// Example: `--socket /run/membrane/skunkbat.sock`
         #[arg(long)]
         socket: Option<String>,
 
@@ -69,8 +71,8 @@ enum Commands {
 
         /// Disable TCP listener (port-free deployment).
         ///
-        /// Requires UDS to be active. Use with `--socket` for
-        /// launcher-injected port-free operation.
+        /// Implied automatically when `--socket` is provided.
+        /// Requires UDS to be active.
         #[arg(long)]
         no_tcp: bool,
     },
@@ -122,6 +124,10 @@ async fn run_server(
     no_uds: bool,
     no_tcp: bool,
 ) -> Result<(), BoxError> {
+    // Ecosystem pattern: --socket implies UDS-only (port-free) unless
+    // TCP was explicitly requested via --port or --bind differs from default.
+    let no_tcp = no_tcp || (socket.is_some() && !no_uds);
+
     if no_tcp && no_uds {
         return Err("cannot disable both TCP and UDS — no listeners would be active".into());
     }
