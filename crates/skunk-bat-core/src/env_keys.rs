@@ -56,3 +56,10 @@ pub const SKUNKBAT_OWNED_NETWORKS: &str = "SKUNKBAT_OWNED_NETWORKS";
 
 /// IPC method-gate enforcement mode (`enforced` / `permissive`).
 pub const SKUNKBAT_AUTH_MODE: &str = "SKUNKBAT_AUTH_MODE";
+
+/// Launcher-injected transport endpoint (JSON, sourDough-compatible).
+///
+/// Format: `{"transport":"uds","path":"/run/membrane/beardog.sock"}`
+/// or `{"transport":"tcp","host":"127.0.0.1","port":9100}`.
+/// When set, overrides per-capability endpoint env vars.
+pub const TRANSPORT_ENDPOINT: &str = "TRANSPORT_ENDPOINT";

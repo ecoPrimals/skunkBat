@@ -134,6 +134,49 @@ fn capabilities_response() -> serde_json::Value {
 /// (default), all calls are allowed with a tracing warning for unauthenticated
 /// access to protected methods. In enforced mode, unauthenticated calls to
 /// protected methods are rejected with `-32001 PERMISSION_DENIED`.
+/// Pre-dispatch authorization gate with audit trail.
+///
+/// Returns `Some(Response)` if the request was rejected; `None` if allowed.
+async fn authorize(
+    state: &Arc<RwLock<SkunkBat>>,
+    gate: &MethodGate,
+    caller: &CallerContext,
+    method: &str,
+    id: &serde_json::Value,
+) -> Option<Response> {
+    if let Err(resp) = gate.check(method, id.clone(), caller) {
+        let log = state.read().await.audit_log().clone();
+        log.record(
+            EventSource::MethodGate,
+            EventSeverity::Warn,
+            EventKind::GateRejection {
+                method: method.to_owned(),
+                origin: format!("{:?}", caller.origin),
+            },
+        )
+        .await;
+        return Some(resp);
+    }
+
+    if gate.mode() == EnforcementMode::Permissive
+        && caller.bearer_token.is_none()
+        && super::method_gate::classify_method(method)
+            == super::method_gate::MethodAccessLevel::Protected
+    {
+        let log = state.read().await.audit_log().clone();
+        log.record(
+            EventSource::MethodGate,
+            EventSeverity::Info,
+            EventKind::GatePermissiveAllow {
+                method: method.to_owned(),
+                origin: format!("{:?}", caller.origin),
+            },
+        )
+        .await;
+    }
+    None
+}
+
 pub(super) async fn dispatch(
     state: &Arc<RwLock<SkunkBat>>,
     gate: &MethodGate,
@@ -146,38 +189,8 @@ pub(super) async fn dispatch(
 
     let id = request.id_or_null();
 
-    match gate.check(&request.method, id.clone(), caller) {
-        Err(resp) => {
-            let log = state.read().await.audit_log().clone();
-            log.record(
-                EventSource::MethodGate,
-                EventSeverity::Warn,
-                EventKind::GateRejection {
-                    method: request.method.clone(),
-                    origin: format!("{:?}", caller.origin),
-                },
-            )
-            .await;
-            return resp;
-        }
-        Ok(()) => {
-            if gate.mode() == EnforcementMode::Permissive
-                && caller.bearer_token.is_none()
-                && super::method_gate::classify_method(&request.method)
-                    == super::method_gate::MethodAccessLevel::Protected
-            {
-                let log = state.read().await.audit_log().clone();
-                log.record(
-                    EventSource::MethodGate,
-                    EventSeverity::Info,
-                    EventKind::GatePermissiveAllow {
-                        method: request.method.clone(),
-                        origin: format!("{:?}", caller.origin),
-                    },
-                )
-                .await;
-            }
-        }
+    if let Some(rejection) = authorize(state, gate, caller, &request.method, &id).await {
+        return rejection;
     }
 
     match request.method.as_str() {
@@ -193,28 +206,7 @@ pub(super) async fn dispatch(
 
         "health.check" => try_serialize(id, state.read().await.health_check().await),
         "security.scan" => try_serialize(id, state.read().await.scan_network().await),
-        "security.detect" => {
-            let sb = state.read().await;
-            let result = sb.detect_threats().await;
-            let log = sb.audit_log().clone();
-            drop(sb);
-            if let Ok(ref threats) = result {
-                for t in threats {
-                    log.record(
-                        EventSource::ThreatDetection,
-                        EventSeverity::Warn,
-                        EventKind::ThreatDetected {
-                            threat_id: t.id.clone(),
-                            threat_type: format!("{:?}", t.threat_type),
-                            severity: format!("{:?}", t.severity),
-                            source: t.source.clone(),
-                        },
-                    )
-                    .await;
-                }
-            }
-            try_serialize(id, result)
-        }
+        "security.detect" => dispatch_detect(state, id).await,
         "security.respond" => dispatch_respond(state, id, request.params).await,
         "security.metrics" => serialize(id, state.read().await.get_security_metrics()),
         "security.audit_log" => dispatch_audit_log(state, id, request.params).await,
@@ -293,6 +285,30 @@ pub(super) async fn dispatch(
             format!("unknown method: {}", request.method),
         ),
     }
+}
+
+/// Handle `security.detect` — run threat detection with audit trail.
+async fn dispatch_detect(state: &Arc<RwLock<SkunkBat>>, id: serde_json::Value) -> Response {
+    let sb = state.read().await;
+    let result = sb.detect_threats().await;
+    let log = sb.audit_log().clone();
+    drop(sb);
+    if let Ok(ref threats) = result {
+        for t in threats {
+            log.record(
+                EventSource::ThreatDetection,
+                EventSeverity::Warn,
+                EventKind::ThreatDetected {
+                    threat_id: t.id.clone(),
+                    threat_type: format!("{:?}", t.threat_type),
+                    severity: format!("{:?}", t.severity),
+                    source: t.source.clone(),
+                },
+            )
+            .await;
+        }
+    }
+    try_serialize(id, result)
 }
 
 /// Handle `defense.status` — returns defense subsystem health for gate probing.

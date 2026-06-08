@@ -7,7 +7,7 @@
 
 [primal]
 name = "skunkbat"
-version = "0.2.6"
+version = "0.2.7"
 description = "Defensive network security — metadata-only threat detection, graduated response, security observability"
 license = "AGPL-3.0-or-later"
 protocol = "jsonrpc-2.0"

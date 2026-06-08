@@ -209,18 +209,24 @@ fn negotiate_error(error: &str, message: impl Into<String>) -> NegotiateOutcome 
 ///
 /// Returns `{"cipher":"null","server_nonce":""}` when no supported cipher
 /// is offered or no handshake key is available.
-pub async fn handle_negotiate(
-    registry: &SessionRegistry,
-    params: Option<serde_json::Value>,
-) -> NegotiateOutcome {
+/// Validated negotiate parameters after parsing the incoming JSON-RPC params.
+struct NegotiateParams {
+    session_id: String,
+    client_nonce: Vec<u8>,
+    offered_ciphers: Vec<CipherSuite>,
+    bond_type: BondType,
+}
+
+/// Parse and validate `btsp.negotiate` parameters.
+fn parse_negotiate_params(params: Option<serde_json::Value>) -> Result<NegotiateParams, NegotiateOutcome> {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64;
 
     let Some(params) = params else {
-        return negotiate_error(
+        return Err(negotiate_error(
             "params_required",
             "btsp.negotiate requires session_id, client_nonce, ciphers/preferred_cipher",
-        );
+        ));
     };
 
     let session_id = params
@@ -229,7 +235,7 @@ pub async fn handle_negotiate(
         .unwrap_or("");
 
     if session_id.is_empty() {
-        return negotiate_error("invalid_session", "session_id is required");
+        return Err(negotiate_error("invalid_session", "session_id is required"));
     }
 
     let client_nonce_b64 = params
@@ -243,10 +249,10 @@ pub async fn handle_negotiate(
         match BASE64.decode(client_nonce_b64) {
             Ok(n) => n,
             Err(e) => {
-                return negotiate_error(
+                return Err(negotiate_error(
                     "invalid_client_nonce",
                     format!("base64 decode failed: {e}"),
-                );
+                ));
             }
         }
     };
@@ -259,7 +265,32 @@ pub async fn handle_negotiate(
         .parse()
         .unwrap_or(BondType::Covalent);
 
-    let Some(session) = registry.get(session_id).await else {
+    Ok(NegotiateParams {
+        session_id: session_id.to_owned(),
+        client_nonce,
+        offered_ciphers,
+        bond_type,
+    })
+}
+
+pub async fn handle_negotiate(
+    registry: &SessionRegistry,
+    params: Option<serde_json::Value>,
+) -> NegotiateOutcome {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+
+    let NegotiateParams {
+        session_id,
+        client_nonce,
+        offered_ciphers,
+        bond_type,
+    } = match parse_negotiate_params(params) {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+
+    let Some(session) = registry.get(&session_id).await else {
         return negotiate_error("unknown_session", "session_id not found in registry");
     };
 
@@ -306,7 +337,7 @@ pub async fn handle_negotiate(
         match derive_session_keys(handshake_key, &client_nonce, &server_nonce) {
             Ok(keys) => {
                 registry
-                    .update_phase3(session_id, selected, keys.clone())
+                    .update_phase3(&session_id, selected, keys.clone())
                     .await;
                 Some(keys)
             }

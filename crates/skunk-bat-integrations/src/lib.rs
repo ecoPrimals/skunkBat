@@ -33,3 +33,5 @@ pub mod rpc;
 pub mod songbird;
 pub mod toadstool;
 pub mod verifier;
+
+pub use rpc::TransportEndpoint;

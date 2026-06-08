@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
 description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 500 tests, 19 IPC methods."
-date = 2026-06-05
+date = 2026-06-08
 
 [taxonomies]
 primals = ["skunkbat"]
@@ -10,17 +10,18 @@ springs = []
 
 ## Status
 
-- **Version**: v0.2.6 (Wave 79c)
+- **Version**: v0.2.7 (Wave 100)
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 500 passing
+- **Tests**: 506 passing
 - **Source**: 52 files, max 773 lines (296L production + tests)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **Coverage**: 90%+ function coverage (llvm-cov)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)
 - **Transport**: UDS + TCP; `--socket` implies port-free (ecosystem convention)
+- **Transport Evolution**: `TransportEndpoint` type (sourDough-compatible) + `TRANSPORT_ENDPOINT` env var
 - **VPS deploy**: `skunkbat server --socket /run/membrane/skunkbat.sock`
 
 ## Capabilities

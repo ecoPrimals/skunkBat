@@ -11,6 +11,49 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+/// Structured transport endpoint — wire-compatible with sourDough `TransportEndpoint`.
+///
+/// The launcher or Tower Atomic provides this via `TRANSPORT_ENDPOINT` env var.
+/// Primals use it to discover how to reach other services without hardcoding transport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "transport")]
+pub enum TransportEndpoint {
+    /// Unix Domain Socket — local primal on same host (fastest path).
+    #[serde(rename = "uds")]
+    Uds {
+        /// Filesystem path to the socket.
+        path: String,
+    },
+    /// TCP — direct network connection (cross-host or container).
+    #[serde(rename = "tcp")]
+    Tcp {
+        /// Host address (IPv4, IPv6, or hostname).
+        host: String,
+        /// TCP port number.
+        port: u16,
+    },
+    /// Mesh relay — primal reachable via Songbird's mesh network.
+    #[serde(rename = "mesh_relay")]
+    MeshRelay {
+        /// Songbird peer identifier.
+        peer_id: String,
+        /// Capability domain being requested.
+        capability: String,
+    },
+}
+
+impl TransportEndpoint {
+    /// Parse from the `TRANSPORT_ENDPOINT` env var (JSON).
+    ///
+    /// Returns `None` if the env var is unset or unparseable.
+    #[must_use]
+    pub fn from_env() -> Option<Self> {
+        std::env::var(skunk_bat_core::env_keys::TRANSPORT_ENDPOINT)
+            .ok()
+            .and_then(|v| serde_json::from_str(&v).ok())
+    }
+}
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// IPC RPC call failure.
@@ -114,6 +157,37 @@ pub async fn call(
     }
 
     Err(RpcError::Io("no endpoint available".to_owned()))
+}
+
+/// JSON-RPC call via a resolved [`TransportEndpoint`].
+///
+/// Dispatches to UDS or TCP based on the endpoint variant.
+/// `MeshRelay` is not yet supported (returns an error).
+///
+/// # Errors
+///
+/// Returns [`RpcError`] if the endpoint is unreachable or the RPC fails.
+pub async fn call_endpoint(
+    endpoint: &TransportEndpoint,
+    method: &str,
+    params: Option<serde_json::Value>,
+    timeout: Duration,
+) -> Result<serde_json::Value, RpcError> {
+    match endpoint {
+        #[cfg(unix)]
+        TransportEndpoint::Uds { path } => call_uds(path, method, params, timeout).await,
+        #[cfg(not(unix))]
+        TransportEndpoint::Uds { path } => {
+            Err(RpcError::Io(format!("UDS not available on this platform: {path}")))
+        }
+        TransportEndpoint::Tcp { host, port } => {
+            let addr = format!("{host}:{port}");
+            call_tcp(&addr, method, params, timeout).await
+        }
+        TransportEndpoint::MeshRelay { peer_id, capability } => Err(RpcError::Io(format!(
+            "mesh_relay transport not yet implemented (peer={peer_id}, cap={capability})"
+        ))),
+    }
 }
 
 /// Send a JSON-RPC request over a Unix domain socket.
@@ -441,5 +515,62 @@ mod tests {
         handle.await.unwrap();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("parse"));
+    }
+
+    #[test]
+    fn transport_endpoint_uds_serde_roundtrip() {
+        let json = r#"{"transport":"uds","path":"/run/user/1000/biomeos/beardog.sock"}"#;
+        let ep: TransportEndpoint = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            ep,
+            TransportEndpoint::Uds { path: "/run/user/1000/biomeos/beardog.sock".into() }
+        );
+        let back = serde_json::to_string(&ep).unwrap();
+        assert!(back.contains(r#""transport":"uds""#));
+        assert!(back.contains("beardog.sock"));
+    }
+
+    #[test]
+    fn transport_endpoint_tcp_serde_roundtrip() {
+        let json = r#"{"transport":"tcp","host":"127.0.0.1","port":9100}"#;
+        let ep: TransportEndpoint = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            ep,
+            TransportEndpoint::Tcp { host: "127.0.0.1".into(), port: 9100 }
+        );
+    }
+
+    #[test]
+    fn transport_endpoint_mesh_relay_serde() {
+        let json = r#"{"transport":"mesh_relay","peer_id":"strandgate","capability":"security"}"#;
+        let ep: TransportEndpoint = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            ep,
+            TransportEndpoint::MeshRelay { peer_id: "strandgate".into(), capability: "security".into() }
+        );
+    }
+
+    #[test]
+    fn transport_endpoint_from_env_unset() {
+        assert!(TransportEndpoint::from_env().is_none());
+    }
+
+    #[tokio::test]
+    async fn call_endpoint_tcp_unreachable() {
+        let ep = TransportEndpoint::Tcp { host: "127.0.0.1".into(), port: 1 };
+        let result = call_endpoint(&ep, "health.liveness", None, Duration::from_millis(200)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn call_endpoint_mesh_relay_unsupported() {
+        let ep = TransportEndpoint::MeshRelay {
+            peer_id: "test".into(),
+            capability: "security".into(),
+        };
+        let result = call_endpoint(&ep, "test.method", None, Duration::from_millis(100)).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mesh_relay"));
+        assert!(err.contains("not yet implemented"));
     }
 }

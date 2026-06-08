@@ -2,6 +2,25 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.7] — 2026-06-08
+
+### Added
+
+- **`TransportEndpoint` type** — wire-compatible with sourDough's canonical
+  `TransportEndpoint` enum (serde-tagged JSON: `uds`, `tcp`, `mesh_relay`).
+  Supports `TRANSPORT_ENDPOINT` env var for launcher-injected transport.
+- **`call_endpoint()`** — dispatches JSON-RPC calls via resolved
+  `TransportEndpoint`, unifying the UDS/TCP call paths under a single type.
+- **`TRANSPORT_ENDPOINT` env key** — declared in `env_keys` for ecosystem-wide
+  transport injection (Wave 100 Transport Evolution Trigger compliance).
+
+### Changed
+
+- **`dispatch()` refactored** — extracted `authorize()` and `dispatch_detect()`
+  helpers to comply with `clippy::too_many_lines` (nursery, 100L threshold).
+- **`handle_negotiate()` refactored** — extracted `parse_negotiate_params()` for
+  cleaner parameter validation flow.
+
 ## [0.2.6] — 2026-06-05
 
 ### Changed
