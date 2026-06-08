@@ -5,15 +5,39 @@
 //!
 //! Implements BTSP Phase 1 (socket naming, `FAMILY_ID` guard) and
 //! Primal IPC Protocol v3.1 (standalone startup, `--port` + `--bind` convention).
+//!
+//! Supports `TRANSPORT_ENDPOINT` env var for launcher-injected transport binding
+//! (sourDough `TransportEndpoint` standard, Wave 100+).
 
 mod ipc;
 
 use clap::{Parser, Subcommand};
 use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::{SkunkBat, SkunkBatConfig};
+use skunk_bat_integrations::TransportEndpoint;
 use tracing_subscriber::EnvFilter;
 
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
+/// Typed error for the server binary — replaces `Box<dyn Error>`.
+#[derive(Debug, thiserror::Error)]
+enum ServerError {
+    #[error("config: {0}")]
+    Config(String),
+
+    #[error("{0}")]
+    Primal(#[from] skunk_bat_core::PrimalError),
+
+    #[error("{0}")]
+    SkunkBat(#[from] skunk_bat_core::SkunkBatError),
+
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("serialize: {0}")]
+    Serialize(#[from] serde_json::Error),
+
+    #[error("ipc: {0}")]
+    Ipc(String),
+}
 
 /// Default TCP port for JSON-RPC (aligned with `ports.env`).
 const DEFAULT_PORT: u16 = 9750;
@@ -88,14 +112,13 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), BoxError> {
+async fn main() -> Result<(), ServerError> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
-    // BTSP Phase 1 guard: refuse to start if FAMILY_ID + BIOMEOS_INSECURE conflict
     if let Err(e) = ipc::transport::BtspConfig::from_env() {
         tracing::error!("{e}");
         std::process::exit(1);
@@ -111,10 +134,37 @@ async fn main() -> Result<(), BoxError> {
             no_uds,
             no_tcp,
         } => run_server(&bind, port, socket.as_deref(), no_uds, no_tcp).await,
-        Commands::Health => run_health().await,
-        Commands::Scan => run_scan().await,
-        Commands::Detect => run_detect().await,
+        Commands::Health => {
+            use skunk_bat_core::PrimalHealth;
+            let mut sb = started_instance().await?;
+            let v = serde_json::to_value(&sb.health_check().await?)?;
+            println!("{}", serde_json::to_string_pretty(&v)?);
+            sb.stop().await?;
+            Ok(())
+        }
+        Commands::Scan => {
+            let mut sb = started_instance().await?;
+            let v = serde_json::to_value(&sb.scan_network().await?)?;
+            println!("{}", serde_json::to_string_pretty(&v)?);
+            sb.stop().await?;
+            Ok(())
+        }
+        Commands::Detect => {
+            let mut sb = started_instance().await?;
+            let v = serde_json::to_value(&sb.detect_threats().await?)?;
+            println!("{}", serde_json::to_string_pretty(&v)?);
+            sb.stop().await?;
+            Ok(())
+        }
     }
+}
+
+/// Create and start a `SkunkBat` instance for one-shot commands.
+async fn started_instance() -> Result<SkunkBat, ServerError> {
+    let config = SkunkBatConfig::default();
+    let mut skunkbat = SkunkBat::new(config);
+    skunkbat.start().await?;
+    Ok(skunkbat)
 }
 
 async fn run_server(
@@ -123,13 +173,34 @@ async fn run_server(
     socket: Option<&str>,
     no_uds: bool,
     no_tcp: bool,
-) -> Result<(), BoxError> {
+) -> Result<(), ServerError> {
+    // TRANSPORT_ENDPOINT env var: launcher-injected transport (sourDough standard).
+    // Overrides CLI flags when set.
+    let (socket, no_uds, no_tcp) = match TransportEndpoint::from_env() {
+        Some(TransportEndpoint::Uds { ref path }) => {
+            tracing::info!("TRANSPORT_ENDPOINT: UDS at {path}");
+            (Some(path.clone()), false, true)
+        }
+        Some(TransportEndpoint::Tcp { ref host, port: ep_port }) => {
+            tracing::info!("TRANSPORT_ENDPOINT: TCP at {host}:{ep_port}");
+            (socket.map(ToOwned::to_owned), true, false)
+        }
+        Some(TransportEndpoint::MeshRelay { .. }) => {
+            return Err(ServerError::Config(
+                "mesh_relay transport not supported for server binding".into(),
+            ));
+        }
+        None => (socket.map(ToOwned::to_owned), no_uds, no_tcp),
+    };
+
     // Ecosystem pattern: --socket implies UDS-only (port-free) unless
-    // TCP was explicitly requested via --port or --bind differs from default.
+    // TCP was explicitly requested via --port.
     let no_tcp = no_tcp || (socket.is_some() && !no_uds);
 
     if no_tcp && no_uds {
-        return Err("cannot disable both TCP and UDS — no listeners would be active".into());
+        return Err(ServerError::Config(
+            "cannot disable both TCP and UDS — no listeners would be active".into(),
+        ));
     }
 
     let config = SkunkBatConfig::default();
@@ -142,43 +213,7 @@ async fn run_server(
         tracing::info!("skunkBat server starting on {bind}:{port}");
     }
 
-    ipc::serve(skunkbat, bind.to_owned(), port, socket, no_uds, no_tcp).await
-}
-
-async fn run_health() -> Result<(), BoxError> {
-    use skunk_bat_core::PrimalHealth;
-
-    let config = SkunkBatConfig::default();
-    let mut skunkbat = SkunkBat::new(config);
-    skunkbat.start().await?;
-
-    let report = skunkbat.health_check().await?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
-
-    skunkbat.stop().await?;
-    Ok(())
-}
-
-async fn run_scan() -> Result<(), BoxError> {
-    let config = SkunkBatConfig::default();
-    let mut skunkbat = SkunkBat::new(config);
-    skunkbat.start().await?;
-
-    let scan = skunkbat.scan_network().await?;
-    println!("{}", serde_json::to_string_pretty(&scan)?);
-
-    skunkbat.stop().await?;
-    Ok(())
-}
-
-async fn run_detect() -> Result<(), BoxError> {
-    let config = SkunkBatConfig::default();
-    let mut skunkbat = SkunkBat::new(config);
-    skunkbat.start().await?;
-
-    let threats = skunkbat.detect_threats().await?;
-    println!("{}", serde_json::to_string_pretty(&threats)?);
-
-    skunkbat.stop().await?;
-    Ok(())
+    ipc::serve(skunkbat, bind.to_owned(), port, socket.as_deref(), no_uds, no_tcp)
+        .await
+        .map_err(|e| ServerError::Ipc(e.to_string()))
 }

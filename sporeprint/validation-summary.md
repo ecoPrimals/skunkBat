@@ -10,7 +10,7 @@ springs = []
 
 ## Status
 
-- **Version**: v0.2.7 (Wave 100)
+- **Version**: v0.2.8 (Wave 101)
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
@@ -21,8 +21,9 @@ springs = []
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)
 - **Transport**: UDS + TCP; `--socket` implies port-free (ecosystem convention)
-- **Transport Evolution**: `TransportEndpoint` type (sourDough-compatible) + `TRANSPORT_ENDPOINT` env var
-- **VPS deploy**: `skunkbat server --socket /run/membrane/skunkbat.sock`
+- **Transport Evolution**: Fully wired — `TRANSPORT_ENDPOINT` parsed in main.rs, outbound forwarding via `TransportEndpoint`
+- **Error handling**: Typed `ServerError` (no `Box<dyn Error>` at binary boundary)
+- **VPS deploy**: `TRANSPORT_ENDPOINT='{"transport":"uds","path":"/run/membrane/skunkbat.sock"}' skunkbat server`
 
 ## Capabilities
 

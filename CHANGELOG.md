@@ -2,6 +2,25 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.8] — 2026-06-08
+
+### Changed
+
+- **Typed `ServerError`** — replaced `Box<dyn Error>` in main.rs with proper
+  `thiserror`-derived `ServerError` enum. No more trait object boxing at the
+  binary boundary.
+- **`TRANSPORT_ENDPOINT` wired in `main.rs`** — server now reads the env var
+  at startup. When set to `{"transport":"uds","path":"..."}`, overrides CLI
+  flags for UDS-only binding. TCP variant similarly overrides. Full sourDough
+  `TransportEndpoint` compliance.
+- **Forwarding transport evolution** — `forward_to_dag()` and `forward_to_braid()`
+  now resolve targets via `ResolvedTarget` enum, preferring sourDough-compatible
+  `RHIZOCRYPT_TRANSPORT` / `SWEETGRASS_TRANSPORT` env vars (JSON `TransportEndpoint`)
+  with fallback to legacy `RHIZOCRYPT_ENDPOINT` / capability sockets.
+- **One-shot DRY** — extracted `started_instance()` helper, eliminating repeated
+  `SkunkBatConfig::default() + SkunkBat::new() + start()` boilerplate across
+  `health`, `scan`, and `detect` subcommands.
+
 ## [0.2.7] — 2026-06-08
 
 ### Added

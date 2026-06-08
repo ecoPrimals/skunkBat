@@ -15,13 +15,19 @@ use std::time::Duration;
 
 use skunk_bat_core::observability::audit_log::{AuditLog, EventSeverity, SecurityEvent};
 
-use crate::rpc::{self, RpcError};
+use crate::rpc::{self, RpcError, TransportEndpoint};
 
 /// Environment variable for rhizoCrypt endpoint override.
 const RHIZOCRYPT_ENDPOINT_ENV: &str = "RHIZOCRYPT_ENDPOINT";
 
 /// Environment variable for sweetGrass endpoint override.
 const SWEETGRASS_ENDPOINT_ENV: &str = "SWEETGRASS_ENDPOINT";
+
+/// Transport endpoint env for provenance (sourDough standard).
+const RHIZOCRYPT_TRANSPORT_ENV: &str = "RHIZOCRYPT_TRANSPORT";
+
+/// Transport endpoint env for attribution (sourDough standard).
+const SWEETGRASS_TRANSPORT_ENV: &str = "SWEETGRASS_TRANSPORT";
 
 /// Capability domain socket name for provenance (rhizoCrypt).
 const PROVENANCE_CAPABILITY: &str = "provenance";
@@ -65,18 +71,63 @@ impl Default for ForwardingConfig {
     }
 }
 
-/// Resolve the rhizoCrypt endpoint (env override → capability socket).
-fn resolve_rhizocrypt() -> (Option<String>, Option<String>) {
+/// Resolve the rhizoCrypt endpoint.
+///
+/// Resolution order:
+/// 1. `RHIZOCRYPT_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
+/// 2. `RHIZOCRYPT_ENDPOINT` env (legacy TCP string)
+/// 3. Capability socket (`provenance.sock`)
+fn resolve_rhizocrypt() -> ResolvedTarget {
+    if let Some(ep) = parse_transport_env(RHIZOCRYPT_TRANSPORT_ENV) {
+        return ResolvedTarget::Endpoint(ep);
+    }
     let tcp = std::env::var(RHIZOCRYPT_ENDPOINT_ENV).ok();
     let uds = Some(rpc::capability_socket(PROVENANCE_CAPABILITY));
-    (uds, tcp)
+    ResolvedTarget::Legacy { uds, tcp }
 }
 
-/// Resolve the sweetGrass endpoint (env override → capability socket).
-fn resolve_sweetgrass() -> (Option<String>, Option<String>) {
+/// Resolve the sweetGrass endpoint.
+///
+/// Resolution order:
+/// 1. `SWEETGRASS_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
+/// 2. `SWEETGRASS_ENDPOINT` env (legacy TCP string)
+/// 3. Capability socket (`attribution.sock`)
+fn resolve_sweetgrass() -> ResolvedTarget {
+    if let Some(ep) = parse_transport_env(SWEETGRASS_TRANSPORT_ENV) {
+        return ResolvedTarget::Endpoint(ep);
+    }
     let tcp = std::env::var(SWEETGRASS_ENDPOINT_ENV).ok();
     let uds = Some(rpc::capability_socket(ATTRIBUTION_CAPABILITY));
-    (uds, tcp)
+    ResolvedTarget::Legacy { uds, tcp }
+}
+
+/// Resolved outbound target — either a sourDough `TransportEndpoint` or legacy (UDS + TCP).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResolvedTarget {
+    Endpoint(TransportEndpoint),
+    Legacy { uds: Option<String>, tcp: Option<String> },
+}
+
+/// Parse a `TransportEndpoint` from an environment variable.
+fn parse_transport_env(var: &str) -> Option<TransportEndpoint> {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| serde_json::from_str(&v).ok())
+}
+
+/// Issue a JSON-RPC call to a resolved target.
+async fn call_resolved(
+    target: &ResolvedTarget,
+    method: &str,
+    params: Option<serde_json::Value>,
+    timeout: Duration,
+) -> Result<serde_json::Value, RpcError> {
+    match target {
+        ResolvedTarget::Endpoint(ep) => rpc::call_endpoint(ep, method, params, timeout).await,
+        ResolvedTarget::Legacy { uds, tcp } => {
+            rpc::call(uds.as_deref(), tcp.as_deref(), method, params, timeout).await
+        }
+    }
 }
 
 /// Forward a security event to rhizoCrypt's DAG as a vertex.
@@ -90,7 +141,7 @@ pub async fn forward_to_dag(
     event: &SecurityEvent,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
-    let (uds, tcp) = resolve_rhizocrypt();
+    let target = resolve_rhizocrypt();
     let params = serde_json::json!({
         "event_type": "security_audit",
         "source_primal": skunk_bat_core::PRIMAL_ID,
@@ -102,14 +153,7 @@ pub async fn forward_to_dag(
         "correlation_id": event.correlation_id,
     });
 
-    rpc::call(
-        uds.as_deref(),
-        tcp.as_deref(),
-        "dag.event.append",
-        Some(params),
-        timeout,
-    )
-    .await
+    call_resolved(&target, "dag.event.append", Some(params), timeout).await
 }
 
 /// Forward a security event to sweetGrass as a provenance braid entry.
@@ -123,7 +167,7 @@ pub async fn forward_to_braid(
     event: &SecurityEvent,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
-    let (uds, tcp) = resolve_sweetgrass();
+    let target = resolve_sweetgrass();
     let params = serde_json::json!({
         "braid_type": "security_attestation",
         "source": skunk_bat_core::PRIMAL_ID,
@@ -137,9 +181,8 @@ pub async fn forward_to_braid(
         "correlation_id": event.correlation_id,
     });
 
-    rpc::call(
-        uds.as_deref(),
-        tcp.as_deref(),
+    call_resolved(
+        &target,
         "braid.create",
         Some(params),
         timeout,
@@ -248,11 +291,21 @@ mod tests {
 
     #[test]
     fn resolve_endpoints_have_capability_sockets() {
-        let (uds, _tcp) = resolve_rhizocrypt();
-        assert!(uds.unwrap().contains("provenance.sock"));
+        let target = resolve_rhizocrypt();
+        match &target {
+            ResolvedTarget::Legacy { uds, .. } => {
+                assert!(uds.as_ref().unwrap().contains("provenance.sock"));
+            }
+            ResolvedTarget::Endpoint(_) => {}
+        }
 
-        let (uds, _tcp) = resolve_sweetgrass();
-        assert!(uds.unwrap().contains("attribution.sock"));
+        let target = resolve_sweetgrass();
+        match &target {
+            ResolvedTarget::Legacy { uds, .. } => {
+                assert!(uds.as_ref().unwrap().contains("attribution.sock"));
+            }
+            ResolvedTarget::Endpoint(_) => {}
+        }
     }
 
     #[tokio::test]
@@ -362,18 +415,16 @@ mod tests {
 
     #[test]
     fn resolve_rhizocrypt_returns_consistent_paths() {
-        let (uds1, tcp1) = resolve_rhizocrypt();
-        let (uds2, tcp2) = resolve_rhizocrypt();
-        assert_eq!(uds1, uds2);
-        assert_eq!(tcp1, tcp2);
+        let t1 = resolve_rhizocrypt();
+        let t2 = resolve_rhizocrypt();
+        assert_eq!(t1, t2);
     }
 
     #[test]
     fn resolve_sweetgrass_returns_consistent_paths() {
-        let (uds1, tcp1) = resolve_sweetgrass();
-        let (uds2, tcp2) = resolve_sweetgrass();
-        assert_eq!(uds1, uds2);
-        assert_eq!(tcp1, tcp2);
+        let t1 = resolve_sweetgrass();
+        let t2 = resolve_sweetgrass();
+        assert_eq!(t1, t2);
     }
 
     #[tokio::test]

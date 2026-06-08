@@ -93,11 +93,12 @@ and encrypted notification (no-response) verification.
 
 ## Status
 
-v0.2.7 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.8 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (zero `#[allow]` in production; target-conditional
 `#[cfg_attr(not(test), expect(...))]` only). `--socket` implies `--no-tcp` per ecosystem convention.
-Transport Evolution: `TransportEndpoint` type (sourDough-compatible) + `TRANSPORT_ENDPOINT` env
-var for launcher-injected transport (Wave 100 compliance, ready for full adoption).
+Transport Evolution: `TransportEndpoint` type (sourDough-compatible) fully wired — `TRANSPORT_ENDPOINT`
+env var parsed in `main.rs` for server bind, outbound forwarding uses `TransportEndpoint` for
+DAG/braid routing. Typed `ServerError` (no `Box<dyn Error>`).
 JSON-RPC IPC server with BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated
 handshake aligned with v0.9.0, `btsp.negotiate` server handler with session registry and
 ChaCha20-Poly1305 AEAD framing). `rand` eliminated — OsRng via RustCrypto re-export.
