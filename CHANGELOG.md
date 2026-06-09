@@ -2,24 +2,26 @@
 
 All notable changes to skunkBat are documented here.
 
-## [0.2.8] — 2026-06-08
+## [0.2.8] — 2026-06-09
 
 ### Changed
 
-- **Typed `ServerError`** — replaced `Box<dyn Error>` in main.rs with proper
-  `thiserror`-derived `ServerError` enum. No more trait object boxing at the
-  binary boundary.
-- **`TRANSPORT_ENDPOINT` wired in `main.rs`** — server now reads the env var
-  at startup. When set to `{"transport":"uds","path":"..."}`, overrides CLI
-  flags for UDS-only binding. TCP variant similarly overrides. Full sourDough
-  `TransportEndpoint` compliance.
-- **Forwarding transport evolution** — `forward_to_dag()` and `forward_to_braid()`
-  now resolve targets via `ResolvedTarget` enum, preferring sourDough-compatible
-  `RHIZOCRYPT_TRANSPORT` / `SWEETGRASS_TRANSPORT` env vars (JSON `TransportEndpoint`)
-  with fallback to legacy `RHIZOCRYPT_ENDPOINT` / capability sockets.
-- **One-shot DRY** — extracted `started_instance()` helper, eliminating repeated
-  `SkunkBatConfig::default() + SkunkBat::new() + start()` boilerplate across
-  `health`, `scan`, and `detect` subcommands.
+- **Zero `Box<dyn Error>` in production** — replaced all trait-object error
+  handling with typed enums:
+  - `main.rs`: `ServerError` (thiserror-derived)
+  - `ipc/mod.rs` + `transport/mod.rs`: `TransportError` (now includes `Task` variant)
+- **`TRANSPORT_ENDPOINT` fully wired** — server reads env var at startup,
+  overrides CLI flags. All integration clients (beardog, toadstool, songbird,
+  forwarding) prefer `*_TRANSPORT` env vars (sourDough JSON format) over legacy
+  TCP endpoint strings.
+- **Integration transport evolution** — `RemoteLineageVerifier`, `DiscoveryClient`,
+  and `FederationClient` now accept `LINEAGE_TRANSPORT`, `DISCOVERY_TRANSPORT`,
+  `FEDERATION_TRANSPORT` env vars (JSON `TransportEndpoint` format). Resolution
+  priority: TransportEndpoint > legacy TCP > capability socket.
+- **Forwarding transport evolution** — `forward_to_dag()` / `forward_to_braid()`
+  resolve via `ResolvedTarget` enum, preferring `RHIZOCRYPT_TRANSPORT` /
+  `SWEETGRASS_TRANSPORT` env vars.
+- **One-shot DRY** — extracted `started_instance()` helper for one-shot commands.
 
 ## [0.2.7] — 2026-06-08
 

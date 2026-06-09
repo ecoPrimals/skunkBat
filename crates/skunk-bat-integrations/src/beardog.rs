@@ -15,8 +15,13 @@ use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::threats::traits::LineageVerifier;
 use std::time::Duration;
 
+use crate::rpc::TransportEndpoint;
+
 /// Default RPC timeout for lineage calls (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 3000;
+
+/// Transport endpoint env for lineage capability (sourDough standard).
+const LINEAGE_TRANSPORT_ENV: &str = "LINEAGE_TRANSPORT";
 
 /// Remote lineage verifier backed by a runtime-discovered capability provider.
 ///
@@ -29,6 +34,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 3000;
 pub struct RemoteLineageVerifier {
     endpoint: String,
     uds_path: Option<String>,
+    transport: Option<TransportEndpoint>,
     timeout_ms: u64,
 }
 
@@ -40,16 +46,23 @@ impl RemoteLineageVerifier {
         Self {
             endpoint,
             uds_path: None,
+            transport: None,
             timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 
     /// Create from environment with capability-socket discovery.
     ///
-    /// Reads `LINEAGE_ENDPOINT` for TCP and probes
-    /// `$BIOMEOS_SOCKET_DIR/lineage-verification.sock` for UDS.
+    /// Resolution priority:
+    /// 1. `LINEAGE_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
+    /// 2. `LINEAGE_ENDPOINT` env (legacy TCP string)
+    /// 3. Capability socket (`lineage-verification.sock`)
     #[must_use]
     pub fn from_env() -> Self {
+        let transport: Option<TransportEndpoint> = std::env::var(LINEAGE_TRANSPORT_ENV)
+            .ok()
+            .and_then(|v| serde_json::from_str(&v).ok());
+
         let endpoint =
             std::env::var(skunk_bat_core::env_keys::LINEAGE_ENDPOINT).unwrap_or_default();
         let uds_path = {
@@ -57,6 +70,7 @@ impl RemoteLineageVerifier {
             std::path::Path::new(&path).exists().then_some(path)
         };
         tracing::info!(
+            transport = ?transport,
             endpoint = %endpoint,
             uds = ?uds_path,
             "Initializing remote lineage verifier"
@@ -64,6 +78,7 @@ impl RemoteLineageVerifier {
         Self {
             endpoint,
             uds_path,
+            transport,
             timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
@@ -89,6 +104,9 @@ impl RemoteLineageVerifier {
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, crate::rpc::RpcError> {
         let timeout = Duration::from_millis(self.timeout_ms);
+        if let Some(ref ep) = self.transport {
+            return crate::rpc::call_endpoint(ep, method, params, timeout).await;
+        }
         crate::rpc::call(
             self.uds_path.as_deref(),
             self.tcp_endpoint(),

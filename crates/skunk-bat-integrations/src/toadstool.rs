@@ -15,8 +15,13 @@ use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::reconnaissance::{Node, NodeStatus, PrimalDiscovery};
 use std::time::{Duration, SystemTime};
 
+use crate::rpc::TransportEndpoint;
+
 /// Default RPC timeout for discovery calls (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 5000;
+
+/// Transport endpoint env for discovery capability (sourDough standard).
+const DISCOVERY_TRANSPORT_ENV: &str = "DISCOVERY_TRANSPORT";
 
 /// Discovery client for capability-based primal lookup.
 ///
@@ -26,6 +31,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 5000;
 pub struct DiscoveryClient {
     endpoint: String,
     uds_path: Option<String>,
+    transport: Option<TransportEndpoint>,
     timeout_ms: u64,
 }
 
@@ -53,16 +59,23 @@ impl DiscoveryClient {
         Self {
             endpoint,
             uds_path: None,
+            transport: None,
             timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 
     /// Create from environment with capability-socket discovery.
     ///
-    /// Reads `DISCOVERY_ENDPOINT` for TCP and probes
-    /// `$BIOMEOS_SOCKET_DIR/discovery.sock` for UDS.
+    /// Resolution priority:
+    /// 1. `DISCOVERY_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
+    /// 2. `DISCOVERY_ENDPOINT` env (legacy TCP string)
+    /// 3. Capability socket (`discovery.sock`)
     #[must_use]
     pub fn from_env() -> Self {
+        let transport: Option<TransportEndpoint> = std::env::var(DISCOVERY_TRANSPORT_ENV)
+            .ok()
+            .and_then(|v| serde_json::from_str(&v).ok());
+
         let endpoint =
             std::env::var(skunk_bat_core::env_keys::DISCOVERY_ENDPOINT).unwrap_or_default();
         let uds_path = {
@@ -70,6 +83,7 @@ impl DiscoveryClient {
             std::path::Path::new(&path).exists().then_some(path)
         };
         tracing::info!(
+            transport = ?transport,
             endpoint = %endpoint,
             uds = ?uds_path,
             "Initializing discovery client"
@@ -77,6 +91,7 @@ impl DiscoveryClient {
         Self {
             endpoint,
             uds_path,
+            transport,
             timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
@@ -108,6 +123,11 @@ impl DiscoveryClient {
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, SkunkBatError> {
         let timeout = Duration::from_millis(self.timeout_ms);
+        if let Some(ref ep) = self.transport {
+            return crate::rpc::call_endpoint(ep, method, params, timeout)
+                .await
+                .map_err(|e| SkunkBatError::Integration(e.to_string()));
+        }
         crate::rpc::call(
             self.uds_path.as_deref(),
             self.tcp_endpoint(),

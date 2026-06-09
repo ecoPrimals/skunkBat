@@ -28,4 +28,8 @@ pub enum TransportError {
     /// Underlying I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+
+    /// Spawned task panicked or was cancelled.
+    #[error("task: {0}")]
+    Task(#[from] tokio::task::JoinError),
 }

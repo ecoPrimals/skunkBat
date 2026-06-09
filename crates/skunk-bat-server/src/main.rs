@@ -35,8 +35,8 @@ enum ServerError {
     #[error("serialize: {0}")]
     Serialize(#[from] serde_json::Error),
 
-    #[error("ipc: {0}")]
-    Ipc(String),
+    #[error("{0}")]
+    Transport(#[from] ipc::transport::TransportError),
 }
 
 /// Default TCP port for JSON-RPC (aligned with `ports.env`).
@@ -213,7 +213,6 @@ async fn run_server(
         tracing::info!("skunkBat server starting on {bind}:{port}");
     }
 
-    ipc::serve(skunkbat, bind.to_owned(), port, socket.as_deref(), no_uds, no_tcp)
-        .await
-        .map_err(|e| ServerError::Ipc(e.to_string()))
+    ipc::serve(skunkbat, bind.to_owned(), port, socket.as_deref(), no_uds, no_tcp).await?;
+    Ok(())
 }

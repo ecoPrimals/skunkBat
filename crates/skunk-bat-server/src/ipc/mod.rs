@@ -44,7 +44,7 @@ pub async fn serve(
     socket_override: Option<&str>,
     no_uds: bool,
     no_tcp: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), transport::TransportError> {
     dispatch::set_active_transports(no_tcp, no_uds);
 
     let state = Arc::new(RwLock::new(skunkbat));
