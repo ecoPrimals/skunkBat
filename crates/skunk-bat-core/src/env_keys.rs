@@ -63,3 +63,9 @@ pub const SKUNKBAT_AUTH_MODE: &str = "SKUNKBAT_AUTH_MODE";
 /// or `{"transport":"tcp","host":"127.0.0.1","port":9100}`.
 /// When set, overrides per-capability endpoint env vars.
 pub const TRANSPORT_ENDPOINT: &str = "TRANSPORT_ENDPOINT";
+
+/// Primal bind mode — controls whether TCP is active.
+///
+/// - Unset or `uds-only`: UDS only, no TCP (zero-port standard).
+/// - `fallback`: UDS + TCP (for platforms without UDS or debug/standalone).
+pub const PRIMAL_BIND_MODE: &str = "PRIMAL_BIND_MODE";

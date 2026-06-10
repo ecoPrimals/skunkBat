@@ -22,7 +22,7 @@ observability — all metadata-only, no content inspection by architecture.
 
 ## IPC Surface
 
-- **Transport**: TCP (`--port`, default 9750) + UDS (`--socket` or `$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`); `--no-tcp` for port-free deployment
+- **Transport**: UDS-only by default (zero-port standard); TCP via explicit `--port` or `PRIMAL_BIND_MODE=fallback`; `$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`
 - **BTSP Phase 1**: `FAMILY_ID` socket scoping, `BIOMEOS_INSECURE` guard, `XDG_RUNTIME_DIR` fallback
 - **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with first-byte peek (`{` → plain JSON-RPC for biomeOS composition bypass)
 - **BTSP Phase 3**: `btsp.negotiate` server handler with encrypted frame upgrade — session registry, cipher selection, HKDF key derivation, `ChaCha20-Poly1305` AEAD framing wired into connection loop (`[4B len][12B nonce][ct+tag]`)
@@ -93,12 +93,11 @@ and encrypted notification (no-response) verification.
 
 ## Status
 
-v0.2.8 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.9 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (zero `#[allow]` in production; target-conditional
-`#[cfg_attr(not(test), expect(...))]` only). `--socket` implies `--no-tcp` per ecosystem convention.
-Transport Evolution: `TransportEndpoint` type (sourDough-compatible) fully wired — `TRANSPORT_ENDPOINT`
-env var parsed in `main.rs` for server bind, outbound forwarding uses `TransportEndpoint` for
-DAG/braid routing. Typed `ServerError` (no `Box<dyn Error>`).
+`#[cfg_attr(not(test), expect(...))]` only). **Zero-port standard**: UDS-only by default, TCP
+only via explicit `--port` or `PRIMAL_BIND_MODE=fallback`. Transport Evolution: `TransportEndpoint`
+fully wired at all IPC boundaries (inbound + outbound). Typed errors (no `Box<dyn Error>`).
 JSON-RPC IPC server with BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated
 handshake aligned with v0.9.0, `btsp.negotiate` server handler with session registry and
 ChaCha20-Poly1305 AEAD framing). `rand` eliminated — OsRng via RustCrypto re-export.

@@ -2,6 +2,19 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.9] — 2026-06-10
+
+### Changed
+
+- **Zero-port standard compliance** — TCP binding is now OFF by default.
+  `skunkbat server` runs UDS-only (port-free). TCP activates only when:
+  - `--port <N>` is explicitly passed (Tier 5 fallback), OR
+  - `PRIMAL_BIND_MODE=fallback` env var is set, OR
+  - `TRANSPORT_ENDPOINT` specifies TCP
+- Resolves `SKUNKBAT-TCP-9750` audit item from Wave 107.
+- Added `PRIMAL_BIND_MODE` env key (`uds-only` default, `fallback` enables TCP).
+- `--port` is now `Option<u16>` (not always present in CLI args).
+
 ## [0.2.8] — 2026-06-09
 
 ### Changed

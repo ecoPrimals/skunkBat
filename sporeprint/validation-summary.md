@@ -10,7 +10,7 @@ springs = []
 
 ## Status
 
-- **Version**: v0.2.8 (Wave 101)
+- **Version**: v0.2.9 (Wave 107)
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
@@ -20,10 +20,10 @@ springs = []
 - **Coverage**: 90%+ function coverage (llvm-cov)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)
-- **Transport**: UDS + TCP; `--socket` implies port-free (ecosystem convention)
-- **Transport Evolution**: Fully wired — `TRANSPORT_ENDPOINT` parsed in main.rs, outbound forwarding via `TransportEndpoint`
-- **Error handling**: Typed `ServerError` (no `Box<dyn Error>` at binary boundary)
-- **VPS deploy**: `TRANSPORT_ENDPOINT='{"transport":"uds","path":"/run/membrane/skunkbat.sock"}' skunkbat server`
+- **Zero-port**: UDS-only default; TCP via `--port` or `PRIMAL_BIND_MODE=fallback` only
+- **Transport Evolution**: Fully wired at all IPC boundaries (inbound + outbound)
+- **Error handling**: Typed errors throughout (zero `Box<dyn Error>` in production)
+- **VPS deploy**: `skunkbat server` (UDS-only, zero-port) or `skunkbat server --port 9750` (fallback)
 
 ## Capabilities
 

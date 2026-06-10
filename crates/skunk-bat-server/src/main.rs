@@ -39,7 +39,7 @@ enum ServerError {
     Transport(#[from] ipc::transport::TransportError),
 }
 
-/// Default TCP port for JSON-RPC (aligned with `ports.env`).
+/// Default TCP port for JSON-RPC (Tier 5 fallback only).
 const DEFAULT_PORT: u16 = 9750;
 
 fn default_port() -> u16 {
@@ -54,6 +54,13 @@ fn default_bind() -> String {
         .unwrap_or_else(|_| "127.0.0.1".to_owned())
 }
 
+/// Check if TCP fallback mode is enabled via `PRIMAL_BIND_MODE`.
+fn tcp_fallback_enabled() -> bool {
+    std::env::var(skunk_bat_core::env_keys::PRIMAL_BIND_MODE)
+        .map(|v| v.eq_ignore_ascii_case("fallback"))
+        .unwrap_or(false)
+}
+
 /// skunkBat — Reconnaissance & Automated Defense
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -64,39 +71,35 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the IPC server (JSON-RPC 2.0 over UDS + TCP).
+    /// Start the IPC server (JSON-RPC 2.0, UDS-only by default).
     Server {
-        /// TCP listen address.
+        /// TCP listen address (Tier 5 fallback — requires `PRIMAL_BIND_MODE=fallback`
+        /// or explicit `--port` to activate TCP).
         ///
         /// Override with `SKUNKBAT_LISTEN_ADDR` env var or `--bind`.
-        /// Defaults to `127.0.0.1` (localhost-only). Use `0.0.0.0`
-        /// to expose on all interfaces.
+        /// Defaults to `127.0.0.1` (localhost-only).
         #[arg(long, default_value_t = default_bind())]
         bind: String,
 
-        /// TCP port to bind for JSON-RPC (newline-delimited).
+        /// TCP port — activates TCP listener as Tier 5 fallback.
         ///
-        /// Override with `SKUNKBAT_PORT` env var or `--port`.
-        #[arg(long, default_value_t = default_port())]
-        port: u16,
+        /// TCP is disabled by default (zero-port standard). Passing `--port`
+        /// explicitly enables TCP alongside UDS. Also enabled by
+        /// `PRIMAL_BIND_MODE=fallback` env var.
+        #[arg(long)]
+        port: Option<u16>,
 
         /// Explicit UDS socket path (overrides BTSP-derived path).
-        ///
-        /// Implies `--no-tcp` (port-free deployment) matching the ecosystem
-        /// convention. Add `--port` to re-enable TCP alongside UDS.
         ///
         /// Example: `--socket /run/membrane/skunkbat.sock`
         #[arg(long)]
         socket: Option<String>,
 
-        /// Disable Unix domain socket listener.
+        /// Disable Unix domain socket listener (requires TCP fallback active).
         #[arg(long)]
         no_uds: bool,
 
-        /// Disable TCP listener (port-free deployment).
-        ///
-        /// Implied automatically when `--socket` is provided.
-        /// Requires UDS to be active.
+        /// Disable TCP listener (explicit — TCP is already off by default).
         #[arg(long)]
         no_tcp: bool,
     },
@@ -134,6 +137,7 @@ async fn main() -> Result<(), ServerError> {
             no_uds,
             no_tcp,
         } => run_server(&bind, port, socket.as_deref(), no_uds, no_tcp).await,
+
         Commands::Health => {
             use skunk_bat_core::PrimalHealth;
             let mut sb = started_instance().await?;
@@ -169,33 +173,41 @@ async fn started_instance() -> Result<SkunkBat, ServerError> {
 
 async fn run_server(
     bind: &str,
-    port: u16,
+    port: Option<u16>,
     socket: Option<&str>,
     no_uds: bool,
     no_tcp: bool,
 ) -> Result<(), ServerError> {
     // TRANSPORT_ENDPOINT env var: launcher-injected transport (sourDough standard).
     // Overrides CLI flags when set.
-    let (socket, no_uds, no_tcp) = match TransportEndpoint::from_env() {
+    let (socket, no_uds, mut no_tcp, port) = match TransportEndpoint::from_env() {
         Some(TransportEndpoint::Uds { ref path }) => {
             tracing::info!("TRANSPORT_ENDPOINT: UDS at {path}");
-            (Some(path.clone()), false, true)
+            (Some(path.clone()), false, true, port)
         }
         Some(TransportEndpoint::Tcp { ref host, port: ep_port }) => {
             tracing::info!("TRANSPORT_ENDPOINT: TCP at {host}:{ep_port}");
-            (socket.map(ToOwned::to_owned), true, false)
+            (socket.map(ToOwned::to_owned), true, false, Some(ep_port))
         }
         Some(TransportEndpoint::MeshRelay { .. }) => {
             return Err(ServerError::Config(
                 "mesh_relay transport not supported for server binding".into(),
             ));
         }
-        None => (socket.map(ToOwned::to_owned), no_uds, no_tcp),
+        None => (socket.map(ToOwned::to_owned), no_uds, no_tcp, port),
     };
 
-    // Ecosystem pattern: --socket implies UDS-only (port-free) unless
-    // TCP was explicitly requested via --port.
-    let no_tcp = no_tcp || (socket.is_some() && !no_uds);
+    // Zero-port standard: TCP is off by default.
+    // TCP activates only when:
+    //   1. --port is explicitly passed, OR
+    //   2. PRIMAL_BIND_MODE=fallback, OR
+    //   3. TRANSPORT_ENDPOINT specifies TCP (handled above)
+    let tcp_requested = port.is_some() || tcp_fallback_enabled();
+    if !tcp_requested {
+        no_tcp = true;
+    }
+
+    let effective_port = port.unwrap_or_else(default_port);
 
     if no_tcp && no_uds {
         return Err(ServerError::Config(
@@ -208,11 +220,11 @@ async fn run_server(
     skunkbat.start().await?;
 
     if no_tcp {
-        tracing::info!("skunkBat server starting (port-free UDS mode)");
+        tracing::info!("skunkBat server starting (UDS-only, zero-port standard)");
     } else {
-        tracing::info!("skunkBat server starting on {bind}:{port}");
+        tracing::info!("skunkBat server starting on {bind}:{effective_port} (TCP fallback)");
     }
 
-    ipc::serve(skunkbat, bind.to_owned(), port, socket.as_deref(), no_uds, no_tcp).await?;
+    ipc::serve(skunkbat, bind.to_owned(), effective_port, socket.as_deref(), no_uds, no_tcp).await?;
     Ok(())
 }
