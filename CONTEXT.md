@@ -10,7 +10,7 @@ observability — all metadata-only, no content inspection by architecture.
 |-------|------|------|
 | `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
-| `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2/3 (BearDog-delegated handshake + `btsp.negotiate`), Wire Standard L2/L3 | binary |
+| `skunk-bat-server` | UniBin server: UDS-only default (TCP fallback), BTSP Phase 1/2/3, Wire Standard L2/L3 | binary |
 
 ## Key Concepts
 
@@ -42,11 +42,11 @@ All integration is capability-based runtime discovery. No primal names hardcoded
 **Discovery Escalation Hierarchy** (ecosystem-wide, primalSpring Phase 58+):
 1. Songbird `ipc.resolve` — highest fidelity, cross-gate capable
 2. biomeOS Neural API (`capability.discover`)
-3. UDS filesystem convention (`skunkbat-{family_id}.sock`) ← we support this
+3. UDS filesystem convention (`skunkbat-{family_id}.sock`) ← primary transport
 4. Socket registry / manifests
-5. TCP probing (port 9750) ← we support this
+5. TCP probing (port 9750) ← opt-in fallback via `PRIMAL_BIND_MODE=fallback`
 
-skunkBat supports tiers 1 (via `ipc.register`), 3, and 5 out of the box.
+skunkBat supports tiers 1 (via `ipc.register`), 3 (default), and 5 (fallback only).
 
 ## Composable Primitives
 
@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-500 tests passing (265 core + 79 integrations + 136 server + 20 transport/integration), all workspace lib+bins.
+530+ tests passing (265 core + 85 integrations + 136 server + 46 transport/integration), all workspace lib+bins.
 90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
 crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message

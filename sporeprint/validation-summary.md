@@ -14,7 +14,7 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 506 passing
+- **Tests**: 530+ passing
 - **Source**: 52 files, max 773 lines (296L production + tests)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **Coverage**: 90%+ function coverage (llvm-cov)

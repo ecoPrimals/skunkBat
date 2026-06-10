@@ -2,7 +2,7 @@
 
 Defensive network security primal for sovereign computing environments.
 
-**Version**: 0.2.0
+**Version**: 0.2.9
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 ---
@@ -46,7 +46,7 @@ skunkBat/
 ├── crates/
 │   ├── skunk-bat-core/          # Threat detection, defense, observability
 │   ├── skunk-bat-integrations/  # JSON-RPC client, discovery, federation
-│   └── skunk-bat-server/        # UniBin server (TCP + UDS + BTSP)
+│   └── skunk-bat-server/        # UniBin server (UDS + BTSP, TCP fallback)
 ├── examples/                    # 12 working examples
 ├── tests/                       # Integration, e2e, chaos tests
 └── specs/                       # Technical specifications
@@ -56,7 +56,7 @@ skunkBat/
 |-------|------|------|
 | `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
-| `skunk-bat-server` | UniBin CLI with `server`, `health`, `scan`, `detect` subcommands | binary |
+| `skunk-bat-server` | UniBin CLI: `server` (UDS-only default), `health`, `scan`, `detect` | binary |
 
 ---
 
@@ -65,19 +65,21 @@ skunkBat/
 ### Run the Server
 
 ```bash
-# Start JSON-RPC server (TCP + UDS, default port 9750)
+# Start JSON-RPC server (UDS-only, zero-port standard)
 cargo run -p skunk-bat-server -- server
 
-# Override bind/port/socket
-cargo run -p skunk-bat-server -- server --bind 0.0.0.0 --port 9750 --socket /tmp/skunkbat.sock
+# TCP fallback (Android, debug, standalone)
+cargo run -p skunk-bat-server -- server --port 9750
 
-# Health check
+# Or via env: PRIMAL_BIND_MODE=fallback skunkbat server
+# Launcher-injected: TRANSPORT_ENDPOINT='{"transport":"uds","path":"/run/membrane/skunkbat.sock"}'
+
+# Custom UDS path
+cargo run -p skunk-bat-server -- server --socket /run/membrane/skunkbat.sock
+
+# One-shot commands
 cargo run -p skunk-bat-server -- health
-
-# Run a scan
 cargo run -p skunk-bat-server -- scan
-
-# Detect threats
 cargo run -p skunk-bat-server -- detect
 ```
 
@@ -132,15 +134,27 @@ cargo deny check
 ### Environment Variables
 
 ```bash
-# Server port (default: 9750, or SKUNKBAT_PORT)
+# Bind mode (zero-port standard: UDS-only is default)
+export PRIMAL_BIND_MODE=fallback   # Enables TCP alongside UDS
+
+# TCP fallback port (only when PRIMAL_BIND_MODE=fallback or --port passed)
 export SKUNKBAT_PORT=9750
+export SKUNKBAT_LISTEN_ADDR=127.0.0.1
+
+# Launcher-injected transport (sourDough TransportEndpoint standard)
+export TRANSPORT_ENDPOINT='{"transport":"uds","path":"/run/membrane/skunkbat.sock"}'
 
 # BTSP Phase 1
 export FAMILY_ID=your-family-id
 export BIOMEOS_SOCKET_DIR=/run/biomeos
 export BIOMEOS_INSECURE=1          # Required when FAMILY_ID is unset
 
-# Capability-based discovery (runtime, not hardcoded)
+# Outbound transports (preferred over legacy TCP envs)
+export LINEAGE_TRANSPORT='{"transport":"uds","path":"/run/membrane/beardog.sock"}'
+export DISCOVERY_TRANSPORT='{"transport":"uds","path":"/run/membrane/toadstool.sock"}'
+export FEDERATION_TRANSPORT='{"transport":"uds","path":"/run/membrane/songbird.sock"}'
+
+# Legacy TCP fallback (used only when *_TRANSPORT is unset)
 export LINEAGE_ENDPOINT=127.0.0.1:9300
 export DISCOVERY_ENDPOINT=127.0.0.1:3000
 export FEDERATION_ENDPOINT=127.0.0.1:8080
@@ -171,17 +185,19 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - `#[expect(reason)]` lint suppression standard (target-conditional `#[allow]` only)
 - `cargo deny` advisory/ban/license/source checks pass; `ring` explicitly banned
-- 52 source files, all under 800 lines (largest: 670)
+- 52 source files, all under 800 lines (largest: 773)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Named constants for all thresholds — no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 500 tests passing, 90%+ function coverage (llvm-cov)
+- 530+ tests passing, 90%+ function coverage (llvm-cov)
 - All 18 IPC methods stability-tiered (Stable)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 - Self-registration with discovery (`ipc.register`) + Neural API `primal.announce`
-- Discovery Escalation Hierarchy support: tier 1 (Songbird `ipc.resolve`), tier 3 (UDS filesystem), tier 5 (TCP probing on port 9750)
+- Zero-port standard: UDS-only default, TCP via `--port` or `PRIMAL_BIND_MODE=fallback`
+- Transport Evolution: `TransportEndpoint` wired at all IPC boundaries (inbound + outbound)
+- Typed errors throughout (`thiserror` enums, zero `Box<dyn Error>` in production)
 - SIGTERM graceful shutdown, `lifecycle.status` health endpoint
 
 ---
