@@ -54,11 +54,52 @@ fn default_bind() -> String {
         .unwrap_or_else(|_| "127.0.0.1".to_owned())
 }
 
-/// Check if TCP fallback mode is enabled via `PRIMAL_BIND_MODE`.
-fn tcp_fallback_enabled() -> bool {
-    std::env::var(skunk_bat_core::env_keys::PRIMAL_BIND_MODE)
-        .map(|v| v.eq_ignore_ascii_case("fallback"))
-        .unwrap_or(false)
+/// Primal bind mode — standard startup contract (Wave 109).
+///
+/// Determines which transports are active without per-primal flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindMode {
+    UdsOnly,
+    TcpOnly,
+    Fallback,
+}
+
+impl BindMode {
+    fn from_env() -> Self {
+        match std::env::var(skunk_bat_core::env_keys::PRIMAL_BIND_MODE) {
+            Ok(v) if v.eq_ignore_ascii_case("tcp_only") || v.eq_ignore_ascii_case("tcp-only") => {
+                Self::TcpOnly
+            }
+            Ok(v) if v.eq_ignore_ascii_case("fallback") => Self::Fallback,
+            _ => Self::UdsOnly,
+        }
+    }
+}
+
+impl std::fmt::Display for BindMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UdsOnly => f.write_str("uds-only"),
+            Self::TcpOnly => f.write_str("tcp-only"),
+            Self::Fallback => f.write_str("fallback"),
+        }
+    }
+}
+
+impl std::str::FromStr for BindMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().replace('-', "_").as_str() {
+            "uds_only" | "uds" => Ok(Self::UdsOnly),
+            "tcp_only" | "tcp" => Ok(Self::TcpOnly),
+            "fallback" | "both" => Ok(Self::Fallback),
+            other => Err(format!("unknown bind mode: {other} (expected: uds-only, tcp-only, fallback)")),
+        }
+    }
+}
+
+fn default_bind_mode() -> BindMode {
+    BindMode::from_env()
 }
 
 /// skunkBat — Reconnaissance & Automated Defense
@@ -71,37 +112,36 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the IPC server (JSON-RPC 2.0, UDS-only by default).
+    /// Start the IPC server (JSON-RPC 2.0, standard primal startup contract).
     Server {
-        /// TCP listen address (Tier 5 fallback — requires `PRIMAL_BIND_MODE=fallback`
-        /// or explicit `--port` to activate TCP).
+        /// Transport bind mode (standard primal contract).
+        ///
+        /// - `uds-only` (default): UDS only, zero-port standard.
+        /// - `tcp-only`: TCP only (Android/grapheneGate where UDS is denied).
+        /// - `fallback`: Both UDS + TCP (debug/standalone).
+        ///
+        /// Reads from `PRIMAL_BIND_MODE` env var if not passed.
+        #[arg(long, default_value_t = default_bind_mode())]
+        bind_mode: BindMode,
+
+        /// TCP listen address.
         ///
         /// Override with `SKUNKBAT_LISTEN_ADDR` env var or `--bind`.
         /// Defaults to `127.0.0.1` (localhost-only).
         #[arg(long, default_value_t = default_bind())]
         bind: String,
 
-        /// TCP port — activates TCP listener as Tier 5 fallback.
+        /// TCP port (used when bind-mode includes TCP).
         ///
-        /// TCP is disabled by default (zero-port standard). Passing `--port`
-        /// explicitly enables TCP alongside UDS. Also enabled by
-        /// `PRIMAL_BIND_MODE=fallback` env var.
-        #[arg(long)]
-        port: Option<u16>,
+        /// Override with `SKUNKBAT_PORT` env var. Default: 9750.
+        #[arg(long, default_value_t = default_port())]
+        port: u16,
 
         /// Explicit UDS socket path (overrides BTSP-derived path).
         ///
         /// Example: `--socket /run/membrane/skunkbat.sock`
         #[arg(long)]
         socket: Option<String>,
-
-        /// Disable Unix domain socket listener (requires TCP fallback active).
-        #[arg(long)]
-        no_uds: bool,
-
-        /// Disable TCP listener (explicit — TCP is already off by default).
-        #[arg(long)]
-        no_tcp: bool,
     },
 
     /// One-shot health check (exits 0 if healthy).
@@ -131,12 +171,11 @@ async fn main() -> Result<(), ServerError> {
 
     match cli.command {
         Commands::Server {
+            bind_mode,
             bind,
             port,
             socket,
-            no_uds,
-            no_tcp,
-        } => run_server(&bind, port, socket.as_deref(), no_uds, no_tcp).await,
+        } => run_server(bind_mode, &bind, port, socket.as_deref()).await,
 
         Commands::Health => {
             use skunk_bat_core::PrimalHealth;
@@ -172,59 +211,57 @@ async fn started_instance() -> Result<SkunkBat, ServerError> {
 }
 
 async fn run_server(
+    mut bind_mode: BindMode,
     bind: &str,
-    port: Option<u16>,
+    port: u16,
     socket: Option<&str>,
-    no_uds: bool,
-    no_tcp: bool,
 ) -> Result<(), ServerError> {
     // TRANSPORT_ENDPOINT env var: launcher-injected transport (sourDough standard).
-    // Overrides CLI flags when set.
-    let (socket, no_uds, mut no_tcp, port) = match TransportEndpoint::from_env() {
+    // Overrides bind-mode when set.
+    let (socket, bind_mode, port) = match TransportEndpoint::from_env() {
         Some(TransportEndpoint::Uds { ref path }) => {
             tracing::info!("TRANSPORT_ENDPOINT: UDS at {path}");
-            (Some(path.clone()), false, true, port)
+            (Some(path.clone()), BindMode::UdsOnly, port)
         }
         Some(TransportEndpoint::Tcp { ref host, port: ep_port }) => {
             tracing::info!("TRANSPORT_ENDPOINT: TCP at {host}:{ep_port}");
-            (socket.map(ToOwned::to_owned), true, false, Some(ep_port))
+            (socket.map(ToOwned::to_owned), BindMode::TcpOnly, ep_port)
         }
         Some(TransportEndpoint::MeshRelay { .. }) => {
             return Err(ServerError::Config(
                 "mesh_relay transport not supported for server binding".into(),
             ));
         }
-        None => (socket.map(ToOwned::to_owned), no_uds, no_tcp, port),
+        None => {
+            // --port on CLI with uds-only mode implies user wants fallback
+            if bind_mode == BindMode::UdsOnly
+                && std::env::args().any(|a| a == "--port")
+            {
+                bind_mode = BindMode::Fallback;
+            }
+            (socket.map(ToOwned::to_owned), bind_mode, port)
+        }
     };
 
-    // Zero-port standard: TCP is off by default.
-    // TCP activates only when:
-    //   1. --port is explicitly passed, OR
-    //   2. PRIMAL_BIND_MODE=fallback, OR
-    //   3. TRANSPORT_ENDPOINT specifies TCP (handled above)
-    let tcp_requested = port.is_some() || tcp_fallback_enabled();
-    if !tcp_requested {
-        no_tcp = true;
-    }
-
-    let effective_port = port.unwrap_or_else(default_port);
-
-    if no_tcp && no_uds {
-        return Err(ServerError::Config(
-            "cannot disable both TCP and UDS — no listeners would be active".into(),
-        ));
-    }
+    let no_tcp = bind_mode == BindMode::UdsOnly;
+    let no_uds = bind_mode == BindMode::TcpOnly;
 
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
 
-    if no_tcp {
-        tracing::info!("skunkBat server starting (UDS-only, zero-port standard)");
-    } else {
-        tracing::info!("skunkBat server starting on {bind}:{effective_port} (TCP fallback)");
+    match bind_mode {
+        BindMode::UdsOnly => {
+            tracing::info!("skunkBat server starting (bind-mode: uds-only)");
+        }
+        BindMode::TcpOnly => {
+            tracing::info!("skunkBat server starting on {bind}:{port} (bind-mode: tcp-only)");
+        }
+        BindMode::Fallback => {
+            tracing::info!("skunkBat server starting on {bind}:{port} + UDS (bind-mode: fallback)");
+        }
     }
 
-    ipc::serve(skunkbat, bind.to_owned(), effective_port, socket.as_deref(), no_uds, no_tcp).await?;
+    ipc::serve(skunkbat, bind.to_owned(), port, socket.as_deref(), no_uds, no_tcp).await?;
     Ok(())
 }

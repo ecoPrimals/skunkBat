@@ -64,8 +64,9 @@ pub const SKUNKBAT_AUTH_MODE: &str = "SKUNKBAT_AUTH_MODE";
 /// When set, overrides per-capability endpoint env vars.
 pub const TRANSPORT_ENDPOINT: &str = "TRANSPORT_ENDPOINT";
 
-/// Primal bind mode — controls whether TCP is active.
+/// Primal bind mode — standard startup contract (Wave 109).
 ///
-/// - Unset or `uds-only`: UDS only, no TCP (zero-port standard).
-/// - `fallback`: UDS + TCP (for platforms without UDS or debug/standalone).
+/// - Unset or `uds-only`: UDS only, no TCP (zero-port standard, default).
+/// - `tcp-only` / `tcp_only`: TCP only, no UDS (Android/grapheneGate `SELinux`).
+/// - `fallback`: UDS + TCP (debug/standalone/both-transport environments).
 pub const PRIMAL_BIND_MODE: &str = "PRIMAL_BIND_MODE";

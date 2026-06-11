@@ -2,7 +2,7 @@
 
 Defensive network security primal for sovereign computing environments.
 
-**Version**: 0.2.9
+**Version**: 0.2.10
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 ---
@@ -65,22 +65,25 @@ skunkBat/
 ### Run the Server
 
 ```bash
-# Start JSON-RPC server (UDS-only, zero-port standard)
-cargo run -p skunk-bat-server -- server
+# Standard primal startup contract (UDS-only default)
+skunkbat server
+skunkbat server --bind-mode uds-only           # explicit (same as default)
+skunkbat server --bind-mode tcp-only --port 9750   # Android/grapheneGate
+skunkbat server --bind-mode fallback --port 9750   # both UDS + TCP
 
-# TCP fallback (Android, debug, standalone)
-cargo run -p skunk-bat-server -- server --port 9750
+# Via env (standard ecosystem pattern — no per-primal flags)
+PRIMAL_BIND_MODE=tcp_only skunkbat server --port 9750
 
-# Or via env: PRIMAL_BIND_MODE=fallback skunkbat server
-# Launcher-injected: TRANSPORT_ENDPOINT='{"transport":"uds","path":"/run/membrane/skunkbat.sock"}'
+# Launcher-injected transport (overrides bind-mode)
+TRANSPORT_ENDPOINT='{"transport":"uds","path":"/run/membrane/skunkbat.sock"}' skunkbat server
 
 # Custom UDS path
-cargo run -p skunk-bat-server -- server --socket /run/membrane/skunkbat.sock
+skunkbat server --socket /run/membrane/skunkbat.sock
 
 # One-shot commands
-cargo run -p skunk-bat-server -- health
-cargo run -p skunk-bat-server -- scan
-cargo run -p skunk-bat-server -- detect
+skunkbat health
+skunkbat scan
+skunkbat detect
 ```
 
 ### Library Usage
@@ -134,8 +137,9 @@ cargo deny check
 ### Environment Variables
 
 ```bash
-# Bind mode (zero-port standard: UDS-only is default)
-export PRIMAL_BIND_MODE=fallback   # Enables TCP alongside UDS
+# Bind mode (standard primal startup contract)
+# Values: uds-only (default) | tcp-only (Android) | fallback (both)
+export PRIMAL_BIND_MODE=fallback
 
 # TCP fallback port (only when PRIMAL_BIND_MODE=fallback or --port passed)
 export SKUNKBAT_PORT=9750

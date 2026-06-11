@@ -2,6 +2,23 @@
 
 All notable changes to skunkBat are documented here.
 
+## [0.2.10] — 2026-06-11
+
+### Changed
+
+- **Standard primal startup contract** (Wave 109, `STARTUP-SB-01`):
+  - Replaced `--no-uds` / `--no-tcp` flags with single `--bind-mode` flag.
+  - Values: `uds-only` (default), `tcp-only` (Android/grapheneGate), `fallback` (both).
+  - Reads from `PRIMAL_BIND_MODE` env var when not passed on CLI.
+  - Startup envelope: `skunkbat server --bind-mode $PRIMAL_BIND_MODE --port $PORT`
+  - No per-primal case blocks needed in deploy scripts.
+- `--port` is now always present with a default (9750), active only when bind-mode
+  includes TCP.
+
+### Removed
+
+- `--no-uds` and `--no-tcp` flags (superseded by `--bind-mode`).
+
 ## [0.2.9] — 2026-06-10
 
 ### Changed
