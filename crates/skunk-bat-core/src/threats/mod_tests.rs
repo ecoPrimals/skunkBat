@@ -498,11 +498,21 @@ type DefaultDetector =
 
 #[test]
 fn test_has_sequential_ports() {
-    assert!(DefaultDetector::has_sequential_ports(&[1, 2, 3]));
-    assert!(DefaultDetector::has_sequential_ports(&[10, 11, 12, 50, 51]));
-    assert!(!DefaultDetector::has_sequential_ports(&[1, 5, 10]));
-    assert!(!DefaultDetector::has_sequential_ports(&[1, 2]));
-    assert!(!DefaultDetector::has_sequential_ports(&[]));
+    assert!(DefaultDetector::has_sequential_ports(&[1, 2, 3], 3));
+    assert!(DefaultDetector::has_sequential_ports(
+        &[10, 11, 12, 50, 51],
+        3
+    ));
+    assert!(!DefaultDetector::has_sequential_ports(&[1, 5, 10], 3));
+    assert!(!DefaultDetector::has_sequential_ports(&[1, 2], 3));
+    assert!(!DefaultDetector::has_sequential_ports(&[], 3));
+}
+
+#[test]
+fn test_has_sequential_ports_custom_window() {
+    assert!(DefaultDetector::has_sequential_ports(&[1, 2, 3, 4], 4));
+    assert!(!DefaultDetector::has_sequential_ports(&[1, 2, 3], 4));
+    assert!(DefaultDetector::has_sequential_ports(&[5, 6], 2));
 }
 
 #[test]

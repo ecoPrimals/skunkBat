@@ -59,7 +59,7 @@ impl ThreatDetector {
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
         let mut profiler = StatisticalProfiler::new(config.detection.sigma_threshold);
-        profiler.seed_baseline(&baseline::normal_baseline());
+        profiler.seed_baseline(&baseline::normal_baseline_for(config.common.listen_port));
         Self::with_verifiers(config, LocalLineageVerifier, profiler)
     }
 }
@@ -80,7 +80,9 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             lineage_id: config.lineage_id.clone(),
             lineage_verifier,
             baseline_profiler,
-            topology_validator: LayerTopologyValidator::new(vec![0, 1, 2, 3]),
+            topology_validator: LayerTopologyValidator::new(
+                config.detection.expected_topology_path.clone(),
+            ),
             thresholds: config.detection.clone(),
         }
     }
@@ -194,16 +196,18 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
             }
             Ok(false) => {
                 tracing::warn!("Lineage verification FAILED for {my_lineage}");
+                let suffix = Self::threat_id_suffix();
+                let lineage = my_lineage.clone();
                 Ok(vec![Threat {
-                    id: format!("genetic-lineage-{}", Self::threat_id_suffix()),
+                    id: format!("genetic-lineage-{suffix}"),
                     threat_type: ThreatType::UnknownLineage {
-                        peer_id: my_lineage.clone(),
+                        peer_id: lineage.clone(),
                         lineage: None,
                     },
-                    source: my_lineage.clone(),
+                    source: lineage,
                     target: "self".to_owned(),
                     severity: Severity::Critical,
-                    confidence: 0.95,
+                    confidence: self.thresholds.genetic_lineage_confidence,
                     description: format!(
                         "Lineage verification failed — identity '{my_lineage}' not recognized"
                     ),
@@ -239,9 +243,14 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                 } else {
                     Severity::Low
                 };
+                let description = format!(
+                    "Behavioral anomaly detected: {behavior}",
+                    behavior = a.behavior
+                );
+                let suffix = Self::threat_id_suffix();
                 Threat {
-                    id: format!("anomaly-{}", Self::threat_id_suffix()),
-                    description: format!("Behavioral anomaly detected: {}", a.behavior),
+                    id: format!("anomaly-{suffix}"),
+                    description,
                     confidence: a.confidence,
                     threat_type: ThreatType::BehaviorAnomaly {
                         deviation: a.deviation,
@@ -270,19 +279,23 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
         let mut threats = Vec::new();
 
         if obs.ports_accessed.len() >= self.thresholds.port_scan_threshold {
-            let sequential = Self::has_sequential_ports(&obs.ports_accessed);
+            let sequential = Self::has_sequential_ports(
+                &obs.ports_accessed,
+                self.thresholds.sequential_port_window,
+            );
             let severity = if sequential {
                 Severity::High
             } else {
                 Severity::Medium
             };
+            let suffix = Self::threat_id_suffix();
+            let port_count = obs.ports_accessed.len();
             threats.push(Threat {
-                id: format!("intrusion-portscan-{}", Self::threat_id_suffix()),
+                id: format!("intrusion-portscan-{suffix}"),
                 threat_type: ThreatType::IntrusionAttempt {
                     attack_type: "port_scan".to_owned(),
                     signature: format!(
-                        "{} ports accessed{}",
-                        obs.ports_accessed.len(),
+                        "{port_count} ports accessed{}",
                         if sequential { " (sequential)" } else { "" }
                     ),
                 },
@@ -291,8 +304,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                 target: "local".to_owned(),
                 detected_at: SystemTime::now(),
                 description: format!(
-                    "Port scan detected: {} distinct ports accessed in observation window",
-                    obs.ports_accessed.len()
+                    "Port scan detected: {port_count} distinct ports accessed in observation window"
                 ),
                 confidence: self.thresholds.port_scan_confidence,
             });
@@ -301,13 +313,16 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
         Ok(threats)
     }
 
-    fn has_sequential_ports(ports: &[u16]) -> bool {
-        if ports.len() < 3 {
+    fn has_sequential_ports(ports: &[u16], window: usize) -> bool {
+        if ports.len() < window || window < 2 {
             return false;
         }
         let mut sorted: Vec<u16> = ports.to_vec();
         sorted.sort_unstable();
-        sorted.windows(3).any(|w| w[2] == w[0] + 2)
+        let span = u16::try_from(window - 1).unwrap_or(u16::MAX);
+        sorted
+            .windows(window)
+            .any(|w| w[window - 1] == w[0].saturating_add(span))
     }
 
     async fn detect_topology_violations(&self) -> Result<Vec<Threat>, SkunkBatError> {
@@ -323,7 +338,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
         actual_path.sort_unstable();
         actual_path.dedup();
 
-        if actual_path.len() < 3 {
+        if actual_path.len() < self.thresholds.min_topology_path_layers {
             return Ok(Vec::new());
         }
 
@@ -338,22 +353,21 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
             Severity::Medium
         };
 
+        let suffix = Self::threat_id_suffix();
+        let bypass_count = validation.bypassed_layers.len();
         Ok(vec![Threat {
-            id: format!("topology-bypass-{}", Self::threat_id_suffix()),
+            id: format!("topology-bypass-{suffix}"),
             threat_type: ThreatType::TopologyViolation {
                 expected_path: validation.expected_path,
                 actual_path: validation.actual_path,
-                bypassed_layers: validation.bypassed_layers.clone(),
+                bypassed_layers: validation.bypassed_layers,
             },
             severity,
             source: "network".to_owned(),
             target: "local".to_owned(),
             detected_at: SystemTime::now(),
-            description: format!(
-                "Topology bypass: {} layer(s) skipped",
-                validation.bypassed_layers.len()
-            ),
-            confidence: 0.8,
+            description: format!("Topology bypass: {bypass_count} layer(s) skipped"),
+            confidence: self.thresholds.topology_bypass_confidence,
         }])
     }
 
@@ -373,8 +387,10 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
     async fn detect_resource_exhaustion(&self) -> Result<Vec<Threat>, SkunkBatError> {
         let load = Self::check_system_load();
         if load > self.thresholds.dos_load_threshold {
+            let suffix = Self::threat_id_suffix();
+            let pct = load * 100.0;
             return Ok(vec![Threat {
-                id: format!("dos-{:?}", SystemTime::now()),
+                id: format!("dos-{suffix}"),
                 threat_type: ThreatType::DenialOfService {
                     resource: "cpu".to_owned(),
                     current_level: load,
@@ -383,7 +399,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                 source: "unknown".to_owned(),
                 target: "local".to_owned(),
                 detected_at: SystemTime::now(),
-                description: format!("High CPU usage detected: {:.1}%", load * 100.0),
+                description: format!("High CPU usage detected: {pct:.1}%"),
                 confidence: self.thresholds.dos_confidence,
             }]);
         }

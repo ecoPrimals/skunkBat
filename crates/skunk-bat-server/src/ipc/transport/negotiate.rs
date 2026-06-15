@@ -109,11 +109,7 @@ impl std::fmt::Display for BondType {
 /// State for an authenticated BTSP session.
 #[derive(Debug, Clone)]
 pub struct SessionState {
-    /// When this session was created (for TTL expiry in Phase 3+).
-    #[expect(
-        dead_code,
-        reason = "used for session expiry once cleanup task is added"
-    )]
+    /// When this session was created (used by the TTL reaper).
     pub created_at: Instant,
     /// The negotiated cipher (initially Null after Phase 2).
     pub cipher: CipherSuite,
@@ -123,6 +119,12 @@ pub struct SessionState {
     /// Derived directional keys after Phase 3 negotiate (server perspective).
     pub phase3_keys: Option<SessionKeys>,
 }
+
+/// Default session TTL — sessions older than this are reaped.
+const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// How often the reaper task sweeps for stale sessions.
+const REAPER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Registry of active BTSP sessions.
 ///
@@ -165,19 +167,48 @@ impl SessionRegistry {
         }
     }
 
-    /// Remove a session (on disconnect or timeout).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for session TTL cleanup")
+    /// Remove a session (on disconnect or explicit revocation).
+    #[expect(
+        dead_code,
+        reason = "public API for connection-close handlers (future)"
     )]
     pub async fn remove(&self, session_id: &str) {
         self.sessions.write().await.remove(session_id);
     }
 
     /// Number of active sessions.
-    #[cfg_attr(not(test), expect(dead_code, reason = "reserved for metrics"))]
     pub async fn len(&self) -> usize {
         self.sessions.read().await.len()
+    }
+
+    /// Evict sessions older than `ttl`, returning the count of reaped entries.
+    pub async fn reap_stale(&self, ttl: std::time::Duration) -> usize {
+        let now = Instant::now();
+        let mut map = self.sessions.write().await;
+        let before = map.len();
+        map.retain(|_id, state| now.duration_since(state.created_at) < ttl);
+        before - map.len()
+    }
+
+    /// Spawn a background task that periodically evicts stale sessions.
+    pub fn spawn_reaper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let registry = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(REAPER_INTERVAL);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let reaped = registry.reap_stale(SESSION_TTL).await;
+                let remaining = registry.len().await;
+                if reaped > 0 {
+                    tracing::info!(
+                        reaped,
+                        remaining,
+                        "BTSP session reaper: evicted stale sessions"
+                    );
+                }
+            }
+        })
     }
 }
 
@@ -532,4 +563,77 @@ pub fn decrypt_frame(key: &[u8; 32], frame: &[u8]) -> Result<Vec<u8>, super::Tra
     cipher
         .decrypt(nonce, ciphertext)
         .map_err(|e| super::TransportError::Crypto(format!("decrypt: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn registry_insert_and_get() {
+        let reg = SessionRegistry::new();
+        reg.insert("s1".into(), None).await;
+        assert!(reg.get("s1").await.is_some());
+        assert!(reg.get("s2").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn registry_remove() {
+        let reg = SessionRegistry::new();
+        reg.insert("s1".into(), None).await;
+        reg.remove("s1").await;
+        assert!(reg.get("s1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn registry_len() {
+        let reg = SessionRegistry::new();
+        assert_eq!(reg.len().await, 0);
+        reg.insert("a".into(), None).await;
+        reg.insert("b".into(), None).await;
+        assert_eq!(reg.len().await, 2);
+    }
+
+    #[tokio::test]
+    async fn reap_stale_removes_expired_sessions() {
+        let reg = SessionRegistry::new();
+        reg.insert("old".into(), None).await;
+        {
+            let mut sessions = reg.sessions.write().await;
+            sessions.get_mut("old").unwrap().created_at =
+                Instant::now() - std::time::Duration::from_secs(7200);
+        }
+        reg.insert("fresh".into(), None).await;
+
+        let reaped = reg.reap_stale(std::time::Duration::from_secs(3600)).await;
+        assert_eq!(reaped, 1);
+        assert!(reg.get("old").await.is_none());
+        assert!(reg.get("fresh").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn reap_stale_zero_when_none_expired() {
+        let reg = SessionRegistry::new();
+        reg.insert("a".into(), None).await;
+        reg.insert("b".into(), None).await;
+        let reaped = reg.reap_stale(std::time::Duration::from_secs(3600)).await;
+        assert_eq!(reaped, 0);
+        assert_eq!(reg.len().await, 2);
+    }
+
+    #[tokio::test]
+    async fn update_phase3_sets_cipher_and_keys() {
+        let reg = SessionRegistry::new();
+        reg.insert("s1".into(), Some(vec![1, 2, 3])).await;
+        let keys = SessionKeys {
+            encrypt_key: [42u8; 32],
+            decrypt_key: [43u8; 32],
+        };
+        reg.update_phase3("s1", CipherSuite::ChaCha20Poly1305, keys)
+            .await;
+
+        let session = reg.get("s1").await.unwrap();
+        assert_eq!(session.cipher, CipherSuite::ChaCha20Poly1305);
+        assert!(session.phase3_keys.is_some());
+    }
 }

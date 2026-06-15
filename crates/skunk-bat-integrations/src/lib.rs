@@ -7,13 +7,13 @@
 //! primal announces the relevant capability at runtime — no compile-time
 //! coupling to specific primal names.
 //!
-//! | Module | Capability | Runtime Discovery |
-//! |--------|-----------|-------------------|
-//! | [`beardog`] | `lineage-verification` | `LINEAGE_ENDPOINT` env var |
-//! | [`songbird`] | `federation` | `FEDERATION_ENDPOINT` env var |
-//! | [`toadstool`] | `discovery` | `DISCOVERY_ENDPOINT` env var |
-//! | [`forwarding`] | `provenance` + `attribution` | `RHIZOCRYPT_ENDPOINT` / `SWEETGRASS_ENDPOINT` |
-//! | [`nestgate`] | `content` | `NESTGATE_ENDPOINT` env var |
+//! | Module | Capability | Runtime Discovery | Server Wiring |
+//! |--------|-----------|-------------------|---------------|
+//! | [`beardog`] | `lineage-verification` | `LINEAGE_ENDPOINT` env | via [`verifier::RuntimeVerifier`] |
+//! | [`songbird`] | `federation` | `FEDERATION_ENDPOINT` env | library-ready (server: future) |
+//! | [`toadstool`] | `discovery` | `DISCOVERY_ENDPOINT` env | library-ready (server: future) |
+//! | [`forwarding`] | `provenance` + `attribution` | `RHIZOCRYPT_ENDPOINT` / `SWEETGRASS_ENDPOINT` | **wired** in server |
+//! | [`nestgate`] | `content` | `NESTGATE_ENDPOINT` env | library-ready (server: future) |
 //!
 //! ## Example
 //!

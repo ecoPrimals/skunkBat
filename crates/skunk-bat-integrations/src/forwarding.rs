@@ -17,17 +17,7 @@ use skunk_bat_core::observability::audit_log::{AuditLog, EventSeverity, Security
 
 use crate::rpc::{self, RpcError, TransportEndpoint};
 
-/// Environment variable for rhizoCrypt endpoint override.
-const RHIZOCRYPT_ENDPOINT_ENV: &str = "RHIZOCRYPT_ENDPOINT";
-
-/// Environment variable for sweetGrass endpoint override.
-const SWEETGRASS_ENDPOINT_ENV: &str = "SWEETGRASS_ENDPOINT";
-
-/// Transport endpoint env for provenance (sourDough standard).
-const RHIZOCRYPT_TRANSPORT_ENV: &str = "RHIZOCRYPT_TRANSPORT";
-
-/// Transport endpoint env for attribution (sourDough standard).
-const SWEETGRASS_TRANSPORT_ENV: &str = "SWEETGRASS_TRANSPORT";
+use skunk_bat_core::env_keys;
 
 /// Capability domain socket name for provenance (rhizoCrypt).
 const PROVENANCE_CAPABILITY: &str = "provenance";
@@ -78,10 +68,10 @@ impl Default for ForwardingConfig {
 /// 2. `RHIZOCRYPT_ENDPOINT` env (legacy TCP string)
 /// 3. Capability socket (`provenance.sock`)
 fn resolve_rhizocrypt() -> ResolvedTarget {
-    if let Some(ep) = parse_transport_env(RHIZOCRYPT_TRANSPORT_ENV) {
+    if let Some(ep) = parse_transport_env(env_keys::RHIZOCRYPT_TRANSPORT) {
         return ResolvedTarget::Endpoint(ep);
     }
-    let tcp = std::env::var(RHIZOCRYPT_ENDPOINT_ENV).ok();
+    let tcp = std::env::var(env_keys::RHIZOCRYPT_ENDPOINT).ok();
     let uds = Some(rpc::capability_socket(PROVENANCE_CAPABILITY));
     ResolvedTarget::Legacy { uds, tcp }
 }
@@ -93,10 +83,10 @@ fn resolve_rhizocrypt() -> ResolvedTarget {
 /// 2. `SWEETGRASS_ENDPOINT` env (legacy TCP string)
 /// 3. Capability socket (`attribution.sock`)
 fn resolve_sweetgrass() -> ResolvedTarget {
-    if let Some(ep) = parse_transport_env(SWEETGRASS_TRANSPORT_ENV) {
+    if let Some(ep) = parse_transport_env(env_keys::SWEETGRASS_TRANSPORT) {
         return ResolvedTarget::Endpoint(ep);
     }
-    let tcp = std::env::var(SWEETGRASS_ENDPOINT_ENV).ok();
+    let tcp = std::env::var(env_keys::SWEETGRASS_ENDPOINT).ok();
     let uds = Some(rpc::capability_socket(ATTRIBUTION_CAPABILITY));
     ResolvedTarget::Legacy { uds, tcp }
 }

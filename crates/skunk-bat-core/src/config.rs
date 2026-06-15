@@ -65,6 +65,26 @@ pub struct DetectionConfig {
 
     /// Confidence assigned to port-scan detections.
     pub port_scan_confidence: f64,
+
+    /// Confidence assigned to genetic lineage verification failures.
+    /// Origin: 0.95 = high confidence (identity-based, not heuristic).
+    pub genetic_lineage_confidence: f64,
+
+    /// Confidence assigned to topology bypass detections.
+    /// Origin: 0.8 = moderate (port-to-layer mapping is heuristic).
+    pub topology_bypass_confidence: f64,
+
+    /// Consecutive sequential ports that indicate a port scan pattern.
+    /// Origin: 3 = minimum run length for "sequential" detection.
+    pub sequential_port_window: usize,
+
+    /// Minimum distinct topology layers before evaluating bypass.
+    /// Origin: 3 = need at least 3 layers for a meaningful path check.
+    pub min_topology_path_layers: usize,
+
+    /// Expected topology path for layer validation.
+    /// Default `[0, 1, 2, 3]` = standard 4-layer ecoPrimals stack.
+    pub expected_topology_path: Vec<u8>,
 }
 
 impl Default for DetectionConfig {
@@ -77,6 +97,11 @@ impl Default for DetectionConfig {
             dos_confidence: 0.8,
             port_scan_threshold: 10,
             port_scan_confidence: 0.85,
+            genetic_lineage_confidence: 0.95,
+            topology_bypass_confidence: 0.8,
+            sequential_port_window: 3,
+            min_topology_path_layers: 3,
+            expected_topology_path: vec![0, 1, 2, 3],
         }
     }
 }

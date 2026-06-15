@@ -8,7 +8,7 @@
 //! `is_established()` gate returns false and zero anomalies are detected.
 //!
 //! The normal observations model typical inter-primal IPC traffic:
-//! low connection rates, standard ports (UDS/TCP 9750), modest volume.
+//! low connection rates, configurable self-port, modest volume.
 //!
 //! The pen-test attack patterns (PG-57) model the 7 malformed-payload +
 //! enumeration scenarios that should trigger detection once the baseline
@@ -18,89 +18,102 @@ use std::time::SystemTime;
 
 use super::types::Observation;
 
+/// UDS-only observation marker (port 0 = no TCP port, UDS transport).
+const UDS_PORT: u16 = 0;
+
 /// Normal inter-primal traffic baseline (12 observations).
 ///
 /// Represents ~60 seconds of typical ecosystem activity:
 /// - Connection rate: 2–8 conn/s (IPC heartbeats, capability queries)
 /// - Traffic volume: 1–5 KB/s (JSON-RPC payloads, health checks)
-/// - Ports: 9750 (skunkBat TCP), plus UDS (represented as port 0)
+/// - Ports: `self_port` (primal's configured TCP port), plus UDS (port 0)
+///
+/// The `self_port` parameter decouples baseline data from any hardcoded
+/// port — callers pass `config.common.listen_port` or the actual bound
+/// port at startup.
 #[must_use]
-pub fn normal_baseline() -> Vec<Observation> {
+pub fn normal_baseline_for(self_port: u16) -> Vec<Observation> {
     let now = SystemTime::now();
     vec![
         Observation {
             connection_rate: 3.2,
             traffic_volume: 2048,
-            ports_accessed: vec![9750],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
             connection_rate: 2.8,
             traffic_volume: 1536,
-            ports_accessed: vec![9750, 0],
+            ports_accessed: vec![self_port, UDS_PORT],
             timestamp: now,
         },
         Observation {
             connection_rate: 4.1,
             traffic_volume: 3072,
-            ports_accessed: vec![9750],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.5,
             traffic_volume: 2560,
-            ports_accessed: vec![9750, 0],
+            ports_accessed: vec![self_port, UDS_PORT],
             timestamp: now,
         },
         Observation {
             connection_rate: 5.0,
             traffic_volume: 4096,
-            ports_accessed: vec![9750],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
             connection_rate: 2.1,
             traffic_volume: 1024,
-            ports_accessed: vec![0],
+            ports_accessed: vec![UDS_PORT],
             timestamp: now,
         },
         Observation {
             connection_rate: 4.8,
             traffic_volume: 3584,
-            ports_accessed: vec![9750, 0],
+            ports_accessed: vec![self_port, UDS_PORT],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.9,
             traffic_volume: 2816,
-            ports_accessed: vec![9750],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
             connection_rate: 2.5,
             traffic_volume: 1280,
-            ports_accessed: vec![0],
+            ports_accessed: vec![UDS_PORT],
             timestamp: now,
         },
         Observation {
             connection_rate: 4.3,
             traffic_volume: 3328,
-            ports_accessed: vec![9750],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.0,
             traffic_volume: 2048,
-            ports_accessed: vec![9750, 0],
+            ports_accessed: vec![self_port, UDS_PORT],
             timestamp: now,
         },
         Observation {
             connection_rate: 5.2,
             traffic_volume: 4352,
-            ports_accessed: vec![9750],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
     ]
+}
+
+/// Normal baseline using the default listen port from config.
+#[must_use]
+pub fn normal_baseline() -> Vec<Observation> {
+    normal_baseline_for(crate::CommonConfig::default().listen_port)
 }
 
 /// PG-57 pen-test attack patterns (7 scenarios).
@@ -117,8 +130,12 @@ pub fn normal_baseline() -> Vec<Observation> {
 /// 5. Amplification attempt (asymmetric volume spike)
 /// 6. Slow-rate exhaustion (sustained elevated connections)
 /// 7. Protocol confusion (unexpected ports, moderate rate)
+///
+/// The `self_port` parameter decouples the attack target from any fixed
+/// port constant.
 #[must_use]
-pub fn pentest_attack_patterns() -> Vec<Observation> {
+pub fn pentest_attack_patterns_for(self_port: u16) -> Vec<Observation> {
+    let p = self_port;
     let now = SystemTime::now();
     vec![
         // 1: Port enumeration sweep — 150 conn/s across 20+ ports
@@ -126,44 +143,62 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             connection_rate: 150.0,
             traffic_volume: 8192,
             ports_accessed: vec![
-                22, 80, 443, 8080, 8443, 9750, 9751, 9752, 9753, 9754, 9755, 9756, 9757, 9758,
-                9759, 9760, 9200, 9300, 9400, 9500,
+                22,
+                80,
+                443,
+                8080,
+                8443,
+                p,
+                p + 1,
+                p + 2,
+                p + 3,
+                p + 4,
+                p + 5,
+                p + 6,
+                p + 7,
+                p + 8,
+                p + 9,
+                p + 10,
+                9200,
+                9300,
+                9400,
+                9500,
             ],
             timestamp: now,
         },
         // 2: Payload flood — normal conn rate but extreme volume
         Observation {
             connection_rate: 5.0,
-            traffic_volume: 10_485_760, // 10 MB/s
-            ports_accessed: vec![9750],
+            traffic_volume: 10_485_760,
+            ports_accessed: vec![p],
             timestamp: now,
         },
         // 3: Malformed JSON-RPC burst — rapid small payloads
         Observation {
             connection_rate: 500.0,
             traffic_volume: 512,
-            ports_accessed: vec![9750],
+            ports_accessed: vec![p],
             timestamp: now,
         },
         // 4: Service enumeration — methodical probing at moderate rate
         Observation {
             connection_rate: 45.0,
             traffic_volume: 4096,
-            ports_accessed: vec![9750, 9751, 9752, 9753, 9754, 9755],
+            ports_accessed: vec![p, p + 1, p + 2, p + 3, p + 4, p + 5],
             timestamp: now,
         },
         // 5: Amplification attempt — tiny request, expecting large response
         Observation {
             connection_rate: 80.0,
             traffic_volume: 128,
-            ports_accessed: vec![9750],
+            ports_accessed: vec![p],
             timestamp: now,
         },
         // 6: Slow-rate exhaustion — sustained elevated connections
         Observation {
             connection_rate: 25.0,
             traffic_volume: 2048,
-            ports_accessed: vec![9750, 0],
+            ports_accessed: vec![p, UDS_PORT],
             timestamp: now,
         },
         // 7: Protocol confusion — unexpected ports, moderate rate
@@ -174,6 +209,12 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             timestamp: now,
         },
     ]
+}
+
+/// Pen-test patterns using the default listen port.
+#[must_use]
+pub fn pentest_attack_patterns() -> Vec<Observation> {
+    pentest_attack_patterns_for(crate::CommonConfig::default().listen_port)
 }
 
 #[cfg(test)]
@@ -215,5 +256,60 @@ mod tests {
             attacks_above >= 4,
             "most attacks should exceed 3x normal max"
         );
+    }
+
+    #[test]
+    fn normal_baseline_for_uses_given_port() {
+        let port = 4242;
+        let baseline = normal_baseline_for(port);
+        for obs in &baseline {
+            for &p in &obs.ports_accessed {
+                assert!(p == port || p == UDS_PORT, "unexpected port {p}");
+            }
+        }
+    }
+
+    #[test]
+    fn normal_baseline_default_uses_config_port() {
+        let config_port = crate::CommonConfig::default().listen_port;
+        let baseline = normal_baseline();
+        let all_ports: Vec<u16> = baseline
+            .iter()
+            .flat_map(|o| o.ports_accessed.iter().copied())
+            .collect();
+        assert!(
+            all_ports.contains(&config_port) || config_port == 0,
+            "default baseline should reference config port"
+        );
+    }
+
+    #[test]
+    fn pentest_for_uses_given_port() {
+        let port = 7777;
+        let patterns = pentest_attack_patterns_for(port);
+        let has_self_port = patterns.iter().any(|o| o.ports_accessed.contains(&port));
+        assert!(
+            has_self_port,
+            "pen-test patterns should include the self-port"
+        );
+    }
+
+    #[test]
+    fn pentest_for_port_enumeration_covers_adjacent_ports() {
+        let port = 5000;
+        let patterns = pentest_attack_patterns_for(port);
+        let sweep = &patterns[0];
+        for offset in 1..=10 {
+            assert!(
+                sweep.ports_accessed.contains(&(port + offset)),
+                "port enumeration sweep should include port+{offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn pentest_zero_port_works() {
+        let patterns = pentest_attack_patterns_for(0);
+        assert_eq!(patterns.len(), 7);
     }
 }

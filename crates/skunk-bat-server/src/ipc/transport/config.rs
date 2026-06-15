@@ -43,7 +43,10 @@ impl BtspConfig {
         let socket_dir = std::env::var(skunk_bat_core::env_keys::BIOMEOS_SOCKET_DIR)
             .unwrap_or_else(|_| {
                 let runtime_dir = std::env::var(skunk_bat_core::env_keys::XDG_RUNTIME_DIR)
-                    .unwrap_or_else(|_| format!("/run/user/{}", proc_uid()));
+                    .unwrap_or_else(|_| {
+                        let uid = proc_uid();
+                        format!("/run/user/{uid}")
+                    });
                 format!("{runtime_dir}/biomeos")
             });
 

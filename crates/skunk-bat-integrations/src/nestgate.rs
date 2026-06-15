@@ -16,8 +16,7 @@ use std::time::Duration;
 
 use crate::rpc::{self, RpcError};
 
-/// Environment variable for `NestGate` endpoint override.
-const NESTGATE_ENDPOINT_ENV: &str = "NESTGATE_ENDPOINT";
+use skunk_bat_core::env_keys;
 
 /// Capability domain socket name for content (`NestGate` CAS).
 const CONTENT_CAPABILITY: &str = "content";
@@ -43,7 +42,7 @@ impl ContentProtector {
     /// Falls back to TCP via `NESTGATE_ENDPOINT` env var.
     #[must_use]
     pub fn from_env() -> Self {
-        let tcp_endpoint = std::env::var(NESTGATE_ENDPOINT_ENV).ok();
+        let tcp_endpoint = std::env::var(env_keys::NESTGATE_ENDPOINT).ok();
         let uds_path = {
             let path = rpc::capability_socket(CONTENT_CAPABILITY);
             std::path::Path::new(&path).exists().then_some(path)

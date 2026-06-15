@@ -20,8 +20,7 @@ use crate::rpc::TransportEndpoint;
 /// Default RPC timeout for lineage calls (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 3000;
 
-/// Transport endpoint env for lineage capability (sourDough standard).
-const LINEAGE_TRANSPORT_ENV: &str = "LINEAGE_TRANSPORT";
+use skunk_bat_core::env_keys;
 
 /// Remote lineage verifier backed by a runtime-discovered capability provider.
 ///
@@ -59,7 +58,7 @@ impl RemoteLineageVerifier {
     /// 3. Capability socket (`lineage-verification.sock`)
     #[must_use]
     pub fn from_env() -> Self {
-        let transport: Option<TransportEndpoint> = std::env::var(LINEAGE_TRANSPORT_ENV)
+        let transport: Option<TransportEndpoint> = std::env::var(env_keys::LINEAGE_TRANSPORT)
             .ok()
             .and_then(|v| serde_json::from_str(&v).ok());
 

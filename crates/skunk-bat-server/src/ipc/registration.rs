@@ -67,12 +67,16 @@ pub async fn self_register(endpoint: String) {
 ///
 /// Probe order (first existing socket wins):
 /// 1. `DISCOVERY_SOCKET` env var (explicit override)
-/// 2. `SONGBIRD_SOCKET` env var (direct Songbird tier-1 registration)
-/// 3. `{socket_dir}/songbird.sock` (Songbird convention)
+/// 2. `SONGBIRD_SOCKET` env var (legacy direct registration)
+/// 3. `{socket_dir}/discovery.sock` (capability convention)
 /// 4. `{socket_dir}/discovery-{FAMILY_ID}.sock` (family-scoped)
-/// 5. `{socket_dir}/discovery.sock` (generic)
+/// 5. `{socket_dir}/songbird.sock` (well-known fallback)
+/// 6. `{socket_dir}/federation.sock` (mesh fallback)
 fn resolve_discovery_socket() -> Option<String> {
-    for env_var in ["DISCOVERY_SOCKET", "SONGBIRD_SOCKET"] {
+    for env_var in [
+        skunk_bat_core::env_keys::DISCOVERY_SOCKET,
+        skunk_bat_core::env_keys::SONGBIRD_SOCKET,
+    ] {
         if let Ok(path) = std::env::var(env_var)
             && !path.is_empty()
             && std::path::Path::new(&path).exists()
@@ -84,11 +88,13 @@ fn resolve_discovery_socket() -> Option<String> {
     let socket_dir = skunk_bat_integrations::rpc::socket_dir();
     let family_id = std::env::var(skunk_bat_core::env_keys::FAMILY_ID).unwrap_or_default();
 
-    let mut candidates = vec![format!("{socket_dir}/songbird.sock")];
+    let mut candidates = Vec::with_capacity(4);
+    candidates.push(format!("{socket_dir}/discovery.sock"));
     if !family_id.is_empty() && family_id != "default" {
         candidates.push(format!("{socket_dir}/discovery-{family_id}.sock"));
     }
-    candidates.push(format!("{socket_dir}/discovery.sock"));
+    candidates.push(format!("{socket_dir}/songbird.sock"));
+    candidates.push(format!("{socket_dir}/federation.sock"));
 
     candidates
         .into_iter()
@@ -174,8 +180,9 @@ pub(super) fn announce_payload(socket_path: &str) -> serde_json::Value {
 ///
 /// Probe order:
 /// 1. `NEURAL_API_SOCKET` env var
-/// 2. `{socket_dir}/neural-api-ecoPrimal.sock`
-/// 3. `{socket_dir}/biomeos.sock`
+/// 2. `{socket_dir}/neural-api.sock` (capability convention)
+/// 3. `{socket_dir}/neural-api-ecoPrimal.sock` (legacy)
+/// 4. `{socket_dir}/biomeos.sock` (legacy)
 fn resolve_neural_api_socket() -> Option<String> {
     if let Ok(path) = std::env::var(skunk_bat_core::env_keys::NEURAL_API_SOCKET)
         && !path.is_empty()
@@ -186,6 +193,7 @@ fn resolve_neural_api_socket() -> Option<String> {
 
     let socket_dir = skunk_bat_integrations::rpc::socket_dir();
     let candidates = [
+        format!("{socket_dir}/neural-api.sock"),
         format!("{socket_dir}/neural-api-ecoPrimal.sock"),
         format!("{socket_dir}/biomeos.sock"),
     ];

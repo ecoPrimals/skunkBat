@@ -70,3 +70,35 @@ pub const TRANSPORT_ENDPOINT: &str = "TRANSPORT_ENDPOINT";
 /// - `tcp-only` / `tcp_only`: TCP only, no UDS (Android/grapheneGate `SELinux`).
 /// - `fallback`: UDS + TCP (debug/standalone/both-transport environments).
 pub const PRIMAL_BIND_MODE: &str = "PRIMAL_BIND_MODE";
+
+// ── Integration transport vars (sourDough JSON convention) ───────────
+
+/// `TransportEndpoint` JSON for lineage-verification capability.
+pub const LINEAGE_TRANSPORT: &str = "LINEAGE_TRANSPORT";
+
+/// `TransportEndpoint` JSON for federation capability.
+pub const FEDERATION_TRANSPORT: &str = "FEDERATION_TRANSPORT";
+
+/// `TransportEndpoint` JSON for discovery capability.
+pub const DISCOVERY_TRANSPORT: &str = "DISCOVERY_TRANSPORT";
+
+/// `TransportEndpoint` JSON for rhizoCrypt provenance forwarding.
+pub const RHIZOCRYPT_TRANSPORT: &str = "RHIZOCRYPT_TRANSPORT";
+
+/// `TransportEndpoint` JSON for sweetGrass attribution forwarding.
+pub const SWEETGRASS_TRANSPORT: &str = "SWEETGRASS_TRANSPORT";
+
+/// TCP endpoint override for rhizoCrypt provenance forwarding.
+pub const RHIZOCRYPT_ENDPOINT: &str = "RHIZOCRYPT_ENDPOINT";
+
+/// TCP endpoint override for sweetGrass attribution forwarding.
+pub const SWEETGRASS_ENDPOINT: &str = "SWEETGRASS_ENDPOINT";
+
+/// TCP endpoint override for `NestGate` content integrity.
+pub const NESTGATE_ENDPOINT: &str = "NESTGATE_ENDPOINT";
+
+/// Explicit path to the discovery service UDS socket.
+pub const DISCOVERY_SOCKET: &str = "DISCOVERY_SOCKET";
+
+/// Explicit path to the `SongBird` discovery/federation socket.
+pub const SONGBIRD_SOCKET: &str = "SONGBIRD_SOCKET";

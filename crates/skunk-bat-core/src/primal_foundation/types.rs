@@ -18,18 +18,16 @@ pub struct Timestamp {
 impl Timestamp {
     /// Create a timestamp for the current moment.
     ///
-    /// # Panics
-    ///
-    /// Panics if system time is before Unix epoch (1970-01-01).
+    /// Falls back to epoch (0) if the system clock is before Unix epoch
+    /// (should never happen on real hardware, but avoids a panic path).
     #[must_use]
     pub fn now() -> Self {
-        let duration = SystemTime::now()
+        SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("time went backwards");
-        Self {
-            secs: duration.as_secs(),
-            nanos: duration.subsec_nanos(),
-        }
+            .map_or(Self { secs: 0, nanos: 0 }, |d| Self {
+                secs: d.as_secs(),
+                nanos: d.subsec_nanos(),
+            })
     }
 
     /// Create a timestamp from seconds since epoch.

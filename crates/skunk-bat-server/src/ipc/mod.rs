@@ -93,14 +93,15 @@ pub async fn serve(
         || format!("tcp://0.0.0.0:{port}"),
         |p| format!("unix://{p}"),
     );
-    tokio::spawn(registration::self_register(register_endpoint));
-
     let announce_socket = socket_path
-        .clone()
-        .unwrap_or_else(|| format!("tcp://127.0.0.1:{port}"));
+        .as_deref()
+        .map_or_else(|| format!("tcp://127.0.0.1:{port}"), str::to_owned);
+    tokio::spawn(registration::self_register(register_endpoint));
     tokio::spawn(async move {
         registration::neural_announce(&announce_socket).await;
     });
+
+    sessions.spawn_reaper();
 
     let audit_log = state.read().await.audit_log().clone();
     tokio::spawn(forwarding::run_forwarding_loop(

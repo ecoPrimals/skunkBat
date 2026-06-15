@@ -20,8 +20,7 @@ use crate::rpc::TransportEndpoint;
 /// Default RPC timeout for discovery calls (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 5000;
 
-/// Transport endpoint env for discovery capability (sourDough standard).
-const DISCOVERY_TRANSPORT_ENV: &str = "DISCOVERY_TRANSPORT";
+use skunk_bat_core::env_keys;
 
 /// Discovery client for capability-based primal lookup.
 ///
@@ -72,7 +71,7 @@ impl DiscoveryClient {
     /// 3. Capability socket (`discovery.sock`)
     #[must_use]
     pub fn from_env() -> Self {
-        let transport: Option<TransportEndpoint> = std::env::var(DISCOVERY_TRANSPORT_ENV)
+        let transport: Option<TransportEndpoint> = std::env::var(env_keys::DISCOVERY_TRANSPORT)
             .ok()
             .and_then(|v| serde_json::from_str(&v).ok());
 

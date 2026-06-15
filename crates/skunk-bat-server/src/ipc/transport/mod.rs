@@ -92,7 +92,7 @@ pub async fn serve_tcp(
             let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
 
             if n >= 1 && peek_buf[0] == RIBOCIPHER_CLEAR {
-                handle_ribocipher_tcp(stream, state, sessions, caller).await;
+                handle_ribocipher_tcp(stream, state, sessions, btsp, caller).await;
                 return;
             }
 
@@ -138,6 +138,7 @@ async fn handle_ribocipher_tcp(
     mut stream: tokio::net::TcpStream,
     state: Arc<RwLock<SkunkBat>>,
     sessions: Arc<BtspSessionRegistry>,
+    btsp: Option<Arc<BtspHandshakeConfig>>,
     caller: CallerContext,
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -166,7 +167,24 @@ async fn handle_ribocipher_tcp(
             let _ = stream.flush().await;
         }
         PROTO_BTSP_BINARY => {
-            tracing::debug!("riboCipher routed to BTSP binary (TCP) — not yet wired");
+            if let Some(ref cfg) = btsp {
+                match perform_server_handshake(&mut stream, cfg).await {
+                    Ok(result) => {
+                        tracing::debug!(
+                            "BTSP authenticated TCP (riboCipher): session={}",
+                            result.session_id
+                        );
+                        sessions
+                            .insert(result.session_id, result.handshake_key)
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("BTSP handshake failed TCP (riboCipher): {e}");
+                        return;
+                    }
+                }
+            }
+            handle_connection(state, sessions, stream, caller).await;
         }
         other => {
             tracing::warn!(
