@@ -57,7 +57,7 @@ pub use primal_foundation::{
 };
 
 /// skunkBat configuration.
-pub use config::SkunkBatConfig;
+pub use config::{DefenseConfig, DetectionConfig, SkunkBatConfig};
 
 /// skunkBat errors.
 pub use error::SkunkBatError;
@@ -325,7 +325,7 @@ impl PrimalHealth for SkunkBat {
             }
         } else {
             HealthStatus::Unhealthy {
-                reason: format!("state: {}", self.state),
+                reason: format!("state: {state}", state = self.state),
             }
         }
     }
@@ -342,9 +342,7 @@ impl PrimalHealth for SkunkBat {
     }
 
     async fn dependency_health(&self) -> Result<Vec<DependencyHealth>, PrimalError> {
-        let mut deps = Vec::with_capacity(2);
-
-        let lineage_status = if self.config.lineage_id.is_some() {
+        let lineage = if self.config.lineage_id.is_some() {
             DependencyHealth::healthy("lineage-verifier", "capability")
         } else {
             DependencyHealth::unhealthy(
@@ -353,16 +351,14 @@ impl PrimalHealth for SkunkBat {
                 "no lineage_id configured",
             )
         };
-        deps.push(lineage_status);
 
-        let observer_status = if self.observer.is_healthy() {
+        let observer = if self.observer.is_healthy() {
             DependencyHealth::healthy("security-observer", "internal")
         } else {
             DependencyHealth::unhealthy("security-observer", "internal", "disabled by config")
         };
-        deps.push(observer_status);
 
-        Ok(deps)
+        Ok(vec![lineage, observer])
     }
 }
 
@@ -607,6 +603,7 @@ mod tests {
                 observability: true,
             },
             lineage_id: None,
+            ..SkunkBatConfig::default()
         };
         let mut skunkbat = SkunkBat::new(config);
         skunkbat.start().await.unwrap();
@@ -666,6 +663,7 @@ mod tests {
                 observability: true,
             },
             lineage_id: None,
+            ..SkunkBatConfig::default()
         };
         let skunkbat = SkunkBat::new(config);
         assert!(!skunkbat.defense_healthy());
@@ -682,6 +680,7 @@ mod tests {
                 observability: true,
             },
             lineage_id: None,
+            ..SkunkBatConfig::default()
         };
         let skunkbat = SkunkBat::new(config);
         assert!(!skunkbat.threat_detection_healthy());

@@ -93,7 +93,9 @@ impl std::str::FromStr for BindMode {
             "uds_only" | "uds" => Ok(Self::UdsOnly),
             "tcp_only" | "tcp" => Ok(Self::TcpOnly),
             "fallback" | "both" => Ok(Self::Fallback),
-            other => Err(format!("unknown bind mode: {other} (expected: uds-only, tcp-only, fallback)")),
+            other => Err(format!(
+                "unknown bind mode: {other} (expected: uds-only, tcp-only, fallback)"
+            )),
         }
     }
 }
@@ -223,7 +225,10 @@ async fn run_server(
             tracing::info!("TRANSPORT_ENDPOINT: UDS at {path}");
             (Some(path.clone()), BindMode::UdsOnly, port)
         }
-        Some(TransportEndpoint::Tcp { ref host, port: ep_port }) => {
+        Some(TransportEndpoint::Tcp {
+            ref host,
+            port: ep_port,
+        }) => {
             tracing::info!("TRANSPORT_ENDPOINT: TCP at {host}:{ep_port}");
             (socket.map(ToOwned::to_owned), BindMode::TcpOnly, ep_port)
         }
@@ -234,9 +239,7 @@ async fn run_server(
         }
         None => {
             // --port on CLI with uds-only mode implies user wants fallback
-            if bind_mode == BindMode::UdsOnly
-                && std::env::args().any(|a| a == "--port")
-            {
+            if bind_mode == BindMode::UdsOnly && std::env::args().any(|a| a == "--port") {
                 bind_mode = BindMode::Fallback;
             }
             (socket.map(ToOwned::to_owned), bind_mode, port)
@@ -262,6 +265,14 @@ async fn run_server(
         }
     }
 
-    ipc::serve(skunkbat, bind.to_owned(), port, socket.as_deref(), no_uds, no_tcp).await?;
+    ipc::serve(
+        skunkbat,
+        bind.to_owned(),
+        port,
+        socket.as_deref(),
+        no_uds,
+        no_tcp,
+    )
+    .await?;
     Ok(())
 }

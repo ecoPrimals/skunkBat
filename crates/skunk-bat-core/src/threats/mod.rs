@@ -31,24 +31,7 @@ use crate::SkunkBatConfig;
 use crate::error::SkunkBatError;
 use std::time::SystemTime;
 
-/// Default sigma threshold for the statistical anomaly profiler.
-const DEFAULT_SIGMA_THRESHOLD: f64 = 2.5;
-
-/// Deviation thresholds for severity classification.
-const SEVERITY_HIGH_DEVIATION: f64 = 5.0;
-const SEVERITY_MEDIUM_DEVIATION: f64 = 3.0;
-
-/// System load threshold that triggers a `DoS` threat.
-const DOS_LOAD_THRESHOLD: f64 = 0.9;
-
-/// Default confidence for resource exhaustion detections.
-const DOS_CONFIDENCE: f64 = 0.8;
-
-/// Port count threshold that indicates a port scan.
-const PORT_SCAN_THRESHOLD: usize = 10;
-
-/// Confidence assigned to port-scan intrusion detections.
-const PORT_SCAN_CONFIDENCE: f64 = 0.85;
+use crate::config::DetectionConfig;
 
 /// Threat detector — orchestrates all five detection categories.
 ///
@@ -65,6 +48,7 @@ pub struct ThreatDetector<
     lineage_verifier: L,
     baseline_profiler: B,
     topology_validator: T,
+    thresholds: DetectionConfig,
 }
 
 impl ThreatDetector {
@@ -74,7 +58,7 @@ impl ThreatDetector {
     /// observations so anomaly detection is active from first `detect()` call.
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
-        let mut profiler = StatisticalProfiler::new(DEFAULT_SIGMA_THRESHOLD);
+        let mut profiler = StatisticalProfiler::new(config.detection.sigma_threshold);
         profiler.seed_baseline(&baseline::normal_baseline());
         Self::with_verifiers(config, LocalLineageVerifier, profiler)
     }
@@ -97,6 +81,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             lineage_verifier,
             baseline_profiler,
             topology_validator: LayerTopologyValidator::new(vec![0, 1, 2, 3]),
+            thresholds: config.detection.clone(),
         }
     }
 }
@@ -116,6 +101,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
             lineage_verifier,
             baseline_profiler,
             topology_validator,
+            thresholds: config.detection.clone(),
         }
     }
 
@@ -237,22 +223,18 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
             return Ok(Vec::new());
         }
 
-        let observation = match self.baseline_profiler.latest_observation() {
-            Some(obs) => obs.clone(),
-            None => return Ok(Vec::new()),
+        let Some(observation) = self.baseline_profiler.latest_observation() else {
+            return Ok(Vec::new());
         };
 
-        let anomalies = self
-            .baseline_profiler
-            .detect_anomalies(&observation)
-            .await?;
+        let anomalies = self.baseline_profiler.detect_anomalies(observation).await?;
 
         let threats = anomalies
             .into_iter()
             .map(|a| {
-                let severity = if a.deviation > SEVERITY_HIGH_DEVIATION {
+                let severity = if a.deviation > self.thresholds.severity_high_deviation {
                     Severity::High
-                } else if a.deviation > SEVERITY_MEDIUM_DEVIATION {
+                } else if a.deviation > self.thresholds.severity_medium_deviation {
                     Severity::Medium
                 } else {
                     Severity::Low
@@ -287,7 +269,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
 
         let mut threats = Vec::new();
 
-        if obs.ports_accessed.len() >= PORT_SCAN_THRESHOLD {
+        if obs.ports_accessed.len() >= self.thresholds.port_scan_threshold {
             let sequential = Self::has_sequential_ports(&obs.ports_accessed);
             let severity = if sequential {
                 Severity::High
@@ -312,7 +294,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                     "Port scan detected: {} distinct ports accessed in observation window",
                     obs.ports_accessed.len()
                 ),
-                confidence: PORT_SCAN_CONFIDENCE,
+                confidence: self.thresholds.port_scan_confidence,
             });
         }
 
@@ -390,7 +372,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
     )]
     async fn detect_resource_exhaustion(&self) -> Result<Vec<Threat>, SkunkBatError> {
         let load = Self::check_system_load();
-        if load > DOS_LOAD_THRESHOLD {
+        if load > self.thresholds.dos_load_threshold {
             return Ok(vec![Threat {
                 id: format!("dos-{:?}", SystemTime::now()),
                 threat_type: ThreatType::DenialOfService {
@@ -402,7 +384,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                 target: "local".to_owned(),
                 detected_at: SystemTime::now(),
                 description: format!("High CPU usage detected: {:.1}%", load * 100.0),
-                confidence: DOS_CONFIDENCE,
+                confidence: self.thresholds.dos_confidence,
             }]);
         }
         Ok(Vec::new())

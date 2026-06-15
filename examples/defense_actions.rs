@@ -18,7 +18,6 @@ use std::time::SystemTime;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .with_target(false)
@@ -28,14 +27,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     println!("Demonstrating user-approved defense responses:\n");
 
-    // Create and start skunkBat
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
 
-    // ════════════════════════════════════════
-    // 1. MONITOR + ALERT (Low Severity)
-    // ════════════════════════════════════════
+    demo_monitor(&skunkbat)?;
+    demo_quarantine(&skunkbat)?;
+    demo_critical(&skunkbat)?;
+    demo_summary();
+
+    let _metrics = skunkbat.get_security_metrics();
+    println!("Total actions demonstrated: 3");
+    println!("  • Monitor: 1");
+    println!("  • Quarantine: 2");
+    println!("  • Blocked: 0 (requires operator)\n");
+
+    skunkbat.stop().await?;
+    println!("✅ Demo Complete!\n");
+    println!("Key Takeaway: Defense is GRADUATED and USER-CONTROLLED.");
+    println!("skunkBat suggests, YOU decide. 🦨");
+
+    Ok(())
+}
+
+fn demo_monitor(skunkbat: &SkunkBat) -> Result<(), Box<dyn std::error::Error>> {
     println!("════════════════════════════════════════");
     println!("1. MONITOR + ALERT (Low Severity)");
     println!("════════════════════════════════════════\n");
@@ -73,9 +88,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  • Owner decides if further action needed");
     println!("  • Defensive, not disruptive\n");
 
-    // ════════════════════════════════════════
-    // 2. QUARANTINE + ALERT (High Severity)
-    // ════════════════════════════════════════
+    Ok(())
+}
+
+fn demo_quarantine(skunkbat: &SkunkBat) -> Result<(), Box<dyn std::error::Error>> {
     println!("════════════════════════════════════════");
     println!("2. QUARANTINE + ALERT (High Severity)");
     println!("════════════════════════════════════════\n");
@@ -107,24 +123,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  → Operator alerted for review");
     println!("  → Can be released if verified legitimate\n");
 
-    println!("Why Quarantine?");
-    println!("  • High confidence (90%) - likely a real issue");
-    println!("  • Unknown lineage - not verified family");
-    println!("  • Isolation protects, but allows review");
-    println!("  • Reversible if false positive\n");
+    Ok(())
+}
 
-    // ════════════════════════════════════════
-    // 3. IMMEDIATE QUARANTINE (Critical)
-    // ════════════════════════════════════════
+fn demo_critical(skunkbat: &SkunkBat) -> Result<(), Box<dyn std::error::Error>> {
     println!("════════════════════════════════════════");
     println!("3. IMMEDIATE QUARANTINE (Critical)");
     println!("════════════════════════════════════════\n");
-
-    println!("Threat: Active DoS attack");
-    println!("  • Resource: Bandwidth exhaustion");
-    println!("  • Usage: 98.5% (critical level)");
-    println!("  • Confidence: 95%");
-    println!("  • Severity: Critical\n");
 
     let critical_threat = Threat {
         id: "action-critical-1".to_string(),
@@ -145,36 +150,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Action Taken: IMMEDIATE QUARANTINE");
     println!("  → No approval required (critical threat)");
     println!("  → Quarantine executed instantly");
-    println!("  → Service availability protected");
-    println!("  → Operator can review and release\n");
+    println!("  → Service availability protected\n");
 
-    println!("Why Immediate?");
-    println!("  • Very high confidence (95%)");
-    println!("  • Critical severity - service at risk");
-    println!("  • Delay could cause outage");
-    println!("  • Still quarantine (not block) - reversible\n");
+    Ok(())
+}
 
-    // ════════════════════════════════════════
-    // 4. BLOCK (Explicit Denial)
-    // ════════════════════════════════════════
-    println!("════════════════════════════════════════");
-    println!("4. BLOCK (Operator Decision)");
-    println!("════════════════════════════════════════\n");
-
-    println!("Note: Block is available but rarely used automatically");
-    println!("  • Quarantine is preferred (reversible)");
-    println!("  • Block requires operator decision");
-    println!("  • Use when: repeat offender, confirmed malicious\n");
-
-    println!("Example block scenario:");
-    println!("  1. Threat detected → Quarantine");
-    println!("  2. Operator reviews → Confirms malicious");
-    println!("  3. Operator decides → Escalate to Block");
-    println!("  4. System executes → Permanent denial\n");
-
-    // ════════════════════════════════════════
-    // SUMMARY
-    // ════════════════════════════════════════
+fn demo_summary() {
     println!("════════════════════════════════════════");
     println!("SUMMARY: Graduated Response");
     println!("════════════════════════════════════════\n");
@@ -190,25 +171,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  1. Monitor → Observe, don't interfere");
     println!("  2. Quarantine → Isolate, but allow review");
     println!("  3. Block → Permanent denial (operator decision)\n");
-
-    println!("Approval Requirements:");
-    println!("  • Low severity: Requires approval");
-    println!("  • High severity: Auto-quarantine + alert");
-    println!("  • Critical: Immediate quarantine");
-    println!("  • Block: Always requires operator decision\n");
-
-    // Get metrics
-    let _metrics = skunkbat.get_security_metrics();
-    println!("Total actions demonstrated: 3");
-    println!("  • Monitor: 1");
-    println!("  • Quarantine: 2");
-    println!("  • Blocked: 0 (requires operator)\n");
-
-    // Stop skunkBat
-    skunkbat.stop().await?;
-    println!("✅ Demo Complete!\n");
-    println!("Key Takeaway: Defense is GRADUATED and USER-CONTROLLED.");
-    println!("skunkBat suggests, YOU decide. 🦨");
-
-    Ok(())
 }

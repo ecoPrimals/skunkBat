@@ -3,14 +3,19 @@
 
 //! Transport layer — TCP and Unix domain socket listeners.
 //!
-//! Implements BTSP Phase 1 (socket naming with `FAMILY_ID` awareness),
+//! Implements riboCipher signal detection (Wave 111+ standard),
+//! BTSP Phase 1 (socket naming with `FAMILY_ID` awareness),
 //! Phase 2 (`BearDog`-delegated handshake on both TCP and UDS), and
 //! Primal IPC Protocol v3.1 (filesystem sockets in `$BIOMEOS_SOCKET_DIR`).
 //!
-//! Both TCP and UDS use first-byte peek to auto-detect protocol:
-//! `{` → plain JSON-RPC (biomeOS composition bypass), otherwise BTSP
-//! framed handshake. TCP uses native `TcpStream::peek`; UDS uses
-//! `PeekedStream` (read-one-byte + replay) since `UnixStream` lacks peek.
+//! riboCipher: clients send a 2-byte signal `[0xEC, protocol_type]` before
+//! any payload. The accept loop consumes this envelope and routes to the
+//! correct handler. Unsignalled connections fall back to legacy peek logic
+//! with a WARN log (hard-cut scheduled for Wave 114).
+//!
+//! Protocol types: `0x00` = probe, `0x01` = NDJSON JSON-RPC, `0x02` = BTSP
+//! binary, `0x03` = BTSP JSON-line, `0x04` = HTTP/1.1, `0x05` = encrypted
+//! resume.
 
 mod btsp;
 mod config;
@@ -38,10 +43,21 @@ use tokio::sync::RwLock;
 use super::method_gate::CallerContext;
 use super::server::handle_connection;
 
-/// Bind TCP and accept connections with optional BTSP handshake.
+/// riboCipher clear-signal prefix byte.
+const RIBOCIPHER_CLEAR: u8 = 0xEC;
+
+/// riboCipher protocol type: NDJSON JSON-RPC.
+const PROTO_NDJSON: u8 = 0x01;
+/// riboCipher protocol type: BTSP binary handshake.
+const PROTO_BTSP_BINARY: u8 = 0x02;
+/// riboCipher protocol type: lightweight probe.
+const PROTO_PROBE: u8 = 0x00;
+
+/// Bind TCP and accept connections with riboCipher signal detection.
 ///
-/// TCP uses the same first-byte peek as `BearDog`: `{` → plain JSON-RPC
-/// (biomeOS composition), otherwise BTSP framed handshake.
+/// Connections starting with `0xEC` are routed via the riboCipher protocol
+/// type table. Unsignalled connections fall back to legacy peek logic with
+/// a deprecation warning.
 pub async fn serve_tcp(
     state: Arc<RwLock<SkunkBat>>,
     sessions: Arc<BtspSessionRegistry>,
@@ -71,24 +87,41 @@ pub async fn serve_tcp(
             } else {
                 CallerContext::remote()
             };
-            if let Some(ref cfg) = btsp {
-                let mut peek_buf = [0u8; 1];
-                let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
-                if n > 0 && peek_buf[0] != b'{' {
-                    match perform_server_handshake(&mut stream, cfg).await {
-                        Ok(result) => {
-                            tracing::debug!(
-                                "BTSP authenticated TCP {addr}: session={}",
-                                result.session_id
-                            );
-                            sessions
-                                .insert(result.session_id, result.handshake_key)
-                                .await;
-                        }
-                        Err(e) => {
-                            tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
-                            return;
-                        }
+
+            let mut peek_buf = [0u8; 2];
+            let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
+
+            if n >= 1 && peek_buf[0] == RIBOCIPHER_CLEAR {
+                handle_ribocipher_tcp(stream, state, sessions, caller).await;
+                return;
+            }
+
+            // Legacy unsignalled path — log deprecation warning.
+            if n > 0 && peek_buf[0] != b'{' && peek_buf[0] != b'[' {
+                tracing::warn!(
+                    first_byte = peek_buf[0],
+                    "DEPRECATED: unsignalled connection from {addr} — \
+                     riboCipher signal required in future waves"
+                );
+            }
+
+            if let Some(ref cfg) = btsp
+                && n > 0
+                && peek_buf[0] != b'{'
+            {
+                match perform_server_handshake(&mut stream, cfg).await {
+                    Ok(result) => {
+                        tracing::debug!(
+                            "BTSP authenticated TCP {addr}: session={}",
+                            result.session_id
+                        );
+                        sessions
+                            .insert(result.session_id, result.handshake_key)
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
+                        return;
                     }
                 }
             }
@@ -97,11 +130,58 @@ pub async fn serve_tcp(
     }
 }
 
-/// Bind UDS and accept connections per BTSP Phase 1 naming + Phase 2 handshake.
+/// Handle a riboCipher-signalled TCP connection.
 ///
-/// Uses first-byte peek (via `PeekedStream`) to auto-detect protocol:
-/// `{` → plain JSON-RPC (biomeOS composition), otherwise BTSP framed
-/// handshake. Matches the TCP behavior exactly.
+/// Consumes the 2-byte `[0xEC, protocol_type]` envelope, then routes
+/// to the appropriate handler based on the protocol type.
+async fn handle_ribocipher_tcp(
+    mut stream: tokio::net::TcpStream,
+    state: Arc<RwLock<SkunkBat>>,
+    sessions: Arc<BtspSessionRegistry>,
+    caller: CallerContext,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut signal = [0u8; 2];
+    if stream.read_exact(&mut signal).await.is_err() {
+        return;
+    }
+
+    let protocol_type = signal[1];
+    tracing::debug!(protocol_type, "riboCipher clear signal accepted (TCP)");
+
+    match protocol_type {
+        PROTO_NDJSON => {
+            handle_connection(state, sessions, stream, caller).await;
+        }
+        PROTO_PROBE => {
+            let probe_response = serde_json::json!({
+                "status": "ok",
+                "primal": skunk_bat_core::PRIMAL_ID,
+                "version": env!("CARGO_PKG_VERSION")
+            });
+            let mut bytes = serde_json::to_vec(&probe_response).unwrap_or_default();
+            bytes.push(b'\n');
+            let _ = stream.write_all(&bytes).await;
+            let _ = stream.flush().await;
+        }
+        PROTO_BTSP_BINARY => {
+            tracing::debug!("riboCipher routed to BTSP binary (TCP) — not yet wired");
+        }
+        other => {
+            tracing::warn!(
+                protocol_type = other,
+                "riboCipher: unknown protocol type — closing connection"
+            );
+        }
+    }
+}
+
+/// Bind UDS and accept connections with riboCipher signal detection.
+///
+/// Connections starting with `0xEC` are routed via the riboCipher protocol
+/// type table. Unsignalled connections fall back to legacy peek logic with
+/// a deprecation warning.
 ///
 /// When `socket_override` is provided (via `--socket` CLI flag), it takes
 /// priority over the BTSP-derived path — enabling launcher-injected paths
@@ -112,7 +192,6 @@ pub async fn serve_uds(
     sessions: Arc<BtspSessionRegistry>,
     socket_override: Option<String>,
 ) -> Result<(), TransportError> {
-    use tokio::io::AsyncReadExt;
     use tokio::net::UnixListener;
 
     let has_override = socket_override.is_some();
@@ -158,27 +237,62 @@ pub async fn serve_uds(
     }
 
     loop {
-        let (mut stream, _addr) = listener.accept().await?;
+        let (stream, _addr) = listener.accept().await?;
         tracing::debug!("UDS connection accepted");
         let state = Arc::clone(&state);
         let btsp = btsp_config.clone();
         let sessions = Arc::clone(&sessions);
-        tokio::spawn(async move {
-            if let Some(ref cfg) = btsp {
-                let mut first = [0u8; 1];
-                let n = stream.read(&mut first).await.unwrap_or(0);
-                if n == 0 {
-                    return;
-                }
-                let mut peeked = PeekedStream {
-                    peeked: Some(first[0]),
-                    inner: stream,
-                };
-                if first[0] != b'{' {
-                    match perform_server_handshake(&mut peeked, cfg).await {
+        tokio::spawn(handle_uds_connection(stream, state, sessions, btsp));
+    }
+}
+
+/// Handle a single UDS connection with riboCipher detection.
+#[cfg(unix)]
+async fn handle_uds_connection(
+    mut stream: tokio::net::UnixStream,
+    state: Arc<RwLock<SkunkBat>>,
+    sessions: Arc<BtspSessionRegistry>,
+    btsp: Option<Arc<BtspHandshakeConfig>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut first = [0u8; 1];
+    let n = stream.read(&mut first).await.unwrap_or(0);
+    if n == 0 {
+        return;
+    }
+
+    if first[0] == RIBOCIPHER_CLEAR {
+        let mut proto = [0u8; 1];
+        if stream.read(&mut proto).await.unwrap_or(0) == 0 {
+            return;
+        }
+        tracing::debug!(
+            protocol_type = proto[0],
+            "riboCipher clear signal accepted (UDS)"
+        );
+
+        match proto[0] {
+            PROTO_NDJSON => {
+                handle_connection(state, sessions, stream, CallerContext::unix()).await;
+            }
+            PROTO_PROBE => {
+                let resp = serde_json::json!({
+                    "status": "ok",
+                    "primal": skunk_bat_core::PRIMAL_ID,
+                    "version": env!("CARGO_PKG_VERSION")
+                });
+                let mut bytes = serde_json::to_vec(&resp).unwrap_or_default();
+                bytes.push(b'\n');
+                let _ = stream.write_all(&bytes).await;
+                let _ = stream.flush().await;
+            }
+            PROTO_BTSP_BINARY => {
+                if let Some(ref cfg) = btsp {
+                    match perform_server_handshake(&mut stream, cfg).await {
                         Ok(result) => {
                             tracing::debug!(
-                                "BTSP authenticated UDS: session={}",
+                                "BTSP authenticated UDS (riboCipher): session={}",
                                 result.session_id
                             );
                             sessions
@@ -191,12 +305,49 @@ pub async fn serve_uds(
                         }
                     }
                 }
-                handle_connection(state, sessions, peeked, CallerContext::unix()).await;
-            } else {
                 handle_connection(state, sessions, stream, CallerContext::unix()).await;
             }
-        });
+            other => {
+                tracing::warn!(
+                    protocol_type = other,
+                    "riboCipher: unknown protocol type — closing UDS connection"
+                );
+            }
+        }
+        return;
     }
+
+    // Legacy unsignalled path with deprecation warning.
+    if first[0] != b'{' && first[0] != b'[' {
+        tracing::warn!(
+            first_byte = first[0],
+            "DEPRECATED: unsignalled UDS connection — \
+             riboCipher signal required in future waves"
+        );
+    }
+
+    let mut peeked = PeekedStream {
+        peeked: Some(first[0]),
+        inner: stream,
+    };
+
+    if let Some(ref cfg) = btsp
+        && first[0] != b'{'
+    {
+        match perform_server_handshake(&mut peeked, cfg).await {
+            Ok(result) => {
+                tracing::debug!("BTSP authenticated UDS: session={}", result.session_id);
+                sessions
+                    .insert(result.session_id, result.handshake_key)
+                    .await;
+            }
+            Err(e) => {
+                tracing::warn!("BTSP handshake failed UDS: {e}");
+                return;
+            }
+        }
+    }
+    handle_connection(state, sessions, peeked, CallerContext::unix()).await;
 }
 
 #[cfg(not(unix))]

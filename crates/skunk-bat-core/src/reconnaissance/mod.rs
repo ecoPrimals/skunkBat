@@ -140,6 +140,7 @@ mod tests {
                 observability: true,
             },
             lineage_id: None,
+            ..SkunkBatConfig::default()
         }
     }
 

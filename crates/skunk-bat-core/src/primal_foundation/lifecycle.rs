@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// State of a primal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PrimalState {
     /// Not yet started.
     Created,
@@ -135,8 +136,27 @@ mod tests {
     fn state_serialization() {
         let state = PrimalState::Running;
         let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, r#""running""#);
         let deserialized: PrimalState = serde_json::from_str(&json).unwrap();
         assert_eq!(state, deserialized);
+    }
+
+    #[test]
+    fn state_serde_all_variants_lowercase() {
+        let cases = [
+            (PrimalState::Created, r#""created""#),
+            (PrimalState::Starting, r#""starting""#),
+            (PrimalState::Running, r#""running""#),
+            (PrimalState::Stopping, r#""stopping""#),
+            (PrimalState::Stopped, r#""stopped""#),
+            (PrimalState::Failed, r#""failed""#),
+        ];
+        for (state, expected) in &cases {
+            let json = serde_json::to_string(state).unwrap();
+            assert_eq!(&json, expected, "Serialize {state:?}");
+            let parsed: PrimalState = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, state, "Deserialize {expected}");
+        }
     }
 
     struct MockPrimal {

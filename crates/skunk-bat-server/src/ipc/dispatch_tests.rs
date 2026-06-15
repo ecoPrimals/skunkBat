@@ -614,3 +614,45 @@ async fn test_enforced_gate_allows_defense_status_loopback() {
         "loopback should always pass enforced gate"
     );
 }
+
+#[tokio::test]
+async fn test_bare_health_returns_ok() {
+    let state = make_state();
+    let resp = dispatch(&state, &make_gate(), &make_caller(), make_request("health")).await;
+    assert!(resp.error.is_none(), "bare health should succeed");
+    let result = resp.result.expect("result");
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["primal"], "skunkbat");
+    assert!(result["version"].is_string());
+    assert!(result["uptime_s"].is_number());
+}
+
+#[tokio::test]
+async fn test_bare_health_is_public_under_enforced_gate() {
+    let state = make_state();
+    let gate = MethodGate::new(EnforcementMode::Enforced);
+    let caller = CallerContext::remote();
+    let resp = dispatch(&state, &gate, &caller, make_request("health")).await;
+    assert!(
+        resp.error.is_none(),
+        "bare health must be public even under enforced gate"
+    );
+}
+
+#[tokio::test]
+async fn test_bare_health_in_capabilities_list() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("capabilities.list"),
+    )
+    .await;
+    let result = resp.result.expect("result");
+    let methods = result["methods"].as_array().expect("methods array");
+    assert!(
+        methods.iter().any(|m| m == "health"),
+        "capabilities.list must include bare 'health' method"
+    );
+}

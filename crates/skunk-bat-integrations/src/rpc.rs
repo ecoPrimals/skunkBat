@@ -177,14 +177,17 @@ pub async fn call_endpoint(
         #[cfg(unix)]
         TransportEndpoint::Uds { path } => call_uds(path, method, params, timeout).await,
         #[cfg(not(unix))]
-        TransportEndpoint::Uds { path } => {
-            Err(RpcError::Io(format!("UDS not available on this platform: {path}")))
-        }
+        TransportEndpoint::Uds { path } => Err(RpcError::Io(format!(
+            "UDS not available on this platform: {path}"
+        ))),
         TransportEndpoint::Tcp { host, port } => {
             let addr = format!("{host}:{port}");
             call_tcp(&addr, method, params, timeout).await
         }
-        TransportEndpoint::MeshRelay { peer_id, capability } => Err(RpcError::Io(format!(
+        TransportEndpoint::MeshRelay {
+            peer_id,
+            capability,
+        } => Err(RpcError::Io(format!(
             "mesh_relay transport not yet implemented (peer={peer_id}, cap={capability})"
         ))),
     }
@@ -523,7 +526,9 @@ mod tests {
         let ep: TransportEndpoint = serde_json::from_str(json).unwrap();
         assert_eq!(
             ep,
-            TransportEndpoint::Uds { path: "/run/user/1000/biomeos/beardog.sock".into() }
+            TransportEndpoint::Uds {
+                path: "/run/user/1000/biomeos/beardog.sock".into()
+            }
         );
         let back = serde_json::to_string(&ep).unwrap();
         assert!(back.contains(r#""transport":"uds""#));
@@ -536,7 +541,10 @@ mod tests {
         let ep: TransportEndpoint = serde_json::from_str(json).unwrap();
         assert_eq!(
             ep,
-            TransportEndpoint::Tcp { host: "127.0.0.1".into(), port: 9100 }
+            TransportEndpoint::Tcp {
+                host: "127.0.0.1".into(),
+                port: 9100
+            }
         );
     }
 
@@ -546,7 +554,10 @@ mod tests {
         let ep: TransportEndpoint = serde_json::from_str(json).unwrap();
         assert_eq!(
             ep,
-            TransportEndpoint::MeshRelay { peer_id: "strandgate".into(), capability: "security".into() }
+            TransportEndpoint::MeshRelay {
+                peer_id: "strandgate".into(),
+                capability: "security".into()
+            }
         );
     }
 
@@ -557,7 +568,10 @@ mod tests {
 
     #[tokio::test]
     async fn call_endpoint_tcp_unreachable() {
-        let ep = TransportEndpoint::Tcp { host: "127.0.0.1".into(), port: 1 };
+        let ep = TransportEndpoint::Tcp {
+            host: "127.0.0.1".into(),
+            port: 1,
+        };
         let result = call_endpoint(&ep, "health.liveness", None, Duration::from_millis(200)).await;
         assert!(result.is_err());
     }

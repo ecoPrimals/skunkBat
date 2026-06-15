@@ -95,9 +95,16 @@ mod beardog_integration {
         let skunkbat = SkunkBat::new(config);
 
         let scan = skunkbat.scan_network().await.unwrap();
-        for node in &scan.nodes {
-            assert!(node.id.contains("family") || node.id.contains("local"));
-        }
+        assert!(
+            !scan.nodes.is_empty(),
+            "family-scoped scan should discover at least the local node"
+        );
+        assert!(
+            scan.nodes
+                .iter()
+                .any(|n| n.capabilities.contains(&"defense".to_string())),
+            "local node should advertise defense capability"
+        );
     }
 
     #[tokio::test]

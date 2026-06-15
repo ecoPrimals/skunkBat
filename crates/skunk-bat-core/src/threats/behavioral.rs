@@ -52,17 +52,25 @@ impl StatisticalProfiler {
         }
     }
 
-    fn calculate_stats(values: &[f64]) -> Option<(f64, f64)> {
-        if values.is_empty() {
+    /// Single-pass mean and standard deviation over an iterator (Welford-like two-pass
+    /// avoidance via sum + sum-of-squares). No intermediate `Vec` allocation.
+    fn stats_over(iter: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
+        let mut count: u64 = 0;
+        let mut sum = 0.0_f64;
+        let mut sum_sq = 0.0_f64;
+        for v in iter {
+            count += 1;
+            sum += v;
+            sum_sq += v * v;
+        }
+        if count == 0 {
             return None;
         }
-
         #[expect(clippy::cast_precision_loss, reason = "observation counts fit in f64")]
-        let mean = values.iter().sum::<f64>() / values.len() as f64;
-        #[expect(clippy::cast_precision_loss, reason = "observation counts fit in f64")]
-        let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
-        let std_dev = variance.sqrt();
-
+        let n = count as f64;
+        let mean = sum / n;
+        let variance = mean.mul_add(-mean, sum_sq / n);
+        let std_dev = variance.max(0.0).sqrt();
         Some((mean, std_dev))
     }
 }
@@ -98,13 +106,9 @@ impl BaselineProfiler for StatisticalProfiler {
         let mut anomalies = Vec::new();
 
         // Dimension 1: Connection rate
-        let rates: Vec<f64> = self
-            .observations
-            .iter()
-            .map(|o| o.connection_rate)
-            .collect();
-
-        if let Some((mean, std_dev)) = Self::calculate_stats(&rates) {
+        if let Some((mean, std_dev)) =
+            Self::stats_over(self.observations.iter().map(|o| o.connection_rate))
+        {
             let deviation = (observation.connection_rate - mean).abs() / std_dev;
             if deviation > self.threshold {
                 anomalies.push(Anomaly {
@@ -120,14 +124,9 @@ impl BaselineProfiler for StatisticalProfiler {
 
         // Dimension 2: Traffic volume
         #[expect(clippy::cast_precision_loss, reason = "traffic volumes fit in f64")]
-        let volumes: Vec<f64> = self
-            .observations
-            .iter()
-            .map(|o| o.traffic_volume as f64)
-            .collect();
-
-        #[expect(clippy::cast_precision_loss, reason = "traffic volumes fit in f64")]
-        if let Some((mean, std_dev)) = Self::calculate_stats(&volumes) {
+        if let Some((mean, std_dev)) =
+            Self::stats_over(self.observations.iter().map(|o| o.traffic_volume as f64))
+        {
             let deviation = (observation.traffic_volume as f64 - mean).abs() / std_dev;
             if deviation > self.threshold {
                 anomalies.push(Anomaly {
@@ -143,14 +142,11 @@ impl BaselineProfiler for StatisticalProfiler {
 
         // Dimension 3: Port diversity (number of distinct ports accessed)
         #[expect(clippy::cast_precision_loss, reason = "port counts fit in f64")]
-        let port_counts: Vec<f64> = self
-            .observations
-            .iter()
-            .map(|o| o.ports_accessed.len() as f64)
-            .collect();
-
-        #[expect(clippy::cast_precision_loss, reason = "port counts fit in f64")]
-        if let Some((mean, std_dev)) = Self::calculate_stats(&port_counts) {
+        if let Some((mean, std_dev)) = Self::stats_over(
+            self.observations
+                .iter()
+                .map(|o| o.ports_accessed.len() as f64),
+        ) {
             let current_ports = observation.ports_accessed.len() as f64;
             let deviation = (current_ports - mean).abs() / std_dev;
             if deviation > self.threshold {
@@ -262,21 +258,21 @@ mod tests {
     }
 
     #[test]
-    fn calculate_stats_empty() {
-        assert!(StatisticalProfiler::calculate_stats(&[]).is_none());
+    fn stats_over_empty() {
+        assert!(StatisticalProfiler::stats_over(std::iter::empty()).is_none());
     }
 
     #[test]
-    fn calculate_stats_single_value() {
-        let (mean, std_dev) = StatisticalProfiler::calculate_stats(&[5.0]).unwrap();
+    fn stats_over_single_value() {
+        let (mean, std_dev) = StatisticalProfiler::stats_over([5.0].into_iter()).unwrap();
         assert!((mean - 5.0).abs() < f64::EPSILON);
         assert!((std_dev - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn calculate_stats_uniform() {
+    fn stats_over_uniform() {
         let values = [10.0, 10.0, 10.0, 10.0];
-        let (mean, std_dev) = StatisticalProfiler::calculate_stats(&values).unwrap();
+        let (mean, std_dev) = StatisticalProfiler::stats_over(values.into_iter()).unwrap();
         assert!((mean - 10.0).abs() < f64::EPSILON);
         assert!((std_dev - 0.0).abs() < f64::EPSILON);
     }
@@ -387,9 +383,9 @@ mod tests {
     }
 
     #[test]
-    fn calculate_stats_known_values() {
+    fn stats_over_known_values() {
         let values = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
-        let (mean, _std_dev) = StatisticalProfiler::calculate_stats(&values).unwrap();
+        let (mean, _std_dev) = StatisticalProfiler::stats_over(values.into_iter()).unwrap();
         assert!((mean - 5.0).abs() < f64::EPSILON);
     }
 
@@ -447,8 +443,8 @@ mod tests {
     }
 
     #[test]
-    fn calculate_stats_two_values() {
-        let (mean, std_dev) = StatisticalProfiler::calculate_stats(&[10.0, 20.0]).unwrap();
+    fn stats_over_two_values() {
+        let (mean, std_dev) = StatisticalProfiler::stats_over([10.0, 20.0].into_iter()).unwrap();
         assert!((mean - 15.0).abs() < f64::EPSILON);
         assert!(std_dev > 0.0);
     }

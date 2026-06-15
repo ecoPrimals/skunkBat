@@ -218,7 +218,9 @@ struct NegotiateParams {
 }
 
 /// Parse and validate `btsp.negotiate` parameters.
-fn parse_negotiate_params(params: Option<serde_json::Value>) -> Result<NegotiateParams, NegotiateOutcome> {
+fn parse_negotiate_params(
+    params: Option<serde_json::Value>,
+) -> Result<NegotiateParams, NegotiateOutcome> {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64;
 

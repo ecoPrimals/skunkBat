@@ -105,7 +105,10 @@ fn resolve_sweetgrass() -> ResolvedTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResolvedTarget {
     Endpoint(TransportEndpoint),
-    Legacy { uds: Option<String>, tcp: Option<String> },
+    Legacy {
+        uds: Option<String>,
+        tcp: Option<String>,
+    },
 }
 
 /// Parse a `TransportEndpoint` from an environment variable.
@@ -181,13 +184,7 @@ pub async fn forward_to_braid(
         "correlation_id": event.correlation_id,
     });
 
-    call_resolved(
-        &target,
-        "braid.create",
-        Some(params),
-        timeout,
-    )
-    .await
+    call_resolved(&target, "braid.create", Some(params), timeout).await
 }
 
 /// Run the forwarding loop as a background task.

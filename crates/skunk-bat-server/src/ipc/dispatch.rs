@@ -11,11 +11,13 @@ use skunk_bat_core::PrimalHealth;
 use skunk_bat_core::SkunkBat;
 use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 static ACTIVE_TRANSPORTS: OnceLock<&'static [&'static str]> = OnceLock::new();
+static STARTUP_INSTANT: OnceLock<Instant> = OnceLock::new();
 
-/// Initialize the runtime transport metadata from CLI flags.
+/// Initialize runtime metadata from CLI flags.
 ///
 /// Called once at server startup. Subsequent calls are no-ops.
 pub(super) fn set_active_transports(no_tcp: bool, no_uds: bool) {
@@ -26,10 +28,17 @@ pub(super) fn set_active_transports(no_tcp: bool, no_uds: bool) {
         (true, true) => &[],
     };
     ACTIVE_TRANSPORTS.get_or_init(|| transports);
+    STARTUP_INSTANT.get_or_init(Instant::now);
 }
 
 fn active_transports() -> &'static [&'static str] {
     ACTIVE_TRANSPORTS.get().copied().unwrap_or(&["uds", "tcp"])
+}
+
+fn uptime_seconds() -> u64 {
+    STARTUP_INSTANT
+        .get()
+        .map_or(0, |start| start.elapsed().as_secs())
 }
 
 use super::jsonrpc::{self, Request, Response};
@@ -37,6 +46,7 @@ use super::method_gate::{CallerContext, EnforcementMode, MethodGate};
 
 /// Application-layer methods routed through `dispatch()`.
 const METHODS: &[&str] = &[
+    "health",
     "health.liveness",
     "health.readiness",
     "health.check",
@@ -93,38 +103,41 @@ fn serialize<T: Serialize>(id: serde_json::Value, value: T) -> Response {
     }
 }
 
-/// Build the Capability Wire Standard L2/L3 response body.
-fn capabilities_response() -> serde_json::Value {
-    let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
-    serde_json::json!({
-        "primal": skunk_bat_core::PRIMAL_ID,
-        "version": PRIMAL_VERSION,
-        "capabilities": &all,
-        "count": all.len(),
-        "methods": &all,
-        "provided_capabilities": [
-            {
-                "type": "security",
-                "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
-                "version": PRIMAL_VERSION,
-                "description": "Network reconnaissance, threat detection, and automated defense"
-            },
-            {
-                "type": "health",
-                "methods": ["liveness", "readiness", "check"],
-                "version": PRIMAL_VERSION,
-                "description": "Health monitoring endpoints"
-            },
-            {
-                "type": "btsp",
-                "methods": ["negotiate", "capabilities"],
-                "version": PRIMAL_VERSION,
-                "description": "BTSP Phase 3 transport encryption"
-            }
-        ],
-        "consumed_capabilities": CONSUMED_CAPABILITIES,
-        "protocol": "jsonrpc-2.0",
-        "transport": active_transports()
+/// Build the Capability Wire Standard L2/L3 response body (cached after first call).
+fn capabilities_response() -> &'static serde_json::Value {
+    static CAPS: OnceLock<serde_json::Value> = OnceLock::new();
+    CAPS.get_or_init(|| {
+        let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
+        serde_json::json!({
+            "primal": skunk_bat_core::PRIMAL_ID,
+            "version": PRIMAL_VERSION,
+            "capabilities": &all,
+            "count": all.len(),
+            "methods": &all,
+            "provided_capabilities": [
+                {
+                    "type": "security",
+                    "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
+                    "version": PRIMAL_VERSION,
+                    "description": "Network reconnaissance, threat detection, and automated defense"
+                },
+                {
+                    "type": "health",
+                    "methods": ["liveness", "readiness", "check"],
+                    "version": PRIMAL_VERSION,
+                    "description": "Health monitoring endpoints"
+                },
+                {
+                    "type": "btsp",
+                    "methods": ["negotiate", "capabilities"],
+                    "version": PRIMAL_VERSION,
+                    "description": "BTSP Phase 3 transport encryption"
+                }
+            ],
+            "consumed_capabilities": CONSUMED_CAPABILITIES,
+            "protocol": "jsonrpc-2.0",
+            "transport": active_transports()
+        })
     })
 }
 
@@ -151,7 +164,7 @@ async fn authorize(
             EventSeverity::Warn,
             EventKind::GateRejection {
                 method: method.to_owned(),
-                origin: format!("{:?}", caller.origin),
+                origin: format!("{origin:?}", origin = caller.origin),
             },
         )
         .await;
@@ -169,7 +182,7 @@ async fn authorize(
             EventSeverity::Info,
             EventKind::GatePermissiveAllow {
                 method: method.to_owned(),
-                origin: format!("{:?}", caller.origin),
+                origin: format!("{origin:?}", origin = caller.origin),
             },
         )
         .await;
@@ -194,14 +207,24 @@ pub(super) async fn dispatch(
     }
 
     match request.method.as_str() {
+        "health" => Response::success(
+            id,
+            serde_json::json!({
+                "status": "ok",
+                "primal": skunk_bat_core::PRIMAL_ID,
+                "version": PRIMAL_VERSION,
+                "uptime_s": uptime_seconds()
+            }),
+        ),
+
         "health.liveness" => Response::success(id, serde_json::json!({"status": "alive"})),
 
         "health.readiness" => {
             let sb = state.read().await;
             let ready = sb.state().is_running();
-            let state_str = sb.state().to_string();
+            let current = sb.state();
             drop(sb);
-            Response::success(id, serde_json::json!({"ready": ready, "state": state_str}))
+            Response::success(id, serde_json::json!({"ready": ready, "state": current}))
         }
 
         "health.check" => try_serialize(id, state.read().await.health_check().await),
@@ -214,8 +237,8 @@ pub(super) async fn dispatch(
         "defense.status" => dispatch_defense_status(state, id).await,
 
         "lifecycle.state" => {
-            let state_str = state.read().await.state().to_string();
-            Response::success(id, serde_json::json!({"state": state_str}))
+            let current = state.read().await.state();
+            Response::success(id, serde_json::json!({"state": current}))
         }
 
         "lifecycle.status" => Response::success(
@@ -228,11 +251,13 @@ pub(super) async fn dispatch(
         ),
 
         "lifecycle.capabilities" => {
-            let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
-            Response::success(id, serde_json::json!({"capabilities": all}))
+            let caps = capabilities_response();
+            Response::success(id, serde_json::json!({"capabilities": caps["methods"]}))
         }
 
-        "capabilities.list" | "capability.list" => Response::success(id, capabilities_response()),
+        "capabilities.list" | "capability.list" => {
+            Response::success(id, capabilities_response().clone())
+        }
 
         "identity.get" => Response::success(
             id,
@@ -262,7 +287,7 @@ pub(super) async fn dispatch(
         "auth.peer_info" => Response::success(
             id,
             serde_json::json!({
-                "origin": format!("{:?}", caller.origin),
+                "origin": format!("{origin:?}", origin = caller.origin),
                 "has_token": caller.bearer_token.is_some()
             }),
         ),
@@ -282,7 +307,7 @@ pub(super) async fn dispatch(
         _ => Response::error(
             id,
             jsonrpc::METHOD_NOT_FOUND,
-            format!("unknown method: {}", request.method),
+            format!("unknown method: {method}", method = request.method),
         ),
     }
 }
@@ -300,8 +325,8 @@ async fn dispatch_detect(state: &Arc<RwLock<SkunkBat>>, id: serde_json::Value) -
                 EventSeverity::Warn,
                 EventKind::ThreatDetected {
                     threat_id: t.id.clone(),
-                    threat_type: format!("{:?}", t.threat_type),
-                    severity: format!("{:?}", t.severity),
+                    threat_type: format!("{tt:?}", tt = t.threat_type),
+                    severity: format!("{sev:?}", sev = t.severity),
                     source: t.source.clone(),
                 },
             )

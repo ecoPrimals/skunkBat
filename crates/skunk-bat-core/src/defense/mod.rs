@@ -13,14 +13,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-/// Confidence threshold for automatic quarantine of critical threats.
-const CRITICAL_CONFIDENCE_THRESHOLD: f64 = 0.9;
-
-/// Confidence threshold for automatic quarantine of high-severity threats.
-const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.7;
-
-/// Number of repeat quarantines before escalating to block.
-const ESCALATION_THRESHOLD: u32 = 3;
+use crate::config::DefenseConfig;
 
 /// Defense engine with thread-safe quarantine tracking.
 pub struct DefenseEngine {
@@ -28,6 +21,7 @@ pub struct DefenseEngine {
     auto_response_enabled: bool,
     quarantine_map: Mutex<HashMap<String, QuarantineRecord>>,
     escalation_counts: Mutex<HashMap<String, u32>>,
+    thresholds: DefenseConfig,
 }
 
 impl DefenseEngine {
@@ -39,6 +33,7 @@ impl DefenseEngine {
             auto_response_enabled: true,
             quarantine_map: Mutex::new(HashMap::new()),
             escalation_counts: Mutex::new(HashMap::new()),
+            thresholds: config.defense.clone(),
         }
     }
 
@@ -120,43 +115,47 @@ impl DefenseEngine {
 
     /// Determine appropriate defense action with escalation awareness.
     fn determine_action(&self, threat: &Threat, escalation_count: u32) -> DefenseAction {
-        if escalation_count >= ESCALATION_THRESHOLD {
+        let target = threat.source.clone();
+        let desc = &threat.description;
+
+        if escalation_count >= self.thresholds.escalation_threshold {
             return DefenseAction {
                 action_type: ActionType::Block,
-                target: threat.source.clone(),
+                target,
                 requires_approval: false,
                 reason: format!(
-                    "Escalated to block after {} repeated threats: {}",
-                    escalation_count, threat.description
+                    "Escalated to block after {escalation_count} repeated threats: {desc}"
                 ),
             };
         }
 
         if threat.severity == Severity::Critical
-            && threat.confidence > CRITICAL_CONFIDENCE_THRESHOLD
+            && threat.confidence > self.thresholds.critical_confidence_threshold
         {
             return DefenseAction {
                 action_type: ActionType::Quarantine,
-                target: threat.source.clone(),
+                target,
                 requires_approval: false,
-                reason: format!("Critical threat detected: {}", threat.description),
+                reason: format!("Critical threat detected: {desc}"),
             };
         }
 
-        if threat.severity == Severity::High && threat.confidence > HIGH_CONFIDENCE_THRESHOLD {
+        if threat.severity == Severity::High
+            && threat.confidence > self.thresholds.high_confidence_threshold
+        {
             return DefenseAction {
                 action_type: ActionType::QuarantineAndAlert,
-                target: threat.source.clone(),
+                target,
                 requires_approval: false,
-                reason: format!("High severity threat: {}", threat.description),
+                reason: format!("High severity threat: {desc}"),
             };
         }
 
         DefenseAction {
             action_type: ActionType::MonitorAndAlert,
-            target: threat.source.clone(),
+            target,
             requires_approval: self.auto_response_enabled,
-            reason: format!("Potential threat detected: {}", threat.description),
+            reason: format!("Potential threat detected: {desc}"),
         }
     }
 
@@ -296,7 +295,7 @@ pub struct QuarantineRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FeatureFlags, SkunkBatConfig};
+    use crate::config::{DefenseConfig, FeatureFlags, SkunkBatConfig};
     use crate::primal_foundation::config::CommonConfig;
     use crate::threats::{Severity, Threat, ThreatType};
 
@@ -313,6 +312,7 @@ mod tests {
                 observability: true,
             },
             lineage_id: None,
+            ..SkunkBatConfig::default()
         }
     }
 
@@ -406,15 +406,13 @@ mod tests {
         let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::High, 0.8);
 
-        for _ in 0..ESCALATION_THRESHOLD {
+        let threshold = DefenseConfig::default().escalation_threshold;
+        for _ in 0..threshold {
             engine.respond(&threat).unwrap();
         }
 
-        assert_eq!(
-            engine.escalation_count(&threat.source),
-            ESCALATION_THRESHOLD
-        );
-        let action = engine.determine_action(&threat, ESCALATION_THRESHOLD);
+        assert_eq!(engine.escalation_count(&threat.source), threshold);
+        let action = engine.determine_action(&threat, threshold);
         assert_eq!(action.action_type, ActionType::Block);
     }
 
@@ -652,7 +650,8 @@ mod tests {
         let config = test_config();
         let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::Low, 0.3);
-        let action = engine.determine_action(&threat, ESCALATION_THRESHOLD);
+        let threshold = DefenseConfig::default().escalation_threshold;
+        let action = engine.determine_action(&threat, threshold);
         assert_eq!(action.action_type, ActionType::Block);
     }
 
@@ -661,7 +660,8 @@ mod tests {
         let config = test_config();
         let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::Low, 0.1);
-        let action = engine.determine_action(&threat, ESCALATION_THRESHOLD + 5);
+        let action =
+            engine.determine_action(&threat, DefenseConfig::default().escalation_threshold + 5);
         assert_eq!(action.action_type, ActionType::Block);
     }
 
@@ -699,7 +699,10 @@ mod tests {
     fn test_medium_confidence_boundary() {
         let config = test_config();
         let engine = DefenseEngine::new(&config);
-        let threat = test_threat(Severity::High, HIGH_CONFIDENCE_THRESHOLD + 0.01);
+        let threat = test_threat(
+            Severity::High,
+            DefenseConfig::default().high_confidence_threshold + 0.01,
+        );
         let action = engine.determine_action(&threat, 1);
         assert_eq!(action.action_type, ActionType::QuarantineAndAlert);
     }
@@ -708,7 +711,10 @@ mod tests {
     fn test_critical_confidence_boundary() {
         let config = test_config();
         let engine = DefenseEngine::new(&config);
-        let threat = test_threat(Severity::Critical, CRITICAL_CONFIDENCE_THRESHOLD + 0.01);
+        let threat = test_threat(
+            Severity::Critical,
+            DefenseConfig::default().critical_confidence_threshold + 0.01,
+        );
         let action = engine.determine_action(&threat, 1);
         assert_eq!(action.action_type, ActionType::Quarantine);
     }
