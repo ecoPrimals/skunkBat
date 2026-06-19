@@ -109,7 +109,10 @@ pub fn derive_handshake_key_from_env() -> Option<Vec<u8>> {
 
     let hk = Hkdf::<Sha256>::new(Some(b"btsp-v1"), seed_str.as_bytes());
     let mut key = [0u8; 32];
-    hk.expand(b"handshake", &mut key).ok()?;
+    if let Err(e) = hk.expand(b"handshake", &mut key) {
+        tracing::warn!("HKDF expand for BTSP handshake key failed: {e}");
+        return None;
+    }
 
     Some(key.to_vec())
 }
@@ -260,7 +263,11 @@ where
             .and_then(Value::as_str)
             .unwrap_or("unknown");
         let err_frame = serde_json::json!({"error": "handshake_failed", "reason": reason});
-        let _ = write_frame(stream, &serde_json::to_vec(&err_frame).unwrap_or_default()).await;
+        if let Err(e) =
+            write_frame(stream, &serde_json::to_vec(&err_frame).unwrap_or_default()).await
+        {
+            tracing::warn!("failed to send handshake error frame to peer: {e}");
+        }
         return Err(TransportError::Handshake(format!(
             "verify failed: {reason}"
         )));
@@ -272,7 +279,7 @@ where
         .map(str::to_owned);
     let cipher = json_str_or(&verify_result, "cipher", "null");
 
-    let _negotiate = provider_call(
+    if let Err(e) = provider_call(
         &config.provider_socket,
         "btsp.server.negotiate",
         serde_json::json!({
@@ -280,7 +287,10 @@ where
             "cipher": cipher,
         }),
     )
-    .await;
+    .await
+    {
+        tracing::warn!("btsp.server.negotiate call to provider failed: {e}");
+    }
 
     let sid = hs.session_id.as_deref().unwrap_or(&hs.session_token);
     let complete = serde_json::json!({

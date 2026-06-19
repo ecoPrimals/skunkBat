@@ -15,12 +15,8 @@ use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::threats::traits::LineageVerifier;
 use std::time::Duration;
 
-use crate::rpc::TransportEndpoint;
-
 /// Default RPC timeout for lineage calls (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 3000;
-
-use skunk_bat_core::env_keys;
 
 /// Remote lineage verifier backed by a runtime-discovered capability provider.
 ///
@@ -33,7 +29,6 @@ use skunk_bat_core::env_keys;
 pub struct RemoteLineageVerifier {
     endpoint: String,
     uds_path: Option<String>,
-    transport: Option<TransportEndpoint>,
     timeout_ms: u64,
 }
 
@@ -45,23 +40,16 @@ impl RemoteLineageVerifier {
         Self {
             endpoint,
             uds_path: None,
-            transport: None,
             timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 
     /// Create from environment with capability-socket discovery.
     ///
-    /// Resolution priority:
-    /// 1. `LINEAGE_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
-    /// 2. `LINEAGE_ENDPOINT` env (legacy TCP string)
-    /// 3. Capability socket (`lineage-verification.sock`)
+    /// Reads `LINEAGE_ENDPOINT` for TCP and probes
+    /// `$BIOMEOS_SOCKET_DIR/lineage-verification.sock` for UDS.
     #[must_use]
     pub fn from_env() -> Self {
-        let transport: Option<TransportEndpoint> = std::env::var(env_keys::LINEAGE_TRANSPORT)
-            .ok()
-            .and_then(|v| serde_json::from_str(&v).ok());
-
         let endpoint =
             std::env::var(skunk_bat_core::env_keys::LINEAGE_ENDPOINT).unwrap_or_default();
         let uds_path = {
@@ -69,7 +57,6 @@ impl RemoteLineageVerifier {
             std::path::Path::new(&path).exists().then_some(path)
         };
         tracing::info!(
-            transport = ?transport,
             endpoint = %endpoint,
             uds = ?uds_path,
             "Initializing remote lineage verifier"
@@ -77,7 +64,6 @@ impl RemoteLineageVerifier {
         Self {
             endpoint,
             uds_path,
-            transport,
             timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
@@ -103,9 +89,6 @@ impl RemoteLineageVerifier {
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, crate::rpc::RpcError> {
         let timeout = Duration::from_millis(self.timeout_ms);
-        if let Some(ref ep) = self.transport {
-            return crate::rpc::call_endpoint(ep, method, params, timeout).await;
-        }
         crate::rpc::call(
             self.uds_path.as_deref(),
             self.tcp_endpoint(),
@@ -123,10 +106,8 @@ impl LineageVerifier for RemoteLineageVerifier {
         match self.rpc_call("lineage.verify", Some(params)).await {
             Ok(value) => Ok(value["is_family"].as_bool().unwrap_or(false)),
             Err(e) => {
-                tracing::debug!("Lineage verification provider unreachable: {e}");
-                Err(SkunkBatError::LineageVerification(format!(
-                    "provider unreachable: {e}"
-                )))
+                tracing::debug!("Lineage verification unavailable ({e}), conservative deny");
+                Ok(false)
             }
         }
     }
@@ -136,10 +117,8 @@ impl LineageVerifier for RemoteLineageVerifier {
         match self.rpc_call("lineage.list", Some(params)).await {
             Ok(value) => Ok(value["lineage"].as_str().map(String::from)),
             Err(e) => {
-                tracing::debug!("Lineage query provider unreachable: {e}");
-                Err(SkunkBatError::LineageVerification(format!(
-                    "provider unreachable: {e}"
-                )))
+                tracing::debug!("Lineage query unavailable ({e}), returning None");
+                Ok(None)
             }
         }
     }
@@ -170,24 +149,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_family_returns_err_when_unreachable() {
+    async fn test_is_family_graceful_degradation() {
         let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999".into());
         let result = verifier.is_family("unknown-peer").await;
-        assert!(result.is_err(), "unreachable provider → Err (not false)");
+        assert!(result.is_ok());
+        assert!(!result.expect("ok"), "should conservatively deny");
     }
 
     #[tokio::test]
-    async fn test_get_lineage_returns_err_when_unreachable() {
+    async fn test_get_lineage_graceful_degradation() {
         let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999".into());
         let result = verifier.get_lineage("unknown-peer").await;
-        assert!(result.is_err(), "unreachable provider → Err (not None)");
+        assert!(result.is_ok());
+        assert!(result.expect("ok").is_none());
     }
 
     #[tokio::test]
-    async fn test_from_env_verify_returns_err() {
+    async fn test_from_env_verify() {
         let verifier = RemoteLineageVerifier::from_env();
         let result = verifier.is_family("test-peer").await;
-        assert!(result.is_err(), "no provider in test env → Err");
+        assert!(result.is_ok());
+        assert!(!result.expect("ok"));
     }
 
     /// Integration test: mock bearDog server confirms family membership.

@@ -37,57 +37,34 @@ impl Default for FeatureFlags {
     }
 }
 
-/// Tunable thresholds for threat detection.
-///
-/// Every numeric threshold is exposed here rather than buried as a
-/// module-level `const`. Derivations follow the wateringHole
-/// `DERIVATION_ANCHORING_STANDARD` — each value has a documented origin.
+/// Tunable thresholds for threat detection — avoids hardcoded magic numbers.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DetectionConfig {
-    /// Sigma threshold for statistical anomaly detection.
-    /// Origin: 2.5σ ≈ 99.38% of normal observations fall within.
+pub struct ThreatThresholds {
+    /// Sigma deviation that triggers an anomaly report.
     pub sigma_threshold: f64,
-
-    /// Deviation (in σ) above which a behavioral anomaly is `High` severity.
+    /// Deviation above which anomalies are classified as `Severity::High`.
     pub severity_high_deviation: f64,
-
-    /// Deviation (in σ) above which a behavioral anomaly is `Medium` severity.
+    /// Deviation above which anomalies are classified as `Severity::Medium`.
     pub severity_medium_deviation: f64,
-
-    /// System load fraction that triggers a `DenialOfService` threat.
+    /// Normalized system load (0.0–1.0) that triggers a `DoS` threat.
     pub dos_load_threshold: f64,
-
     /// Confidence assigned to resource-exhaustion detections.
     pub dos_confidence: f64,
-
-    /// Port count threshold that triggers a port-scan detection.
-    pub port_scan_threshold: usize,
-
+    /// Confidence assigned when lineage verification fails.
+    pub genetic_confidence: f64,
+    /// Ports that trigger a port-scan detection when 2+ are accessed.
+    pub intrusion_sensitive_ports: Vec<u16>,
+    /// Minimum traffic volume (bytes) before exfiltration heuristic fires.
+    pub intrusion_exfil_volume: u64,
+    /// Traffic-to-connection ratio above which exfiltration is suspected.
+    pub intrusion_exfil_ratio: f64,
     /// Confidence assigned to port-scan detections.
-    pub port_scan_confidence: f64,
-
-    /// Confidence assigned to genetic lineage verification failures.
-    /// Origin: 0.95 = high confidence (identity-based, not heuristic).
-    pub genetic_lineage_confidence: f64,
-
-    /// Confidence assigned to topology bypass detections.
-    /// Origin: 0.8 = moderate (port-to-layer mapping is heuristic).
-    pub topology_bypass_confidence: f64,
-
-    /// Consecutive sequential ports that indicate a port scan pattern.
-    /// Origin: 3 = minimum run length for "sequential" detection.
-    pub sequential_port_window: usize,
-
-    /// Minimum distinct topology layers before evaluating bypass.
-    /// Origin: 3 = need at least 3 layers for a meaningful path check.
-    pub min_topology_path_layers: usize,
-
-    /// Expected topology path for layer validation.
-    /// Default `[0, 1, 2, 3]` = standard 4-layer ecoPrimals stack.
-    pub expected_topology_path: Vec<u8>,
+    pub intrusion_portscan_confidence: f64,
+    /// Confidence assigned to data-exfiltration detections.
+    pub intrusion_exfil_confidence: f64,
 }
 
-impl Default for DetectionConfig {
+impl Default for ThreatThresholds {
     fn default() -> Self {
         Self {
             sigma_threshold: 2.5,
@@ -95,36 +72,12 @@ impl Default for DetectionConfig {
             severity_medium_deviation: 3.0,
             dos_load_threshold: 0.9,
             dos_confidence: 0.8,
-            port_scan_threshold: 10,
-            port_scan_confidence: 0.85,
-            genetic_lineage_confidence: 0.95,
-            topology_bypass_confidence: 0.8,
-            sequential_port_window: 3,
-            min_topology_path_layers: 3,
-            expected_topology_path: vec![0, 1, 2, 3],
-        }
-    }
-}
-
-/// Tunable thresholds for the defense engine.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DefenseConfig {
-    /// Confidence threshold for auto-quarantine of `Critical` threats.
-    pub critical_confidence_threshold: f64,
-
-    /// Confidence threshold for auto-quarantine of `High` threats.
-    pub high_confidence_threshold: f64,
-
-    /// Repeat quarantines before escalation to block.
-    pub escalation_threshold: u32,
-}
-
-impl Default for DefenseConfig {
-    fn default() -> Self {
-        Self {
-            critical_confidence_threshold: 0.9,
-            high_confidence_threshold: 0.7,
-            escalation_threshold: 3,
+            genetic_confidence: 0.95,
+            intrusion_sensitive_ports: vec![22, 23, 3389, 445, 135],
+            intrusion_exfil_volume: 100_000,
+            intrusion_exfil_ratio: 10_000.0,
+            intrusion_portscan_confidence: 0.75,
+            intrusion_exfil_confidence: 0.6,
         }
     }
 }
@@ -136,19 +89,15 @@ pub struct SkunkBatConfig {
     #[serde(flatten)]
     pub common: CommonConfig,
 
-    /// Feature flags.
+    /// Feature flags
     pub features: FeatureFlags,
 
-    /// Lineage ID for family-only monitoring.
+    /// Lineage ID for family-only monitoring
     pub lineage_id: Option<String>,
 
-    /// Threat detection thresholds.
+    /// Threat detection thresholds
     #[serde(default)]
-    pub detection: DetectionConfig,
-
-    /// Defense engine thresholds.
-    #[serde(default)]
-    pub defense: DefenseConfig,
+    pub thresholds: ThreatThresholds,
 }
 
 impl Default for SkunkBatConfig {
@@ -160,8 +109,7 @@ impl Default for SkunkBatConfig {
             },
             features: FeatureFlags::default(),
             lineage_id: None,
-            detection: DetectionConfig::default(),
-            defense: DefenseConfig::default(),
+            thresholds: ThreatThresholds::default(),
         }
     }
 }
@@ -197,12 +145,21 @@ mod tests {
                 observability: false,
             },
             lineage_id: Some("family-alpha".to_owned()),
-            ..SkunkBatConfig::default()
+            thresholds: ThreatThresholds::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: SkunkBatConfig = serde_json::from_str(&json).unwrap();
         assert!(!parsed.features.threat_detection);
         assert_eq!(parsed.lineage_id.as_deref(), Some("family-alpha"));
+    }
+
+    #[test]
+    #[expect(clippy::float_cmp, reason = "exact default comparison in test")]
+    fn threat_thresholds_defaults() {
+        let t = ThreatThresholds::default();
+        assert_eq!(t.sigma_threshold, 2.5);
+        assert_eq!(t.dos_load_threshold, 0.9);
+        assert_eq!(t.genetic_confidence, 0.95);
     }
 
     #[test]
@@ -217,67 +174,5 @@ mod tests {
         let parsed: FeatureFlags = serde_json::from_str(&json).unwrap();
         assert!(!parsed.reconnaissance);
         assert!(parsed.threat_detection);
-    }
-
-    #[test]
-    fn detection_config_defaults() {
-        let d = DetectionConfig::default();
-        assert!((d.sigma_threshold - 2.5).abs() < f64::EPSILON);
-        assert_eq!(d.port_scan_threshold, 10);
-        assert!((d.dos_load_threshold - 0.9).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn defense_config_defaults() {
-        let d = DefenseConfig::default();
-        assert!((d.critical_confidence_threshold - 0.9).abs() < f64::EPSILON);
-        assert!((d.high_confidence_threshold - 0.7).abs() < f64::EPSILON);
-        assert_eq!(d.escalation_threshold, 3);
-    }
-
-    #[test]
-    fn detection_config_serde_roundtrip() {
-        let config = DetectionConfig {
-            sigma_threshold: 3.0,
-            port_scan_threshold: 20,
-            ..DetectionConfig::default()
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        let parsed: DetectionConfig = serde_json::from_str(&json).unwrap();
-        assert!((parsed.sigma_threshold - 3.0).abs() < f64::EPSILON);
-        assert_eq!(parsed.port_scan_threshold, 20);
-    }
-
-    #[test]
-    fn defense_config_serde_roundtrip() {
-        let config = DefenseConfig {
-            escalation_threshold: 5,
-            ..DefenseConfig::default()
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        let parsed: DefenseConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.escalation_threshold, 5);
-    }
-
-    #[test]
-    fn config_with_detection_overrides() {
-        let config = SkunkBatConfig {
-            detection: DetectionConfig {
-                sigma_threshold: 1.5,
-                ..DetectionConfig::default()
-            },
-            ..SkunkBatConfig::default()
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        let parsed: SkunkBatConfig = serde_json::from_str(&json).unwrap();
-        assert!((parsed.detection.sigma_threshold - 1.5).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn config_missing_detection_uses_defaults() {
-        let json = r#"{"name":"test","instance_id":"abc123","log_level":"info","data_dir":"./data","listen_addr":"127.0.0.1","listen_port":0,"features":{"reconnaissance":true,"threat_detection":true,"auto_defense":true,"observability":true}}"#;
-        let parsed: SkunkBatConfig = serde_json::from_str(json).unwrap();
-        assert!((parsed.detection.sigma_threshold - 2.5).abs() < f64::EPSILON);
-        assert_eq!(parsed.defense.escalation_threshold, 3);
     }
 }

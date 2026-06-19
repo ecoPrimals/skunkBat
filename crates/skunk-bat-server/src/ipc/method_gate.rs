@@ -183,7 +183,7 @@ impl MethodGate {
     pub fn check(
         &self,
         method: &str,
-        id: serde_json::Value,
+        id: &serde_json::Value,
         caller: &CallerContext,
     ) -> Result<(), Response> {
         let level = classify_method(method);
@@ -214,7 +214,7 @@ impl MethodGate {
                     "method gate: REJECTED unauthenticated call to protected method"
                 );
                 Err(Response::error(
-                    id,
+                    id.clone(),
                     PERMISSION_DENIED,
                     format!("permission denied: method '{method}' requires a capability token"),
                 ))
@@ -313,9 +313,9 @@ mod tests {
         let gate = MethodGate::new(EnforcementMode::Enforced);
         let caller = CallerContext::loopback();
         let id = serde_json::json!(1);
-        assert!(gate.check("health.check", id.clone(), &caller).is_ok());
-        assert!(gate.check("identity.get", id.clone(), &caller).is_ok());
-        assert!(gate.check("auth.mode", id, &caller).is_ok());
+        assert!(gate.check("health.check", &id, &caller).is_ok());
+        assert!(gate.check("identity.get", &id, &caller).is_ok());
+        assert!(gate.check("auth.mode", &id, &caller).is_ok());
     }
 
     #[test]
@@ -323,7 +323,7 @@ mod tests {
         let gate = MethodGate::new(EnforcementMode::Permissive);
         let caller = CallerContext::loopback();
         let id = serde_json::json!(1);
-        assert!(gate.check("security.scan", id, &caller).is_ok());
+        assert!(gate.check("security.scan", &id, &caller).is_ok());
     }
 
     #[test]
@@ -331,7 +331,7 @@ mod tests {
         let gate = MethodGate::new(EnforcementMode::Enforced);
         let caller = CallerContext::remote();
         let id = serde_json::json!(1);
-        let result = gate.check("security.scan", id, &caller);
+        let result = gate.check("security.scan", &id, &caller);
         assert!(result.is_err());
         let resp = result.unwrap_err();
         assert_eq!(resp.error.as_ref().unwrap().code, PERMISSION_DENIED);
@@ -345,6 +345,6 @@ mod tests {
             origin: ConnectionOrigin::Remote,
         };
         let id = serde_json::json!(1);
-        assert!(gate.check("security.scan", id, &caller).is_ok());
+        assert!(gate.check("security.scan", &id, &caller).is_ok());
     }
 }

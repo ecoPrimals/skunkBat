@@ -10,7 +10,7 @@ observability — all metadata-only, no content inspection by architecture.
 |-------|------|------|
 | `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
-| `skunk-bat-server` | UniBin server: UDS-only default (TCP fallback), BTSP Phase 1/2/3, Wire Standard L2/L3 | binary |
+| `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2/3 (BearDog-delegated handshake + `btsp.negotiate`), Wire Standard L2/L3 | binary |
 
 ## Key Concepts
 
@@ -22,12 +22,12 @@ observability — all metadata-only, no content inspection by architecture.
 
 ## IPC Surface
 
-- **Transport**: `--bind-mode` contract: `uds-only` (default), `tcp-only` (Android), `fallback` (both). Socket: `$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`
+- **Transport**: TCP (`--port`, default 9750) + UDS (`--socket` or `$BIOMEOS_SOCKET_DIR/skunkbat-{family_id}.sock`)
 - **BTSP Phase 1**: `FAMILY_ID` socket scoping, `BIOMEOS_INSECURE` guard, `XDG_RUNTIME_DIR` fallback
-- **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with first-byte peek (`{` → plain JSON-RPC for biomeOS composition bypass)
+- **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with riboCipher signal-first routing (`0xEC` clear signal → protocol type, `{` → legacy NDJSON bypass with deprecation warning)
 - **BTSP Phase 3**: `btsp.negotiate` server handler with encrypted frame upgrade — session registry, cipher selection, HKDF key derivation, `ChaCha20-Poly1305` AEAD framing wired into connection loop (`[4B len][12B nonce][ct+tag]`)
 - **Wire Standard**: `capabilities.list` (L2) and `identity.get` (L3) methods
-- **Domain Methods**: `health.*`, `defense.status`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `btsp.*`
+- **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `btsp.*`
 - **Capability Symlinks**: `security.sock` domain symlink created on bind
 
 ## Ecosystem Integration
@@ -42,11 +42,11 @@ All integration is capability-based runtime discovery. No primal names hardcoded
 **Discovery Escalation Hierarchy** (ecosystem-wide, primalSpring Phase 58+):
 1. Songbird `ipc.resolve` — highest fidelity, cross-gate capable
 2. biomeOS Neural API (`capability.discover`)
-3. UDS filesystem convention (`skunkbat-{family_id}.sock`) ← primary transport
+3. UDS filesystem convention (`skunkbat-{family_id}.sock`) ← we support this
 4. Socket registry / manifests
-5. TCP probing (port 9750) ← opt-in fallback via `PRIMAL_BIND_MODE=fallback`
+5. TCP probing (port 9750) ← we support this
 
-skunkBat supports tiers 1 (via `ipc.register`), 3 (default), and 5 (fallback only).
+skunkBat supports tiers 1 (via `ipc.register`), 3, and 5 out of the box.
 
 ## Composable Primitives
 
@@ -84,36 +84,28 @@ Full spec compliance including:
 
 ## Tests
 
-530+ tests passing (265 core + 85 integrations + 136 server + 46 transport/integration), all workspace lib+bins.
-90%+ function coverage (llvm-cov); core ~96%, btsp ~94%, dispatch ~97%, threats ~98%,
-crypto ~100%. Behavioral profiler, genetic/topology verifiers, JSON-RPC types all exercised.
+466 tests passing (core + integrations + server + transport + chaos), all workspace.
+Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
+exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
+intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
 encrypted loop verification, plaintext-after-upgrade rejection, encrypted batch requests,
 and encrypted notification (no-response) verification.
 
 ## Status
 
-v0.2.10 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
-workspace-wide. `#[expect(reason)]` lint standard (zero `#[allow]` in production; target-conditional
-`#[cfg_attr(not(test), expect(...))]` only). **Standard primal startup contract** (Wave 109):
-`skunkbat server --bind-mode $PRIMAL_BIND_MODE --port $PORT`. Bind modes: `uds-only` (default),
-`tcp-only` (Android), `fallback` (both). Transport Evolution: `TransportEndpoint` fully wired
-at all IPC boundaries. Typed errors (no `Box<dyn Error>`).
+v0.2.0 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 JSON-RPC IPC server with BTSP Phase 1/2/3 (TCP + UDS first-byte peek, BearDog-delegated
 handshake aligned with v0.9.0, `btsp.negotiate` server handler with session registry and
 ChaCha20-Poly1305 AEAD framing). `rand` eliminated — OsRng via RustCrypto re-export.
-and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.session.verify`,
+and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 `lineage.verify`, `lineage.list`, `capabilities.list`, `federation.broadcast`,
 `discovery.find_by_capability`. Cross-platform (`proc_uid`, `check_system_load`).
-No magic numbers — all thresholds named. 52 source files, max 670 lines/file (btsp.rs).
-Zero cross-repo path dependencies — `sourdough-core` types internalized
+No magic numbers — all thresholds configurable via `ThreatThresholds`. 50 source files, max 902 lines/file (threats/mod.rs
+with detection + tests). Zero cross-repo path dependencies — `sourdough-core` types internalized
 as `primal_foundation`. `async-trait` eliminated and banned — native RPITIT throughout.
-`RemoteLineageVerifier` integration ready; verifier semantics evolved (Err = no authority,
-Ok(false) = authoritative denial). All 5 threat categories implemented: genetic (lineage
-authority), behavioral (statistical profiler), intrusion (port-scan metadata), topology
-(layer-bypass validation), resource (DoS). Defense graduated escalation: Monitor → Quarantine
-→ Block (3+ repeated offenses). BTSP bond-type enforcement active (Covalent/Metallic/Ionic
-cipher minimums). 500 tests (265+79+136+20), pure Rust crypto deps
+`RemoteLineageVerifier` integration ready. 466 tests, pure Rust crypto deps
 wired and tested (chacha20poly1305, hkdf, sha2, base64 — HKDF key derivation, AEAD exercised;
 `rand` crate eliminated — `OsRng` via `chacha20poly1305::aead::rand_core`).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.

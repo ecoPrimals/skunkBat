@@ -17,6 +17,10 @@ use skunk_bat_core::{
 use std::time::SystemTime;
 
 #[tokio::main]
+#[expect(
+    clippy::too_many_lines,
+    reason = "demo walkthrough with progressive output"
+)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)

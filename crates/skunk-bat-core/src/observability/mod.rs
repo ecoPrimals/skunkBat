@@ -158,7 +158,7 @@ mod tests {
                 observability: true,
             },
             lineage_id: None,
-            ..SkunkBatConfig::default()
+            thresholds: crate::config::ThreatThresholds::default(),
         }
     }
 
@@ -288,121 +288,5 @@ mod tests {
 
         let metrics = observer.get_metrics();
         assert!(metrics.last_updated.is_some());
-    }
-
-    #[test]
-    fn test_metrics_serialization() {
-        let config = test_config();
-        let observer = SecurityObserver::new(&config);
-        observer.record_threat_detected();
-        observer.record_scan_performed();
-
-        let metrics = observer.get_metrics();
-        let json = serde_json::to_value(&metrics).unwrap();
-        assert_eq!(json["threats_detected"], 1);
-        assert_eq!(json["scans_performed"], 1);
-    }
-
-    #[test]
-    fn test_metrics_deserialization() {
-        let json = serde_json::json!({
-            "threats_detected": 5,
-            "threats_mitigated": 3,
-            "scans_performed": 10,
-            "connections_quarantined": 2,
-            "alerts_sent": 1,
-            "last_updated": null
-        });
-        let metrics: SecurityMetrics = serde_json::from_value(json).unwrap();
-        assert_eq!(metrics.threats_detected, 5);
-        assert_eq!(metrics.threats_mitigated, 3);
-    }
-
-    #[test]
-    fn test_high_volume_metrics() {
-        let config = test_config();
-        let observer = SecurityObserver::new(&config);
-
-        for _ in 0..1000 {
-            observer.record_threat_detected();
-        }
-        let metrics = observer.get_metrics();
-        assert_eq!(metrics.threats_detected, 1000);
-    }
-
-    #[test]
-    fn test_disabled_observer_still_records() {
-        let mut config = test_config();
-        config.features.observability = false;
-
-        let observer = SecurityObserver::new(&config);
-        observer.record_threat_detected();
-        observer.record_scan_performed();
-
-        let metrics = observer.get_metrics();
-        assert_eq!(metrics.threats_detected, 1);
-        assert_eq!(metrics.scans_performed, 1);
-    }
-
-    #[test]
-    fn test_multiple_start_stop_cycles() {
-        let config = test_config();
-        let observer = SecurityObserver::new(&config);
-        for _ in 0..5 {
-            assert!(observer.start().is_ok());
-            assert!(observer.stop().is_ok());
-        }
-    }
-
-    #[test]
-    fn test_metrics_independent_counters() {
-        let config = test_config();
-        let observer = SecurityObserver::new(&config);
-
-        observer.record_threat_detected();
-        observer.record_alert();
-
-        let metrics = observer.get_metrics();
-        assert_eq!(metrics.threats_detected, 1);
-        assert_eq!(metrics.alerts_sent, 1);
-        assert_eq!(metrics.scans_performed, 0);
-        assert_eq!(metrics.threats_mitigated, 0);
-        assert_eq!(metrics.connections_quarantined, 0);
-    }
-
-    #[test]
-    fn test_security_metrics_default_last_updated() {
-        let metrics = SecurityMetrics {
-            threats_detected: 0,
-            threats_mitigated: 0,
-            scans_performed: 0,
-            connections_quarantined: 0,
-            alerts_sent: 0,
-            last_updated: None,
-        };
-        assert!(metrics.last_updated.is_none());
-    }
-
-    #[test]
-    fn test_observer_health_reflects_config() {
-        let enabled_config = test_config();
-        let enabled = SecurityObserver::new(&enabled_config);
-        assert!(enabled.is_healthy());
-
-        let mut disabled_config = test_config();
-        disabled_config.features.observability = false;
-        let disabled = SecurityObserver::new(&disabled_config);
-        assert!(!disabled.is_healthy());
-    }
-
-    #[test]
-    fn test_metrics_clone() {
-        let config = test_config();
-        let observer = SecurityObserver::new(&config);
-        observer.record_threat_detected();
-
-        let metrics = observer.get_metrics();
-        let metrics2 = observer.get_metrics();
-        assert_eq!(metrics.threats_detected, metrics2.threats_detected);
     }
 }

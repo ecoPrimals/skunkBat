@@ -9,6 +9,17 @@
 use super::error::TransportError;
 use super::sys::proc_uid;
 
+/// Resolve the biomeOS socket directory from the environment.
+///
+/// Precedence: `BIOMEOS_SOCKET_DIR` > `XDG_RUNTIME_DIR/biomeos` > `/run/user/{uid}/biomeos`.
+fn resolve_socket_dir() -> String {
+    std::env::var(skunk_bat_core::env_keys::BIOMEOS_SOCKET_DIR).unwrap_or_else(|_| {
+        let runtime_dir = std::env::var(skunk_bat_core::env_keys::XDG_RUNTIME_DIR)
+            .unwrap_or_else(|_| format!("/run/user/{}", proc_uid()));
+        format!("{runtime_dir}/biomeos")
+    })
+}
+
 /// BTSP Phase 1 environment configuration.
 pub struct BtspConfig {
     /// Socket directory (`BIOMEOS_SOCKET_DIR` or `XDG_RUNTIME_DIR/biomeos`).
@@ -40,15 +51,7 @@ impl BtspConfig {
             ));
         }
 
-        let socket_dir = std::env::var(skunk_bat_core::env_keys::BIOMEOS_SOCKET_DIR)
-            .unwrap_or_else(|_| {
-                let runtime_dir = std::env::var(skunk_bat_core::env_keys::XDG_RUNTIME_DIR)
-                    .unwrap_or_else(|_| {
-                        let uid = proc_uid();
-                        format!("/run/user/{uid}")
-                    });
-                format!("{runtime_dir}/biomeos")
-            });
+        let socket_dir = resolve_socket_dir();
 
         Ok(Self {
             socket_dir,
@@ -138,12 +141,7 @@ impl BtspHandshakeConfig {
                 || {
                     let capability = std::env::var(skunk_bat_core::env_keys::BTSP_PROVIDER)
                         .unwrap_or_else(|_| DEFAULT_BTSP_CAPABILITY.to_owned());
-                    let socket_dir = std::env::var(skunk_bat_core::env_keys::BIOMEOS_SOCKET_DIR)
-                        .unwrap_or_else(|_| {
-                            let xdg = std::env::var(skunk_bat_core::env_keys::XDG_RUNTIME_DIR)
-                                .unwrap_or_else(|_| "/tmp".to_owned());
-                            format!("{xdg}/biomeos")
-                        });
+                    let socket_dir = resolve_socket_dir();
                     std::path::PathBuf::from(format!("{socket_dir}/{capability}-{fid}.sock"))
                 },
                 std::path::PathBuf::from,

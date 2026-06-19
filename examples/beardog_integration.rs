@@ -50,10 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("     • No external dependencies");
     println!("     • Used for testing and standalone mode\n");
 
-    println!("  2. BeardogLineageVerifier (real) - ⚠️ Requires feature flag");
-    println!("     • Cryptographic proof validation");
-    println!("     • Multi-generation lineage chains");
-    println!("     • Enable with: cargo run --features beardog-integration\n");
+    println!("  2. RemoteLineageVerifier (real) — JSON-RPC IPC to BearDog");
+    println!("     • Delegates verification over `lineage.verify` / `lineage.list`");
+    println!("     • Discovered at runtime via LINEAGE_ENDPOINT or UDS convention");
+    println!("     • No compile-time BearDog dependency (capability-based)\n");
 
     // Initialize with stub verifier
     let verifier = LocalLineageVerifier;
@@ -133,25 +133,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("WHAT REAL BEARDOG PROVIDES");
     println!("════════════════════════════════════════\n");
 
-    println!("With beardog-integration feature enabled:");
+    println!("With a running BearDog instance:");
     println!("```rust");
-    println!("use beardog_genetics::{{LineageProofManager, GenesisConfig}};");
-    println!("use skunk_bat_integrations::beardog::BeardogLineageVerifier;");
+    println!("use skunk_bat_integrations::beardog::RemoteLineageVerifier;");
     println!();
-    println!("// Initialize Beardog");
-    println!("let proof_manager = LineageProofManager::new(genesis_config)?;");
+    println!("// Discovered at runtime — no compile-time BearDog dependency");
+    println!("let verifier = RemoteLineageVerifier::from_env();");
+    println!("// Uses LINEAGE_ENDPOINT env or probes lineage-verification.sock");
     println!();
-    println!("// Create real verifier");
-    println!("let verifier = BeardogLineageVerifier::new(");
-    println!("    proof_manager,");
-    println!("    \"my-chain-id\".to_string(),");
-    println!("    \"my-root-node\".to_string(),");
-    println!(");");
-    println!();
-    println!("// Now verification uses cryptographic proofs!");
+    println!("// Same LineageVerifier trait — transparent swap");
+    println!("let is_family = verifier.is_family(\"peer-id\").await?;");
     println!("```\n");
 
-    println!("Cryptographic Verification:");
+    println!("What BearDog provides at runtime:");
     println!("  ✅ Lineage chain traversal");
     println!("  ✅ Signature verification at each hop");
     println!("  ✅ Merkle root validation (tamper resistance)");
@@ -206,18 +200,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("     ↓ depends on trait");
     println!("  LineageVerifier trait");
     println!("     ↓ implemented by");
-    println!("  LocalLineageVerifier (stub)");
-    println!("  BeardogLineageVerifier (real, feature-gated)\n");
+    println!("  LocalLineageVerifier (stub — testing/standalone)");
+    println!("  RemoteLineageVerifier (IPC — runtime discovery)\n");
 
-    println!("Feature Flag Pattern:");
-    println!("  [features]");
-    println!("  beardog-integration = [\"beardog-genetics\", \"beardog-errors\"]\n");
+    println!("Discovery Pattern:");
+    println!("  • LINEAGE_ENDPOINT env → TCP JSON-RPC");
+    println!("  • lineage-verification.sock → UDS JSON-RPC");
+    println!("  • Fallback: LocalLineageVerifier (conservative deny)\n");
 
-    println!("Why Feature-Gated?");
-    println!("  • Reduces dependencies for basic use");
-    println!("  • Allows gradual integration");
-    println!("  • Testing without full ecosystem");
-    println!("  • Deploy flexibility\n");
+    println!("Why Runtime Discovery?");
+    println!("  • Zero compile-time coupling to BearDog");
+    println!("  • Standalone mode without ecosystem");
+    println!("  • Graceful degradation when BearDog is down");
+    println!("  • Capability-based, not name-based\n");
 
     // ════════════════════════════════════════
     // SUMMARY
@@ -238,15 +233,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  • WHERE: Lineage chain traversal");
     println!("  • TRUST: Mathematical, not behavioral\n");
 
-    println!("To Use Real Beardog:");
-    println!("  1. Enable feature: --features beardog-integration");
-    println!("  2. Initialize LineageProofManager");
-    println!("  3. Create BeardogLineageVerifier");
-    println!("  4. Inject into skunkBat (trait-based)\n");
+    println!("To Use Real BearDog:");
+    println!("  1. Start a BearDog instance on the same host");
+    println!("  2. Set LINEAGE_ENDPOINT or use UDS convention");
+    println!("  3. skunkBat auto-discovers at startup (RuntimeVerifier)");
+    println!("  4. Verification delegated over JSON-RPC IPC\n");
 
     println!("Status:");
     println!("  • Architecture: ✅ Production-ready");
-    println!("  • Integration: ✅ Implemented (feature-gated)");
+    println!("  • Integration: ✅ RemoteLineageVerifier (IPC, runtime)");
     println!("  • This demo: Stub (shows pattern)\n");
 
     // Stop skunkBat

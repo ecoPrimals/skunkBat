@@ -13,15 +13,11 @@
 use serde::{Deserialize, Serialize};
 use skunk_bat_core::error::SkunkBatError;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
-
-use crate::rpc::TransportEndpoint;
+use tokio::sync::RwLock;
 
 /// Default RPC timeout for federation calls (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 5000;
-
-use skunk_bat_core::env_keys;
 
 /// Federation client for threat intelligence broadcasting.
 ///
@@ -31,9 +27,8 @@ use skunk_bat_core::env_keys;
 pub struct FederationClient {
     endpoint: String,
     uds_path: Option<String>,
-    transport: Option<TransportEndpoint>,
     node_id: String,
-    connected: Arc<AtomicBool>,
+    connected: Arc<RwLock<bool>>,
     timeout_ms: u64,
 }
 
@@ -67,25 +62,18 @@ impl FederationClient {
         Self {
             endpoint,
             uds_path: None,
-            transport: None,
             node_id,
-            connected: Arc::new(AtomicBool::new(false)),
+            connected: Arc::new(RwLock::new(false)),
             timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 
     /// Create from environment with capability-socket discovery.
     ///
-    /// Resolution priority:
-    /// 1. `FEDERATION_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
-    /// 2. `FEDERATION_ENDPOINT` env (legacy TCP string)
-    /// 3. Capability socket (`federation.sock`)
+    /// Reads `FEDERATION_ENDPOINT` for TCP, `SKUNKBAT_ID` for identity,
+    /// and probes `$BIOMEOS_SOCKET_DIR/federation.sock` for UDS.
     #[must_use]
     pub fn from_env() -> Self {
-        let transport: Option<TransportEndpoint> = std::env::var(env_keys::FEDERATION_TRANSPORT)
-            .ok()
-            .and_then(|v| serde_json::from_str(&v).ok());
-
         let endpoint =
             std::env::var(skunk_bat_core::env_keys::FEDERATION_ENDPOINT).unwrap_or_default();
         let node_id = std::env::var(skunk_bat_core::env_keys::SKUNKBAT_ID)
@@ -95,7 +83,6 @@ impl FederationClient {
             std::path::Path::new(&path).exists().then_some(path)
         };
         tracing::info!(
-            transport = ?transport,
             endpoint = %endpoint,
             uds = ?uds_path,
             "Initializing federation client for node {node_id}"
@@ -103,9 +90,8 @@ impl FederationClient {
         Self {
             endpoint,
             uds_path,
-            transport,
             node_id,
-            connected: Arc::new(AtomicBool::new(false)),
+            connected: Arc::new(RwLock::new(false)),
             timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
@@ -130,9 +116,6 @@ impl FederationClient {
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, crate::rpc::RpcError> {
         let timeout = Duration::from_millis(self.timeout_ms);
-        if let Some(ref ep) = self.transport {
-            return crate::rpc::call_endpoint(ep, method, params, timeout).await;
-        }
         crate::rpc::call(
             self.uds_path.as_deref(),
             self.tcp_endpoint(),
@@ -158,7 +141,7 @@ impl FederationClient {
 
         match self.rpc_call("health.liveness", None).await {
             Ok(_) => {
-                self.connected.store(true, Ordering::Release);
+                *self.connected.write().await = true;
                 tracing::info!("Federation connected");
             }
             Err(e) => {
@@ -170,9 +153,8 @@ impl FederationClient {
     }
 
     /// Check if connected.
-    #[must_use]
-    pub fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::Acquire)
+    pub async fn is_connected(&self) -> bool {
+        *self.connected.read().await
     }
 
     /// Broadcast threat intelligence via JSON-RPC `federation.broadcast`.
@@ -181,7 +163,7 @@ impl FederationClient {
     ///
     /// Returns error if the client is not connected or the RPC fails.
     pub async fn broadcast_threat(&self, intel: &ThreatIntelligence) -> Result<(), SkunkBatError> {
-        if !self.is_connected() {
+        if !self.is_connected().await {
             return Err(SkunkBatError::Integration(
                 "Not connected to federation provider".to_string(),
             ));
@@ -213,7 +195,7 @@ impl FederationClient {
     ///
     /// Returns error if subscription fails.
     pub async fn subscribe_threats(&self) -> Result<(), SkunkBatError> {
-        if !self.is_connected() {
+        if !self.is_connected().await {
             return Err(SkunkBatError::Integration(
                 "Not connected to federation provider".to_string(),
             ));
@@ -247,8 +229,8 @@ pub trait ThreatBroadcaster: Send + Sync {
         description: &str,
     ) -> impl std::future::Future<Output = Result<(), SkunkBatError>> + Send;
 
-    /// Check if connected to the federation provider.
-    fn is_connected(&self) -> bool;
+    /// Check if connected.
+    fn is_connected(&self) -> impl std::future::Future<Output = bool> + Send;
 }
 
 /// Federation-backed threat broadcaster.
@@ -310,8 +292,8 @@ impl ThreatBroadcaster for FederationThreatBroadcaster {
         }
     }
 
-    fn is_connected(&self) -> bool {
-        self.client.is_connected()
+    async fn is_connected(&self) -> bool {
+        self.client.is_connected().await
     }
 }
 
@@ -397,13 +379,13 @@ mod tests {
     #[tokio::test]
     async fn test_is_connected_default() {
         let client = FederationClient::new("127.0.0.1:1".into(), "test".into());
-        assert!(!client.is_connected());
+        assert!(!client.is_connected().await);
     }
 
     #[tokio::test]
     async fn test_from_env_construction() {
         let client = FederationClient::from_env();
-        assert!(!client.is_connected());
+        assert!(!client.is_connected().await);
         assert_eq!(
             client.node_id,
             std::env::var("SKUNKBAT_ID").unwrap_or_else(|_| skunk_bat_core::PRIMAL_ID.to_owned())
@@ -414,7 +396,7 @@ mod tests {
     async fn test_broadcaster_is_connected() {
         let client = FederationClient::new(String::new(), "test".into());
         let broadcaster = FederationThreatBroadcaster::new(client);
-        assert!(!broadcaster.is_connected());
+        assert!(!broadcaster.is_connected().await);
     }
 
     #[test]

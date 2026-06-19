@@ -62,6 +62,10 @@ impl std::fmt::Display for CipherSuite {
 }
 
 /// Bond types that determine minimum cipher requirements.
+#[allow(
+    dead_code,
+    reason = "target-conditional: used in tests, enforcement planned"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BondType {
     /// Covalent (genetic lineage) — any cipher allowed including null.
@@ -75,6 +79,10 @@ pub enum BondType {
 impl BondType {
     /// Minimum cipher required by this bond type.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "target-conditional: used in tests, enforcement planned"
+    )]
     pub const fn minimum_cipher(self) -> CipherSuite {
         match self {
             Self::Covalent => CipherSuite::Null,
@@ -109,7 +117,11 @@ impl std::fmt::Display for BondType {
 /// State for an authenticated BTSP session.
 #[derive(Debug, Clone)]
 pub struct SessionState {
-    /// When this session was created (used by the TTL reaper).
+    /// When this session was created (for TTL expiry in Phase 3+).
+    #[expect(
+        dead_code,
+        reason = "used for session expiry once cleanup task is added"
+    )]
     pub created_at: Instant,
     /// The negotiated cipher (initially Null after Phase 2).
     pub cipher: CipherSuite,
@@ -119,12 +131,6 @@ pub struct SessionState {
     /// Derived directional keys after Phase 3 negotiate (server perspective).
     pub phase3_keys: Option<SessionKeys>,
 }
-
-/// Default session TTL — sessions older than this are reaped.
-const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
-
-/// How often the reaper task sweeps for stale sessions.
-const REAPER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Registry of active BTSP sessions.
 ///
@@ -167,48 +173,22 @@ impl SessionRegistry {
         }
     }
 
-    /// Remove a session (on disconnect or explicit revocation).
-    #[expect(
+    /// Remove a session (on disconnect or timeout).
+    #[allow(
         dead_code,
-        reason = "public API for connection-close handlers (future)"
+        reason = "target-conditional: used in tests + future session TTL"
     )]
     pub async fn remove(&self, session_id: &str) {
         self.sessions.write().await.remove(session_id);
     }
 
     /// Number of active sessions.
+    #[allow(
+        dead_code,
+        reason = "target-conditional: used in tests + future metrics"
+    )]
     pub async fn len(&self) -> usize {
         self.sessions.read().await.len()
-    }
-
-    /// Evict sessions older than `ttl`, returning the count of reaped entries.
-    pub async fn reap_stale(&self, ttl: std::time::Duration) -> usize {
-        let now = Instant::now();
-        let mut map = self.sessions.write().await;
-        let before = map.len();
-        map.retain(|_id, state| now.duration_since(state.created_at) < ttl);
-        before - map.len()
-    }
-
-    /// Spawn a background task that periodically evicts stale sessions.
-    pub fn spawn_reaper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
-        let registry = Arc::clone(self);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(REAPER_INTERVAL);
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                let reaped = registry.reap_stale(SESSION_TTL).await;
-                let remaining = registry.len().await;
-                if reaped > 0 {
-                    tracing::info!(
-                        reaped,
-                        remaining,
-                        "BTSP session reaper: evicted stale sessions"
-                    );
-                }
-            }
-        })
     }
 }
 
@@ -240,26 +220,18 @@ fn negotiate_error(error: &str, message: impl Into<String>) -> NegotiateOutcome 
 ///
 /// Returns `{"cipher":"null","server_nonce":""}` when no supported cipher
 /// is offered or no handshake key is available.
-/// Validated negotiate parameters after parsing the incoming JSON-RPC params.
-struct NegotiateParams {
-    session_id: String,
-    client_nonce: Vec<u8>,
-    offered_ciphers: Vec<CipherSuite>,
-    bond_type: BondType,
-}
-
-/// Parse and validate `btsp.negotiate` parameters.
-fn parse_negotiate_params(
+pub async fn handle_negotiate(
+    registry: &SessionRegistry,
     params: Option<serde_json::Value>,
-) -> Result<NegotiateParams, NegotiateOutcome> {
+) -> NegotiateOutcome {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64;
 
     let Some(params) = params else {
-        return Err(negotiate_error(
+        return negotiate_error(
             "params_required",
             "btsp.negotiate requires session_id, client_nonce, ciphers/preferred_cipher",
-        ));
+        );
     };
 
     let session_id = params
@@ -268,7 +240,7 @@ fn parse_negotiate_params(
         .unwrap_or("");
 
     if session_id.is_empty() {
-        return Err(negotiate_error("invalid_session", "session_id is required"));
+        return negotiate_error("invalid_session", "session_id is required");
     }
 
     let client_nonce_b64 = params
@@ -282,71 +254,21 @@ fn parse_negotiate_params(
         match BASE64.decode(client_nonce_b64) {
             Ok(n) => n,
             Err(e) => {
-                return Err(negotiate_error(
+                return negotiate_error(
                     "invalid_client_nonce",
                     format!("base64 decode failed: {e}"),
-                ));
+                );
             }
         }
     };
 
     let offered_ciphers = extract_offered_ciphers(&params);
-    let bond_type: BondType = params
-        .get("bond_type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("Covalent")
-        .parse()
-        .unwrap_or(BondType::Covalent);
 
-    Ok(NegotiateParams {
-        session_id: session_id.to_owned(),
-        client_nonce,
-        offered_ciphers,
-        bond_type,
-    })
-}
-
-pub async fn handle_negotiate(
-    registry: &SessionRegistry,
-    params: Option<serde_json::Value>,
-) -> NegotiateOutcome {
-    use base64::Engine;
-    use base64::engine::general_purpose::STANDARD as BASE64;
-
-    let NegotiateParams {
-        session_id,
-        client_nonce,
-        offered_ciphers,
-        bond_type,
-    } = match parse_negotiate_params(params) {
-        Ok(p) => p,
-        Err(outcome) => return outcome,
-    };
-
-    let Some(session) = registry.get(&session_id).await else {
+    let Some(session) = registry.get(session_id).await else {
         return negotiate_error("unknown_session", "session_id not found in registry");
     };
 
     let selected = select_best_cipher(&offered_ciphers, session.session_key.is_some());
-
-    if cipher_strength(selected) < cipher_strength(bond_type.minimum_cipher()) {
-        tracing::warn!(
-            session_id = %session_id,
-            bond = %bond_type,
-            selected = %selected,
-            minimum = %bond_type.minimum_cipher(),
-            "Bond-type cipher requirement not met"
-        );
-        return negotiate_error(
-            "cipher_below_bond_minimum",
-            format!(
-                "bond type {} requires at least {}, but best available is {}",
-                bond_type,
-                bond_type.minimum_cipher(),
-                selected
-            ),
-        );
-    }
 
     if selected == CipherSuite::Null {
         tracing::info!(
@@ -370,7 +292,7 @@ pub async fn handle_negotiate(
         match derive_session_keys(handshake_key, &client_nonce, &server_nonce) {
             Ok(keys) => {
                 registry
-                    .update_phase3(&session_id, selected, keys.clone())
+                    .update_phase3(session_id, selected, keys.clone())
                     .await;
                 Some(keys)
             }
@@ -404,7 +326,7 @@ pub async fn handle_negotiate(
     clippy::option_if_let_else,
     reason = "three-branch logic is clearest with if-let"
 )]
-pub fn extract_offered_ciphers(params: &serde_json::Value) -> Vec<CipherSuite> {
+fn extract_offered_ciphers(params: &serde_json::Value) -> Vec<CipherSuite> {
     if let Some(arr) = params.get("ciphers").and_then(|v| v.as_array()) {
         arr.iter()
             .filter_map(|v| v.as_str())
@@ -417,17 +339,8 @@ pub fn extract_offered_ciphers(params: &serde_json::Value) -> Vec<CipherSuite> {
     }
 }
 
-/// Ordinal strength of a cipher suite for comparison.
-const fn cipher_strength(cipher: CipherSuite) -> u8 {
-    match cipher {
-        CipherSuite::Null => 0,
-        CipherSuite::HmacPlain => 1,
-        CipherSuite::ChaCha20Poly1305 => 2,
-    }
-}
-
 /// Select the best cipher from client offers, respecting key availability.
-pub fn select_best_cipher(offered: &[CipherSuite], has_key: bool) -> CipherSuite {
+fn select_best_cipher(offered: &[CipherSuite], has_key: bool) -> CipherSuite {
     if !has_key {
         return CipherSuite::Null;
     }
@@ -507,7 +420,7 @@ pub fn derive_session_keys(
 }
 
 /// Nonce size for `ChaCha20-Poly1305` (12 bytes).
-pub const NONCE_SIZE: usize = 12;
+const NONCE_SIZE: usize = 12;
 
 /// Minimum encrypted frame size: 12-byte nonce + 16-byte Poly1305 tag.
 const MIN_ENCRYPTED_FRAME: usize = NONCE_SIZE + 16;
@@ -569,71 +482,345 @@ pub fn decrypt_frame(key: &[u8; 32], frame: &[u8]) -> Result<Vec<u8>, super::Tra
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn registry_insert_and_get() {
-        let reg = SessionRegistry::new();
-        reg.insert("s1".into(), None).await;
-        assert!(reg.get("s1").await.is_some());
-        assert!(reg.get("s2").await.is_none());
+    #[test]
+    fn cipher_suite_roundtrip() {
+        assert_eq!(
+            "chacha20-poly1305".parse::<CipherSuite>().unwrap(),
+            CipherSuite::ChaCha20Poly1305
+        );
+        assert_eq!(
+            "chacha20_poly1305".parse::<CipherSuite>().unwrap(),
+            CipherSuite::ChaCha20Poly1305
+        );
+        assert_eq!(
+            "hmac-plain".parse::<CipherSuite>().unwrap(),
+            CipherSuite::HmacPlain
+        );
+        assert_eq!("null".parse::<CipherSuite>().unwrap(), CipherSuite::Null);
+        assert_eq!("unknown".parse::<CipherSuite>().unwrap(), CipherSuite::Null);
+        assert_eq!(CipherSuite::ChaCha20Poly1305.as_str(), "chacha20-poly1305");
+        assert_eq!(CipherSuite::HmacPlain.as_str(), "hmac-plain");
+        assert_eq!(CipherSuite::Null.as_str(), "null");
+        assert_eq!(
+            CipherSuite::ChaCha20Poly1305.to_string(),
+            "chacha20-poly1305"
+        );
+    }
+
+    #[test]
+    fn bond_type_minimum_cipher() {
+        assert_eq!(BondType::Covalent.minimum_cipher(), CipherSuite::Null);
+        assert_eq!(BondType::Metallic.minimum_cipher(), CipherSuite::HmacPlain);
+        assert_eq!(
+            BondType::Ionic.minimum_cipher(),
+            CipherSuite::ChaCha20Poly1305
+        );
+    }
+
+    #[test]
+    fn bond_type_parsing() {
+        assert_eq!("Covalent".parse::<BondType>().unwrap(), BondType::Covalent);
+        assert_eq!("Metallic".parse::<BondType>().unwrap(), BondType::Metallic);
+        assert_eq!("Ionic".parse::<BondType>().unwrap(), BondType::Ionic);
+        assert_eq!("ionic".parse::<BondType>().unwrap(), BondType::Ionic);
+        assert_eq!("garbage".parse::<BondType>().unwrap(), BondType::Covalent);
+        assert_eq!(BondType::Ionic.to_string(), "Ionic");
     }
 
     #[tokio::test]
-    async fn registry_remove() {
-        let reg = SessionRegistry::new();
-        reg.insert("s1".into(), None).await;
-        reg.remove("s1").await;
-        assert!(reg.get("s1").await.is_none());
-    }
-
-    #[tokio::test]
-    async fn registry_len() {
+    async fn session_registry_lifecycle() {
         let reg = SessionRegistry::new();
         assert_eq!(reg.len().await, 0);
-        reg.insert("a".into(), None).await;
-        reg.insert("b".into(), None).await;
-        assert_eq!(reg.len().await, 2);
-    }
 
-    #[tokio::test]
-    async fn reap_stale_removes_expired_sessions() {
-        let reg = SessionRegistry::new();
-        reg.insert("old".into(), None).await;
-        {
-            let mut sessions = reg.sessions.write().await;
-            sessions.get_mut("old").unwrap().created_at =
-                Instant::now() - std::time::Duration::from_secs(7200);
-        }
-        reg.insert("fresh".into(), None).await;
+        reg.insert("ses-1".into(), None).await;
+        assert_eq!(reg.len().await, 1);
 
-        let reaped = reg.reap_stale(std::time::Duration::from_secs(3600)).await;
-        assert_eq!(reaped, 1);
-        assert!(reg.get("old").await.is_none());
-        assert!(reg.get("fresh").await.is_some());
-    }
+        let session = reg.get("ses-1").await.unwrap();
+        assert_eq!(session.cipher, CipherSuite::Null);
+        assert!(session.session_key.is_none());
+        assert!(session.phase3_keys.is_none());
 
-    #[tokio::test]
-    async fn reap_stale_zero_when_none_expired() {
-        let reg = SessionRegistry::new();
-        reg.insert("a".into(), None).await;
-        reg.insert("b".into(), None).await;
-        let reaped = reg.reap_stale(std::time::Duration::from_secs(3600)).await;
-        assert_eq!(reaped, 0);
-        assert_eq!(reg.len().await, 2);
-    }
-
-    #[tokio::test]
-    async fn update_phase3_sets_cipher_and_keys() {
-        let reg = SessionRegistry::new();
-        reg.insert("s1".into(), Some(vec![1, 2, 3])).await;
-        let keys = SessionKeys {
-            encrypt_key: [42u8; 32],
-            decrypt_key: [43u8; 32],
-        };
-        reg.update_phase3("s1", CipherSuite::ChaCha20Poly1305, keys)
+        let keys = derive_session_keys(&[0x42; 32], &[0x01; 12], &[0x02; 32]).unwrap();
+        reg.update_phase3("ses-1", CipherSuite::ChaCha20Poly1305, keys)
             .await;
+        let updated = reg.get("ses-1").await.unwrap();
+        assert_eq!(updated.cipher, CipherSuite::ChaCha20Poly1305);
+        assert!(updated.phase3_keys.is_some());
 
-        let session = reg.get("s1").await.unwrap();
+        reg.remove("ses-1").await;
+        assert!(reg.get("ses-1").await.is_none());
+        assert_eq!(reg.len().await, 0);
+    }
+
+    #[tokio::test]
+    async fn session_registry_with_key() {
+        let reg = SessionRegistry::new();
+        let key = vec![0x42; 32];
+        reg.insert("ses-key".into(), Some(key.clone())).await;
+
+        let session = reg.get("ses-key").await.unwrap();
+        assert_eq!(session.session_key.as_deref(), Some(key.as_slice()));
+    }
+
+    #[tokio::test]
+    async fn negotiate_missing_params() {
+        let reg = SessionRegistry::new();
+        let outcome = handle_negotiate(&reg, None).await;
+        assert!(outcome.response.get("error").is_some());
+        assert!(outcome.session_keys.is_none());
+    }
+
+    #[tokio::test]
+    async fn negotiate_empty_session_id() {
+        let reg = SessionRegistry::new();
+        let params = serde_json::json!({
+            "session_id": "",
+            "preferred_cipher": "chacha20-poly1305",
+            "bond_type": "Covalent"
+        });
+        let outcome = handle_negotiate(&reg, Some(params)).await;
+        assert_eq!(outcome.response["error"], "invalid_session");
+        assert!(outcome.session_keys.is_none());
+    }
+
+    #[tokio::test]
+    async fn negotiate_unknown_session() {
+        let reg = SessionRegistry::new();
+        let params = serde_json::json!({
+            "session_id": "nonexistent",
+            "preferred_cipher": "chacha20-poly1305",
+            "bond_type": "Covalent"
+        });
+        let outcome = handle_negotiate(&reg, Some(params)).await;
+        assert_eq!(outcome.response["error"], "unknown_session");
+        assert!(outcome.session_keys.is_none());
+    }
+
+    #[tokio::test]
+    async fn negotiate_null_fallback_no_key() {
+        let reg = SessionRegistry::new();
+        reg.insert("ses-nokey".into(), None).await;
+
+        let params = serde_json::json!({
+            "session_id": "ses-nokey",
+            "preferred_cipher": "chacha20-poly1305",
+            "bond_type": "Covalent"
+        });
+        let outcome = handle_negotiate(&reg, Some(params)).await;
+        assert_eq!(outcome.response["cipher"], "null");
+        assert!(outcome.response["server_nonce"].is_string());
+        assert!(outcome.session_keys.is_none());
+    }
+
+    #[tokio::test]
+    async fn negotiate_chacha_with_key() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as BASE64;
+
+        let reg = SessionRegistry::new();
+        reg.insert("ses-withkey".into(), Some(vec![0x42; 32])).await;
+
+        let client_nonce = BASE64.encode([0x01u8; 16]);
+        let params = serde_json::json!({
+            "session_id": "ses-withkey",
+            "ciphers": ["chacha20-poly1305"],
+            "client_nonce": client_nonce,
+            "bond_type": "Covalent"
+        });
+        let outcome = handle_negotiate(&reg, Some(params)).await;
+        assert_eq!(outcome.response["cipher"], "chacha20-poly1305");
+        assert!(outcome.response["server_nonce"].is_string());
+        assert!(outcome.session_keys.is_some());
+
+        let nonce_b64 = outcome.response["server_nonce"].as_str().unwrap();
+        let decoded = BASE64.decode(nonce_b64).unwrap();
+        assert_eq!(decoded.len(), 32);
+
+        let session = reg.get("ses-withkey").await.unwrap();
         assert_eq!(session.cipher, CipherSuite::ChaCha20Poly1305);
         assert!(session.phase3_keys.is_some());
+    }
+
+    #[test]
+    fn select_best_cipher_no_key_always_null() {
+        let offered = vec![CipherSuite::ChaCha20Poly1305];
+        assert_eq!(select_best_cipher(&offered, false), CipherSuite::Null);
+    }
+
+    #[test]
+    fn select_best_cipher_prefers_chacha20() {
+        let offered = vec![
+            CipherSuite::Null,
+            CipherSuite::ChaCha20Poly1305,
+            CipherSuite::HmacPlain,
+        ];
+        assert_eq!(
+            select_best_cipher(&offered, true),
+            CipherSuite::ChaCha20Poly1305
+        );
+    }
+
+    #[test]
+    fn select_best_cipher_falls_back_to_hmac() {
+        let offered = vec![CipherSuite::Null, CipherSuite::HmacPlain];
+        assert_eq!(select_best_cipher(&offered, true), CipherSuite::HmacPlain);
+    }
+
+    #[test]
+    fn select_best_cipher_null_only() {
+        let offered = vec![CipherSuite::Null];
+        assert_eq!(select_best_cipher(&offered, true), CipherSuite::Null);
+    }
+
+    #[test]
+    fn extract_offered_ciphers_from_array() {
+        let params = serde_json::json!({
+            "ciphers": ["chacha20-poly1305", "hmac-plain"]
+        });
+        let ciphers = extract_offered_ciphers(&params);
+        assert_eq!(ciphers.len(), 2);
+        assert!(ciphers.contains(&CipherSuite::ChaCha20Poly1305));
+        assert!(ciphers.contains(&CipherSuite::HmacPlain));
+    }
+
+    #[test]
+    fn extract_offered_ciphers_from_preferred() {
+        let params = serde_json::json!({
+            "preferred_cipher": "chacha20-poly1305"
+        });
+        let ciphers = extract_offered_ciphers(&params);
+        assert_eq!(ciphers, vec![CipherSuite::ChaCha20Poly1305]);
+    }
+
+    #[test]
+    fn extract_offered_ciphers_fallback_null() {
+        let params = serde_json::json!({});
+        let ciphers = extract_offered_ciphers(&params);
+        assert_eq!(ciphers, vec![CipherSuite::Null]);
+    }
+
+    // ── Key Derivation Tests ──────────────────────────────────────────
+
+    #[test]
+    fn derive_session_keys_deterministic() {
+        let handshake_key = [0x42u8; 32];
+        let client_nonce = [0x01u8; 12];
+        let server_nonce = [0x02u8; 12];
+
+        let keys1 = derive_session_keys(&handshake_key, &client_nonce, &server_nonce).unwrap();
+        let keys2 = derive_session_keys(&handshake_key, &client_nonce, &server_nonce).unwrap();
+
+        assert_eq!(keys1.encrypt_key, keys2.encrypt_key);
+        assert_eq!(keys1.decrypt_key, keys2.decrypt_key);
+    }
+
+    #[test]
+    fn derive_session_keys_different_nonces_different_keys() {
+        let handshake_key = [0x42u8; 32];
+        let client_nonce = [0x01u8; 12];
+        let server_nonce_a = [0x02u8; 12];
+        let server_nonce_b = [0x03u8; 12];
+
+        let keys_a = derive_session_keys(&handshake_key, &client_nonce, &server_nonce_a).unwrap();
+        let keys_b = derive_session_keys(&handshake_key, &client_nonce, &server_nonce_b).unwrap();
+
+        assert_ne!(keys_a.encrypt_key, keys_b.encrypt_key);
+    }
+
+    #[test]
+    fn derive_session_keys_encrypt_decrypt_differ() {
+        let handshake_key = [0x42u8; 32];
+        let client_nonce = [0x01u8; 12];
+        let server_nonce = [0x02u8; 12];
+
+        let keys = derive_session_keys(&handshake_key, &client_nonce, &server_nonce).unwrap();
+        assert_ne!(keys.encrypt_key, keys.decrypt_key);
+    }
+
+    #[test]
+    fn session_keys_debug_redacts() {
+        let keys = derive_session_keys(&[0x42; 32], &[0x01; 12], &[0x02; 12]).unwrap();
+        let debug = format!("{keys:?}");
+        assert!(debug.contains("REDACTED"));
+        assert!(!debug.contains("42"));
+    }
+
+    // ── Encrypt/Decrypt Tests ─────────────────────────────────────────
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let keys = derive_session_keys(&[0xAA; 32], &[0x01; 12], &[0x02; 12]).unwrap();
+        let plaintext = b"hello btsp phase 3";
+
+        let frame = encrypt_frame(&keys.encrypt_key, plaintext).unwrap();
+        assert!(frame.len() >= NONCE_SIZE + 16);
+        assert!(frame.len() > plaintext.len());
+
+        let decrypted = decrypt_frame(&keys.encrypt_key, &frame).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn encrypt_produces_different_frames() {
+        let key = [0xBB; 32];
+        let plaintext = b"same plaintext";
+
+        let ct0 = encrypt_frame(&key, plaintext).unwrap();
+        let ct1 = encrypt_frame(&key, plaintext).unwrap();
+        assert_ne!(ct0, ct1, "random nonces should make frames differ");
+    }
+
+    #[test]
+    fn decrypt_wrong_key_fails() {
+        let key_a = [0xDD; 32];
+        let key_b = [0xEE; 32];
+        let plaintext = b"classified";
+
+        let frame = encrypt_frame(&key_a, plaintext).unwrap();
+        let result = decrypt_frame(&key_b, &frame);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_tampered_ciphertext_fails() {
+        let key = [0xFF; 32];
+        let plaintext = b"integrity check";
+
+        let mut frame = encrypt_frame(&key, plaintext).unwrap();
+        if let Some(byte) = frame.get_mut(NONCE_SIZE + 5) {
+            *byte ^= 0x01;
+        }
+        let result = decrypt_frame(&key, &frame);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_too_short_fails() {
+        let key = [0x11; 32];
+        let result = decrypt_frame(&key, &[0u8; 10]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too short"));
+    }
+
+    #[test]
+    fn encrypt_empty_payload() {
+        let key = [0x11; 32];
+        let frame = encrypt_frame(&key, b"").unwrap();
+        assert_eq!(frame.len(), NONCE_SIZE + 16); // nonce + tag only
+        let decrypted = decrypt_frame(&key, &frame).unwrap();
+        assert!(decrypted.is_empty());
+    }
+
+    #[test]
+    fn directional_keys_encrypt_decrypt() {
+        let keys = derive_session_keys(&[0xAA; 32], &[0x01; 16], &[0x02; 32]).unwrap();
+        let plaintext = b"server to client message";
+
+        let frame = encrypt_frame(&keys.encrypt_key, plaintext).unwrap();
+        let decrypted = decrypt_frame(&keys.encrypt_key, &frame).unwrap();
+        assert_eq!(decrypted, plaintext);
+
+        let result = decrypt_frame(&keys.decrypt_key, &frame);
+        assert!(result.is_err(), "wrong directional key should fail");
     }
 }

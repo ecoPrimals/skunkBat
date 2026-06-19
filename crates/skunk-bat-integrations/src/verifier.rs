@@ -88,11 +88,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_variant_returns_err_when_unreachable() {
+    async fn remote_variant_degrades_when_unreachable() {
         let verifier =
             RuntimeVerifier::Remote(RemoteLineageVerifier::new("unreachable.invalid:1".into()));
         let result = verifier.is_family("test-peer").await;
-        assert!(result.is_err());
+        assert!(result.is_ok(), "should degrade gracefully, not error");
+        assert!(!result.unwrap(), "unreachable → conservative deny");
     }
 
     #[tokio::test]
@@ -103,11 +104,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_variant_get_lineage_err_when_unreachable() {
+    async fn remote_variant_get_lineage_degrades_when_unreachable() {
         let verifier =
             RuntimeVerifier::Remote(RemoteLineageVerifier::new("unreachable.invalid:1".into()));
         let result = verifier.get_lineage("test-peer").await;
-        assert!(result.is_err());
+        assert!(result.is_ok(), "should degrade gracefully, not error");
+        assert!(result.unwrap().is_none(), "unreachable → None lineage");
     }
 
     #[test]

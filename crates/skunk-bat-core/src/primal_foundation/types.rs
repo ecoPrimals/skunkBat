@@ -18,8 +18,7 @@ pub struct Timestamp {
 impl Timestamp {
     /// Create a timestamp for the current moment.
     ///
-    /// Falls back to epoch (0) if the system clock is before Unix epoch
-    /// (should never happen on real hardware, but avoids a panic path).
+    /// Returns epoch (0, 0) if the system clock is before Unix epoch.
     #[must_use]
     pub fn now() -> Self {
         SystemTime::now()

@@ -37,6 +37,15 @@ enum ServerError {
 
     #[error("{0}")]
     Transport(#[from] ipc::transport::TransportError),
+
+    #[error("{0}")]
+    Ipc(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl From<Box<dyn std::error::Error + Send + Sync>> for ServerError {
+    fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        Self::Ipc(e)
+    }
 }
 
 /// Default TCP port for JSON-RPC (Tier 5 fallback only).

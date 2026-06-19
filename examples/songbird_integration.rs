@@ -239,17 +239,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Configuration:");
     println!("```rust");
     println!("let config = SkunkBatConfig {{");
-    println!("    federation_enabled: true,  // User choice");
-    println!("    share_intel: true,         // User choice");
-    println!("    trust_level: TrustLevel::Family, // User choice");
-    println!("    // ...");
+    println!("    features: FeatureFlags {{");
+    println!("        threat_detection: true,  // Detect and share");
+    println!("        auto_defense: true,      // Respond to federated intel");
+    println!("        ..Default::default()");
+    println!("    }},");
+    println!("    ..Default::default()");
     println!("}};");
+    println!("// Federation target: FEDERATION_ENDPOINT env or federation.sock");
     println!("```\n");
 
-    println!("Trust Levels:");
-    println!("  • FAMILY: Full intelligence sharing");
-    println!("  • FEDERATED: Limited signature sharing");
-    println!("  • NONE: No sharing (standalone mode)\n");
+    println!("Federation Control:");
+    println!("  • FEDERATION_ENDPOINT set → federation active");
+    println!("  • No endpoint → standalone mode (no sharing)");
+    println!("  • Owner controls what environment is configured\n");
 
     // ════════════════════════════════════════
     // SUMMARY

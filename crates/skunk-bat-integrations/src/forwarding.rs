@@ -4,8 +4,8 @@
 //! JH-5 Phase 3: Cross-primal audit event forwarding.
 //!
 //! Forwards security events from the local `AuditLog` to:
-//! - `rhizoCrypt` DAG via `dag.event.append` (tamper-evident audit history)
-//! - `sweetGrass` braids via `braid.create` (provenance attribution)
+//! - **provenance** DAG via `dag.event.append` (tamper-evident audit history)
+//! - **attribution** braids via `braid.create` (provenance attribution)
 //!
 //! Uses capability-based discovery — no hardcoded primal endpoints.
 //! Forwarding is best-effort: if targets are unreachable, events stay
@@ -208,10 +208,10 @@ pub async fn run_forwarding_loop(audit_log: AuditLog, config: ForwardingConfig) 
             if config.dag_enabled {
                 match forward_to_dag(event, config.timeout).await {
                     Ok(_) => {
-                        tracing::debug!(seq = event.seq, "forwarded to rhizoCrypt DAG");
+                        tracing::debug!(seq = event.seq, "forwarded to provenance DAG");
                     }
                     Err(e) => {
-                        tracing::warn!(seq = event.seq, err = %e, "rhizoCrypt DAG forward failed");
+                        tracing::warn!(seq = event.seq, err = %e, "provenance DAG forward failed");
                     }
                 }
             }
@@ -219,10 +219,10 @@ pub async fn run_forwarding_loop(audit_log: AuditLog, config: ForwardingConfig) 
             if config.braid_enabled {
                 match forward_to_braid(event, config.timeout).await {
                     Ok(_) => {
-                        tracing::debug!(seq = event.seq, "forwarded to sweetGrass braid");
+                        tracing::debug!(seq = event.seq, "forwarded to attribution braid");
                     }
                     Err(e) => {
-                        tracing::warn!(seq = event.seq, err = %e, "sweetGrass braid forward failed");
+                        tracing::warn!(seq = event.seq, err = %e, "attribution braid forward failed");
                     }
                 }
             }

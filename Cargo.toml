@@ -82,6 +82,10 @@ path = "tests/integration_songbird.rs"
 name = "integration_toadstool"
 path = "tests/integration_toadstool.rs"
 
+[[test]]
+name = "chaos_testing"
+path = "tests/chaos_testing.rs"
+
 [dependencies]
 skunk-bat-core = { path = "crates/skunk-bat-core" }
 skunk-bat-integrations = { path = "crates/skunk-bat-integrations" }

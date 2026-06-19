@@ -10,47 +10,17 @@ use serde::Serialize;
 use skunk_bat_core::PrimalHealth;
 use skunk_bat_core::SkunkBat;
 use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
-use std::sync::{Arc, OnceLock};
-use std::time::Instant;
+use std::sync::Arc;
 use tokio::sync::RwLock;
-
-static ACTIVE_TRANSPORTS: OnceLock<&'static [&'static str]> = OnceLock::new();
-static STARTUP_INSTANT: OnceLock<Instant> = OnceLock::new();
-
-/// Initialize runtime metadata from CLI flags.
-///
-/// Called once at server startup. Subsequent calls are no-ops.
-pub(super) fn set_active_transports(no_tcp: bool, no_uds: bool) {
-    let transports: &'static [&'static str] = match (no_tcp, no_uds) {
-        (false, false) => &["uds", "tcp"],
-        (true, false) => &["uds"],
-        (false, true) => &["tcp"],
-        (true, true) => &[],
-    };
-    ACTIVE_TRANSPORTS.get_or_init(|| transports);
-    STARTUP_INSTANT.get_or_init(Instant::now);
-}
-
-fn active_transports() -> &'static [&'static str] {
-    ACTIVE_TRANSPORTS.get().copied().unwrap_or(&["uds", "tcp"])
-}
-
-fn uptime_seconds() -> u64 {
-    STARTUP_INSTANT
-        .get()
-        .map_or(0, |start| start.elapsed().as_secs())
-}
 
 use super::jsonrpc::{self, Request, Response};
 use super::method_gate::{CallerContext, EnforcementMode, MethodGate};
 
 /// Application-layer methods routed through `dispatch()`.
 const METHODS: &[&str] = &[
-    "health",
     "health.liveness",
     "health.readiness",
     "health.check",
-    "defense.status",
     "security.scan",
     "security.detect",
     "security.respond",
@@ -103,41 +73,39 @@ fn serialize<T: Serialize>(id: serde_json::Value, value: T) -> Response {
     }
 }
 
-/// Build the Capability Wire Standard L2/L3 response body (cached after first call).
-fn capabilities_response() -> &'static serde_json::Value {
-    static CAPS: OnceLock<serde_json::Value> = OnceLock::new();
-    CAPS.get_or_init(|| {
-        let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
-        serde_json::json!({
-            "primal": skunk_bat_core::PRIMAL_ID,
-            "version": PRIMAL_VERSION,
-            "capabilities": &all,
-            "count": all.len(),
-            "methods": &all,
-            "provided_capabilities": [
-                {
-                    "type": "security",
-                    "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
-                    "version": PRIMAL_VERSION,
-                    "description": "Network reconnaissance, threat detection, and automated defense"
-                },
-                {
-                    "type": "health",
-                    "methods": ["liveness", "readiness", "check"],
-                    "version": PRIMAL_VERSION,
-                    "description": "Health monitoring endpoints"
-                },
-                {
-                    "type": "btsp",
-                    "methods": ["negotiate", "capabilities"],
-                    "version": PRIMAL_VERSION,
-                    "description": "BTSP Phase 3 transport encryption"
-                }
-            ],
-            "consumed_capabilities": CONSUMED_CAPABILITIES,
-            "protocol": "jsonrpc-2.0",
-            "transport": active_transports()
-        })
+/// Build the Capability Wire Standard L2/L3 response body.
+fn capabilities_response() -> serde_json::Value {
+    let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
+    let count = all.len();
+    serde_json::json!({
+        "primal": skunk_bat_core::PRIMAL_ID,
+        "version": PRIMAL_VERSION,
+        "capabilities": all,
+        "count": count,
+        "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
+        "provided_capabilities": [
+            {
+                "type": "security",
+                "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
+                "version": PRIMAL_VERSION,
+                "description": "Network reconnaissance, threat detection, and automated defense"
+            },
+            {
+                "type": "health",
+                "methods": ["liveness", "readiness", "check"],
+                "version": PRIMAL_VERSION,
+                "description": "Health monitoring endpoints"
+            },
+            {
+                "type": "btsp",
+                "methods": ["negotiate", "capabilities"],
+                "version": PRIMAL_VERSION,
+                "description": "BTSP Phase 3 transport encryption"
+            }
+        ],
+        "consumed_capabilities": CONSUMED_CAPABILITIES,
+        "protocol": "jsonrpc-2.0",
+        "transport": ["uds", "tcp"]
     })
 }
 
@@ -147,49 +115,6 @@ fn capabilities_response() -> &'static serde_json::Value {
 /// (default), all calls are allowed with a tracing warning for unauthenticated
 /// access to protected methods. In enforced mode, unauthenticated calls to
 /// protected methods are rejected with `-32001 PERMISSION_DENIED`.
-/// Pre-dispatch authorization gate with audit trail.
-///
-/// Returns `Some(Response)` if the request was rejected; `None` if allowed.
-async fn authorize(
-    state: &Arc<RwLock<SkunkBat>>,
-    gate: &MethodGate,
-    caller: &CallerContext,
-    method: &str,
-    id: &serde_json::Value,
-) -> Option<Response> {
-    if let Err(resp) = gate.check(method, id.clone(), caller) {
-        let log = state.read().await.audit_log().clone();
-        log.record(
-            EventSource::MethodGate,
-            EventSeverity::Warn,
-            EventKind::GateRejection {
-                method: method.to_owned(),
-                origin: format!("{origin:?}", origin = caller.origin),
-            },
-        )
-        .await;
-        return Some(resp);
-    }
-
-    if gate.mode() == EnforcementMode::Permissive
-        && caller.bearer_token.is_none()
-        && super::method_gate::classify_method(method)
-            == super::method_gate::MethodAccessLevel::Protected
-    {
-        let log = state.read().await.audit_log().clone();
-        log.record(
-            EventSource::MethodGate,
-            EventSeverity::Info,
-            EventKind::GatePermissiveAllow {
-                method: method.to_owned(),
-                origin: format!("{origin:?}", origin = caller.origin),
-            },
-        )
-        .await;
-    }
-    None
-}
-
 pub(super) async fn dispatch(
     state: &Arc<RwLock<SkunkBat>>,
     gate: &MethodGate,
@@ -202,165 +127,222 @@ pub(super) async fn dispatch(
 
     let id = request.id_or_null();
 
-    if let Some(rejection) = authorize(state, gate, caller, &request.method, &id).await {
-        return rejection;
+    if let Err(resp) = enforce_gate(state, gate, caller, &request, &id).await {
+        return resp;
     }
 
     match request.method.as_str() {
-        "health" => Response::success(
-            id,
-            serde_json::json!({
-                "status": "ok",
-                "primal": skunk_bat_core::PRIMAL_ID,
-                "version": PRIMAL_VERSION,
-                "uptime_s": uptime_seconds()
-            }),
-        ),
-
-        "health.liveness" => Response::success(id, serde_json::json!({"status": "alive"})),
-
-        "health.readiness" => {
-            let sb = state.read().await;
-            let ready = sb.state().is_running();
-            let current = sb.state();
-            drop(sb);
-            Response::success(id, serde_json::json!({"ready": ready, "state": current}))
+        "health.liveness" | "health.readiness" | "health.check" => {
+            dispatch_health(state, id, &request.method).await
         }
-
-        "health.check" => try_serialize(id, state.read().await.health_check().await),
-        "security.scan" => try_serialize(id, state.read().await.scan_network().await),
-        "security.detect" => dispatch_detect(state, id).await,
+        "security.scan" | "security.detect" | "security.metrics" | "security.audit_log" => {
+            dispatch_security(state, id, &request.method, request.params).await
+        }
         "security.respond" => dispatch_respond(state, id, request.params).await,
-        "security.metrics" => serialize(id, state.read().await.get_security_metrics()),
-        "security.audit_log" => dispatch_audit_log(state, id, request.params).await,
-
-        "defense.status" => dispatch_defense_status(state, id).await,
-
-        "lifecycle.state" => {
-            let current = state.read().await.state();
-            Response::success(id, serde_json::json!({"state": current}))
+        "lifecycle.state" | "lifecycle.status" | "lifecycle.capabilities" => {
+            dispatch_lifecycle(state, id, &request.method).await
         }
-
-        "lifecycle.status" => Response::success(
-            id,
-            serde_json::json!({
-                "primal": skunk_bat_core::PRIMAL_ID,
-                "version": PRIMAL_VERSION,
-                "status": "running"
-            }),
-        ),
-
-        "lifecycle.capabilities" => {
-            let caps = capabilities_response();
-            Response::success(id, serde_json::json!({"capabilities": caps["methods"]}))
+        "capabilities.list" | "capability.list" => Response::success(id, capabilities_response()),
+        "identity.get" => dispatch_identity(id),
+        "auth.check" | "auth.mode" | "auth.peer_info" => {
+            dispatch_auth(id, gate, caller, &request.method)
         }
-
-        "capabilities.list" | "capability.list" => {
-            Response::success(id, capabilities_response().clone())
-        }
-
-        "identity.get" => Response::success(
-            id,
-            serde_json::json!({
-                "primal": skunk_bat_core::PRIMAL_ID,
-                "version": PRIMAL_VERSION,
-                "domain": PRIMAL_DOMAIN,
-                "license": PRIMAL_LICENSE,
-                "protocol": "jsonrpc-2.0",
-                "transport": active_transports()
-            }),
-        ),
-
-        "auth.check" => {
-            let has_token = caller.bearer_token.is_some();
-            Response::success(
-                id,
-                serde_json::json!({
-                    "authenticated": has_token,
-                    "mode": gate.mode().as_str()
-                }),
-            )
-        }
-
-        "auth.mode" => Response::success(id, serde_json::json!({ "mode": gate.mode().as_str() })),
-
-        "auth.peer_info" => Response::success(
-            id,
-            serde_json::json!({
-                "origin": format!("{origin:?}", origin = caller.origin),
-                "has_token": caller.bearer_token.is_some()
-            }),
-        ),
-
-        "btsp.capabilities" => Response::success(
-            id,
-            serde_json::json!({
-                "protocol": "btsp-v1",
-                "phase": 3,
-                "ciphers": ["chacha20-poly1305", "hmac-plain", "null"],
-                "preferred": "chacha20-poly1305",
-                "key_derivation": "hkdf-sha256",
-                "handshake": "btsp.negotiate"
-            }),
-        ),
-
+        "btsp.capabilities" => dispatch_btsp_capabilities(id),
         _ => Response::error(
             id,
             jsonrpc::METHOD_NOT_FOUND,
-            format!("unknown method: {method}", method = request.method),
+            format!("unknown method: {}", request.method),
         ),
     }
 }
 
-/// Handle `security.detect` — run threat detection with audit trail.
-async fn dispatch_detect(state: &Arc<RwLock<SkunkBat>>, id: serde_json::Value) -> Response {
-    let sb = state.read().await;
-    let result = sb.detect_threats().await;
-    let log = sb.audit_log().clone();
-    drop(sb);
-    if let Ok(ref threats) = result {
-        for t in threats {
-            log.record(
-                EventSource::ThreatDetection,
+/// Run method-gate authorization and audit any gate events.
+async fn enforce_gate(
+    state: &Arc<RwLock<SkunkBat>>,
+    gate: &MethodGate,
+    caller: &CallerContext,
+    request: &Request,
+    id: &serde_json::Value,
+) -> Result<(), Response> {
+    if let Err(resp) = gate.check(&request.method, id, caller) {
+        state
+            .read()
+            .await
+            .audit_log()
+            .record(
+                EventSource::MethodGate,
                 EventSeverity::Warn,
-                EventKind::ThreatDetected {
-                    threat_id: t.id.clone(),
-                    threat_type: format!("{tt:?}", tt = t.threat_type),
-                    severity: format!("{sev:?}", sev = t.severity),
-                    source: t.source.clone(),
+                EventKind::GateRejection {
+                    method: request.method.clone(),
+                    origin: format!("{:?}", caller.origin),
                 },
             )
             .await;
-        }
+        return Err(resp);
     }
-    try_serialize(id, result)
+
+    if gate.mode() == EnforcementMode::Permissive
+        && caller.bearer_token.is_none()
+        && super::method_gate::classify_method(&request.method)
+            == super::method_gate::MethodAccessLevel::Protected
+    {
+        state
+            .read()
+            .await
+            .audit_log()
+            .record(
+                EventSource::MethodGate,
+                EventSeverity::Info,
+                EventKind::GatePermissiveAllow {
+                    method: request.method.clone(),
+                    origin: format!("{:?}", caller.origin),
+                },
+            )
+            .await;
+    }
+    Ok(())
 }
 
-/// Handle `defense.status` — returns defense subsystem health for gate probing.
-async fn dispatch_defense_status(state: &Arc<RwLock<SkunkBat>>, id: serde_json::Value) -> Response {
-    let sb = state.read().await;
-    let quarantine = sb.defense_quarantine_snapshot();
-    let metrics = sb.get_security_metrics();
-    let defense_enabled = sb.defense_healthy();
-    let threat_detection_enabled = sb.threat_detection_healthy();
-    let auto_response = sb.auto_response_enabled();
-    drop(sb);
+/// Health domain: `health.liveness`, `health.readiness`, `health.check`.
+async fn dispatch_health(
+    state: &Arc<RwLock<SkunkBat>>,
+    id: serde_json::Value,
+    method: &str,
+) -> Response {
+    match method {
+        "health.liveness" => Response::success(id, serde_json::json!({"status": "alive"})),
+        "health.readiness" => {
+            let (ready, state_str) = {
+                let sb = state.read().await;
+                (sb.state().is_running(), sb.state().to_string())
+            };
+            Response::success(id, serde_json::json!({"ready": ready, "state": state_str}))
+        }
+        "health.check" => try_serialize(id, state.read().await.health_check().await),
+        _ => unreachable!(),
+    }
+}
 
+/// Security domain: `security.scan`, `security.detect`, `security.metrics`, `security.audit_log`.
+async fn dispatch_security(
+    state: &Arc<RwLock<SkunkBat>>,
+    id: serde_json::Value,
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> Response {
+    match method {
+        "security.scan" => try_serialize(id, state.read().await.scan_network().await),
+        "security.detect" => {
+            let sb = state.read().await;
+            let result = sb.detect_threats().await;
+            if let Ok(ref threats) = result {
+                for t in threats {
+                    sb.audit_log()
+                        .record(
+                            EventSource::ThreatDetection,
+                            EventSeverity::Warn,
+                            EventKind::ThreatDetected {
+                                threat_id: t.id.clone(),
+                                threat_type: format!("{:?}", t.threat_type),
+                                severity: format!("{:?}", t.severity),
+                                source: t.source.clone(),
+                            },
+                        )
+                        .await;
+                }
+            }
+            drop(sb);
+            try_serialize(id, result)
+        }
+        "security.metrics" => serialize(id, state.read().await.get_security_metrics()),
+        "security.audit_log" => dispatch_audit_log(state, id, params).await,
+        _ => unreachable!(),
+    }
+}
+
+/// Lifecycle domain: `lifecycle.state`, `lifecycle.status`, `lifecycle.capabilities`.
+async fn dispatch_lifecycle(
+    state: &Arc<RwLock<SkunkBat>>,
+    id: serde_json::Value,
+    method: &str,
+) -> Response {
+    match method {
+        "lifecycle.state" => {
+            let state_str = state.read().await.state().to_string();
+            Response::success(id, serde_json::json!({"state": state_str}))
+        }
+        "lifecycle.status" => {
+            let status = state.read().await.state().to_string();
+            Response::success(
+                id,
+                serde_json::json!({
+                    "primal": skunk_bat_core::PRIMAL_ID,
+                    "version": PRIMAL_VERSION,
+                    "status": status
+                }),
+            )
+        }
+        "lifecycle.capabilities" => {
+            let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
+            Response::success(id, serde_json::json!({"capabilities": all}))
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// Identity: `identity.get` — Wire Standard L2.
+fn dispatch_identity(id: serde_json::Value) -> Response {
     Response::success(
         id,
         serde_json::json!({
             "primal": skunk_bat_core::PRIMAL_ID,
             "version": PRIMAL_VERSION,
-            "status": "active",
-            "defense_enabled": defense_enabled,
-            "threat_detection_enabled": threat_detection_enabled,
-            "auto_response": auto_response,
-            "quarantine_count": quarantine.len(),
-            "metrics": {
-                "threats_detected": metrics.threats_detected,
-                "threats_mitigated": metrics.threats_mitigated,
-                "scans_performed": metrics.scans_performed,
-            }
+            "domain": PRIMAL_DOMAIN,
+            "license": PRIMAL_LICENSE,
+            "protocol": "jsonrpc-2.0",
+            "transport": ["uds", "tcp"]
+        }),
+    )
+}
+
+/// Auth domain: `auth.check`, `auth.mode`, `auth.peer_info`.
+fn dispatch_auth(
+    id: serde_json::Value,
+    gate: &MethodGate,
+    caller: &CallerContext,
+    method: &str,
+) -> Response {
+    match method {
+        "auth.check" => Response::success(
+            id,
+            serde_json::json!({
+                "authenticated": caller.bearer_token.is_some(),
+                "mode": gate.mode().as_str()
+            }),
+        ),
+        "auth.mode" => Response::success(id, serde_json::json!({ "mode": gate.mode().as_str() })),
+        "auth.peer_info" => Response::success(
+            id,
+            serde_json::json!({
+                "origin": format!("{:?}", caller.origin),
+                "has_token": caller.bearer_token.is_some()
+            }),
+        ),
+        _ => unreachable!(),
+    }
+}
+
+/// BTSP transport capabilities.
+fn dispatch_btsp_capabilities(id: serde_json::Value) -> Response {
+    Response::success(
+        id,
+        serde_json::json!({
+            "protocol": "btsp-v1",
+            "phase": 3,
+            "ciphers": ["chacha20-poly1305", "hmac-plain", "null"],
+            "preferred": "chacha20-poly1305",
+            "key_derivation": "hkdf-sha256",
+            "handshake": "btsp.negotiate"
         }),
     )
 }
@@ -383,24 +365,25 @@ async fn dispatch_respond(
     };
 
     let sb = state.read().await;
-    let result = sb.respond_to_threat(&threat);
-    let log = sb.audit_log().clone();
-    drop(sb);
-
-    match result {
+    match sb.respond_to_threat(&threat) {
         Ok(()) => {
-            log.record(
-                EventSource::DefenseEngine,
-                EventSeverity::Info,
-                EventKind::DefenseAction {
-                    threat_id: threat.id.clone(),
-                    action: "responded".to_owned(),
-                },
-            )
-            .await;
+            sb.audit_log()
+                .record(
+                    EventSource::DefenseEngine,
+                    EventSeverity::Info,
+                    EventKind::DefenseAction {
+                        threat_id: threat.id.clone(),
+                        action: "responded".to_owned(),
+                    },
+                )
+                .await;
+            drop(sb);
             Response::success(id, serde_json::json!({"status": "ok"}))
         }
-        Err(e) => Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string()),
+        Err(e) => {
+            drop(sb);
+            Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string())
+        }
     }
 }
 
@@ -427,9 +410,10 @@ async fn dispatch_audit_log(
         .unwrap_or(100)
         .min(1000) as usize;
 
-    let log = state.read().await.audit_log().clone();
-    let events = log.query(since_seq, limit).await;
-    let latest_seq = log.latest_seq().await;
+    let sb = state.read().await;
+    let events = sb.audit_log().query(since_seq, limit).await;
+    let latest_seq = sb.audit_log().latest_seq().await;
+    drop(sb);
 
     serialize(
         id,
@@ -440,3 +424,7 @@ async fn dispatch_audit_log(
         }),
     )
 }
+
+#[cfg(test)]
+#[path = "dispatch_tests.rs"]
+mod tests;

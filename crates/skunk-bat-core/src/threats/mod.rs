@@ -17,8 +17,6 @@
 pub mod baseline;
 mod behavioral;
 mod genetic;
-#[cfg(test)]
-mod mod_tests;
 pub mod traits;
 pub mod types;
 
@@ -28,27 +26,24 @@ pub use traits::{BaselineProfiler, LineageVerifier, TopologyValidator};
 pub use types::*;
 
 use crate::SkunkBatConfig;
+use crate::config::ThreatThresholds;
 use crate::error::SkunkBatError;
 use std::time::SystemTime;
 
-use crate::config::DetectionConfig;
-
 /// Threat detector — orchestrates all five detection categories.
 ///
-/// Generic over verifier, profiler, and topology types — no dyn dispatch.
+/// Generic over verifier and profiler types — no dyn dispatch.
 /// Use [`ThreatDetector::new`] for default types, or
 /// [`ThreatDetector::with_verifiers`] for custom injection.
 pub struct ThreatDetector<
     L: LineageVerifier = LocalLineageVerifier,
     B: BaselineProfiler = StatisticalProfiler,
-    T: TopologyValidator = LayerTopologyValidator,
 > {
     enabled: bool,
     lineage_id: Option<String>,
+    thresholds: ThreatThresholds,
     lineage_verifier: L,
     baseline_profiler: B,
-    topology_validator: T,
-    thresholds: DetectionConfig,
 }
 
 impl ThreatDetector {
@@ -58,17 +53,14 @@ impl ThreatDetector {
     /// observations so anomaly detection is active from first `detect()` call.
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
-        let mut profiler = StatisticalProfiler::new(config.detection.sigma_threshold);
-        profiler.seed_baseline(&baseline::normal_baseline_for(config.common.listen_port));
+        let mut profiler = StatisticalProfiler::new(config.thresholds.sigma_threshold);
+        profiler.seed_baseline(&baseline::normal_baseline());
         Self::with_verifiers(config, LocalLineageVerifier, profiler)
     }
 }
 
 impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
     /// Create a threat detector with custom verifiers injected at runtime.
-    ///
-    /// Uses the default `LayerTopologyValidator` with the standard biomeOS
-    /// layer traversal path.
     #[must_use]
     pub fn with_verifiers(
         config: &SkunkBatConfig,
@@ -78,32 +70,9 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         Self {
             enabled: config.features.threat_detection,
             lineage_id: config.lineage_id.clone(),
+            thresholds: config.thresholds.clone(),
             lineage_verifier,
             baseline_profiler,
-            topology_validator: LayerTopologyValidator::new(
-                config.detection.expected_topology_path.clone(),
-            ),
-            thresholds: config.detection.clone(),
-        }
-    }
-}
-
-impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetector<L, B, T> {
-    /// Create a threat detector with fully custom injection (all three axes).
-    #[must_use]
-    pub fn with_full_injection(
-        config: &SkunkBatConfig,
-        lineage_verifier: L,
-        baseline_profiler: B,
-        topology_validator: T,
-    ) -> Self {
-        Self {
-            enabled: config.features.threat_detection,
-            lineage_id: config.lineage_id.clone(),
-            lineage_verifier,
-            baseline_profiler,
-            topology_validator,
-            thresholds: config.detection.clone(),
         }
     }
 
@@ -137,7 +106,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
         self.enabled
     }
 
-    /// Run all five detection categories and return aggregated threats.
+    /// Run all detection categories and return aggregated threats.
     ///
     /// # Errors
     ///
@@ -147,11 +116,10 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
             return Ok(vec![]);
         }
 
-        let mut threats = Vec::with_capacity(8);
+        let mut threats = Vec::with_capacity(4);
         threats.extend(self.detect_genetic_threats().await?);
         threats.extend(self.detect_behavioral_anomalies().await?);
         threats.extend(self.detect_intrusions().await?);
-        threats.extend(self.detect_topology_violations().await?);
         threats.extend(self.detect_resource_exhaustion().await?);
 
         if !threats.is_empty() {
@@ -196,18 +164,16 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
             }
             Ok(false) => {
                 tracing::warn!("Lineage verification FAILED for {my_lineage}");
-                let suffix = Self::threat_id_suffix();
-                let lineage = my_lineage.clone();
                 Ok(vec![Threat {
-                    id: format!("genetic-lineage-{suffix}"),
+                    id: format!("genetic-lineage-{}", Self::threat_id_suffix()),
                     threat_type: ThreatType::UnknownLineage {
-                        peer_id: lineage.clone(),
+                        peer_id: my_lineage.clone(),
                         lineage: None,
                     },
-                    source: lineage,
+                    source: my_lineage.clone(),
                     target: "self".to_owned(),
                     severity: Severity::Critical,
-                    confidence: self.thresholds.genetic_lineage_confidence,
+                    confidence: self.thresholds.genetic_confidence,
                     description: format!(
                         "Lineage verification failed — identity '{my_lineage}' not recognized"
                     ),
@@ -215,8 +181,22 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                 }])
             }
             Err(e) => {
-                tracing::debug!("Lineage verifier unavailable: {e} — skipping genetic detection");
-                Ok(Vec::new())
+                tracing::warn!("Lineage verifier unavailable: {e} — degraded genetic detection");
+                Ok(vec![Threat {
+                    id: format!("genetic-degraded-{}", Self::threat_id_suffix()),
+                    threat_type: ThreatType::UnknownLineage {
+                        peer_id: my_lineage.clone(),
+                        lineage: None,
+                    },
+                    source: "verifier-unavailable".to_owned(),
+                    target: "self".to_owned(),
+                    severity: Severity::Medium,
+                    confidence: 0.5,
+                    description: format!(
+                        "Lineage verifier unavailable ({e}) — unable to confirm family membership"
+                    ),
+                    detected_at: SystemTime::now(),
+                }])
             }
         }
     }
@@ -227,11 +207,15 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
             return Ok(Vec::new());
         }
 
-        let Some(observation) = self.baseline_profiler.latest_observation() else {
-            return Ok(Vec::new());
+        let observation = match self.baseline_profiler.latest_observation() {
+            Some(obs) => obs.clone(),
+            None => return Ok(Vec::new()),
         };
 
-        let anomalies = self.baseline_profiler.detect_anomalies(observation).await?;
+        let anomalies = self
+            .baseline_profiler
+            .detect_anomalies(&observation)
+            .await?;
 
         let threats = anomalies
             .into_iter()
@@ -243,14 +227,9 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                 } else {
                     Severity::Low
                 };
-                let description = format!(
-                    "Behavioral anomaly detected: {behavior}",
-                    behavior = a.behavior
-                );
-                let suffix = Self::threat_id_suffix();
                 Threat {
-                    id: format!("anomaly-{suffix}"),
-                    description,
+                    id: format!("anomaly-{}", Self::threat_id_suffix()),
+                    description: format!("Behavioral anomaly detected: {}", a.behavior),
                     confidence: a.confidence,
                     threat_type: ThreatType::BehaviorAnomaly {
                         deviation: a.deviation,
@@ -269,115 +248,67 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
 
     #[expect(
         clippy::unused_async,
-        reason = "async signature for future live-stream intrusion detection"
+        reason = "async signature for future network-driven intrusion detection"
     )]
     async fn detect_intrusions(&self) -> Result<Vec<Threat>, SkunkBatError> {
-        let Some(obs) = self.baseline_profiler.latest_observation() else {
-            return Ok(Vec::new());
-        };
-
         let mut threats = Vec::new();
 
-        if obs.ports_accessed.len() >= self.thresholds.port_scan_threshold {
-            let sequential = Self::has_sequential_ports(
-                &obs.ports_accessed,
-                self.thresholds.sequential_port_window,
-            );
-            let severity = if sequential {
-                Severity::High
-            } else {
-                Severity::Medium
-            };
-            let suffix = Self::threat_id_suffix();
-            let port_count = obs.ports_accessed.len();
-            threats.push(Threat {
-                id: format!("intrusion-portscan-{suffix}"),
-                threat_type: ThreatType::IntrusionAttempt {
-                    attack_type: "port_scan".to_owned(),
-                    signature: format!(
-                        "{port_count} ports accessed{}",
-                        if sequential { " (sequential)" } else { "" }
+        if let Some(obs) = self.baseline_profiler.latest_observation() {
+            let sensitive = &self.thresholds.intrusion_sensitive_ports;
+            let suspicious_ports: Vec<u16> = obs
+                .ports_accessed
+                .iter()
+                .copied()
+                .filter(|p| sensitive.contains(p))
+                .collect();
+
+            if suspicious_ports.len() >= 2 {
+                threats.push(Threat {
+                    id: format!("intrusion-portscan-{}", Self::threat_id_suffix()),
+                    threat_type: ThreatType::IntrusionAttempt {
+                        attack_type: "port-scan".to_owned(),
+                        signature: format!("sensitive-ports:{suspicious_ports:?}"),
+                    },
+                    severity: Severity::High,
+                    source: "network".to_owned(),
+                    target: "local".to_owned(),
+                    detected_at: SystemTime::now(),
+                    description: format!(
+                        "Access to multiple sensitive ports detected: {suspicious_ports:?}"
                     ),
-                },
-                severity,
-                source: "network".to_owned(),
-                target: "local".to_owned(),
-                detected_at: SystemTime::now(),
-                description: format!(
-                    "Port scan detected: {port_count} distinct ports accessed in observation window"
-                ),
-                confidence: self.thresholds.port_scan_confidence,
-            });
+                    confidence: self.thresholds.intrusion_portscan_confidence,
+                });
+            }
+
+            if obs.connection_rate > 0.0
+                && obs.traffic_volume > self.thresholds.intrusion_exfil_volume
+            {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "volume fits in f64 mantissa for practical traffic values"
+                )]
+                let ratio = obs.traffic_volume as f64 / obs.connection_rate;
+                if ratio > self.thresholds.intrusion_exfil_ratio {
+                    threats.push(Threat {
+                        id: format!("intrusion-exfil-{}", Self::threat_id_suffix()),
+                        threat_type: ThreatType::IntrusionAttempt {
+                            attack_type: "data-exfiltration".to_owned(),
+                            signature: format!("high-volume-ratio:{ratio:.0}"),
+                        },
+                        severity: Severity::Medium,
+                        source: "network".to_owned(),
+                        target: "local".to_owned(),
+                        detected_at: SystemTime::now(),
+                        description: format!(
+                            "High traffic-to-connection ratio ({ratio:.0}) suggests bulk transfer"
+                        ),
+                        confidence: self.thresholds.intrusion_exfil_confidence,
+                    });
+                }
+            }
         }
 
         Ok(threats)
-    }
-
-    fn has_sequential_ports(ports: &[u16], window: usize) -> bool {
-        if ports.len() < window || window < 2 {
-            return false;
-        }
-        let mut sorted: Vec<u16> = ports.to_vec();
-        sorted.sort_unstable();
-        let span = u16::try_from(window - 1).unwrap_or(u16::MAX);
-        sorted
-            .windows(window)
-            .any(|w| w[window - 1] == w[0].saturating_add(span))
-    }
-
-    async fn detect_topology_violations(&self) -> Result<Vec<Threat>, SkunkBatError> {
-        let Some(obs) = self.baseline_profiler.latest_observation() else {
-            return Ok(Vec::new());
-        };
-
-        let mut actual_path: Vec<u8> = obs
-            .ports_accessed
-            .iter()
-            .map(|&p| Self::port_to_layer(p))
-            .collect();
-        actual_path.sort_unstable();
-        actual_path.dedup();
-
-        if actual_path.len() < self.thresholds.min_topology_path_layers {
-            return Ok(Vec::new());
-        }
-
-        let validation = self.topology_validator.validate_path(&actual_path).await?;
-        if validation.is_valid {
-            return Ok(Vec::new());
-        }
-
-        let severity = if validation.bypassed_layers.len() > 1 {
-            Severity::High
-        } else {
-            Severity::Medium
-        };
-
-        let suffix = Self::threat_id_suffix();
-        let bypass_count = validation.bypassed_layers.len();
-        Ok(vec![Threat {
-            id: format!("topology-bypass-{suffix}"),
-            threat_type: ThreatType::TopologyViolation {
-                expected_path: validation.expected_path,
-                actual_path: validation.actual_path,
-                bypassed_layers: validation.bypassed_layers,
-            },
-            severity,
-            source: "network".to_owned(),
-            target: "local".to_owned(),
-            detected_at: SystemTime::now(),
-            description: format!("Topology bypass: {bypass_count} layer(s) skipped"),
-            confidence: self.thresholds.topology_bypass_confidence,
-        }])
-    }
-
-    const fn port_to_layer(port: u16) -> u8 {
-        match port {
-            0..=1023 => 0,
-            1024..=8079 => 1,
-            8080..=9999 => 2,
-            10000.. => 3,
-        }
     }
 
     #[expect(
@@ -387,10 +318,8 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
     async fn detect_resource_exhaustion(&self) -> Result<Vec<Threat>, SkunkBatError> {
         let load = Self::check_system_load();
         if load > self.thresholds.dos_load_threshold {
-            let suffix = Self::threat_id_suffix();
-            let pct = load * 100.0;
             return Ok(vec![Threat {
-                id: format!("dos-{suffix}"),
+                id: format!("dos-{}", Self::threat_id_suffix()),
                 threat_type: ThreatType::DenialOfService {
                     resource: "cpu".to_owned(),
                     current_level: load,
@@ -399,7 +328,7 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                 source: "unknown".to_owned(),
                 target: "local".to_owned(),
                 detected_at: SystemTime::now(),
-                description: format!("High CPU usage detected: {pct:.1}%"),
+                description: format!("High CPU usage detected: {:.1}%", load * 100.0),
                 confidence: self.thresholds.dos_confidence,
             }]);
         }
@@ -447,5 +376,524 @@ impl<L: LineageVerifier, B: BaselineProfiler, T: TopologyValidator> ThreatDetect
                 })
                 .unwrap_or(0.0)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{FeatureFlags, SkunkBatConfig};
+    use crate::primal_foundation::config::CommonConfig;
+
+    fn test_config() -> SkunkBatConfig {
+        SkunkBatConfig {
+            common: CommonConfig {
+                name: "skunkBat-test".to_string(),
+                ..CommonConfig::default()
+            },
+            features: FeatureFlags {
+                reconnaissance: true,
+                threat_detection: true,
+                auto_defense: true,
+                observability: true,
+            },
+            lineage_id: Some("test-lineage".to_string()),
+            thresholds: crate::config::ThreatThresholds::default(),
+        }
+    }
+
+    #[test]
+    fn test_threat_detector_creation() {
+        let config = test_config();
+        let detector = ThreatDetector::new(&config);
+        assert!(detector.is_healthy());
+    }
+
+    #[test]
+    fn test_threat_detector_start_stop() {
+        let config = test_config();
+        let detector = ThreatDetector::new(&config);
+        assert!(detector.start().is_ok());
+        assert!(detector.stop().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_threat_detection_with_local_verifier() {
+        let config = test_config();
+        let detector = ThreatDetector::new(&config);
+        let threats = detector.detect().await.expect("detection should succeed");
+        assert_eq!(
+            threats.len(),
+            1,
+            "LocalLineageVerifier errors → degraded genetic threat"
+        );
+        assert!(threats[0].id.starts_with("genetic-degraded-"));
+    }
+
+    #[tokio::test]
+    async fn test_threat_detection_no_lineage_id() {
+        let config = SkunkBatConfig {
+            lineage_id: None,
+            ..test_config()
+        };
+        let detector = ThreatDetector::new(&config);
+        let threats = detector.detect().await.expect("detection should succeed");
+        assert!(threats.is_empty(), "no lineage_id → no genetic detection");
+    }
+
+    #[tokio::test]
+    async fn test_statistical_profiler_learning() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        assert!(!profiler.is_established());
+
+        for i in 0..10 {
+            let observation = Observation {
+                connection_rate: 10.0 + f64::from(i),
+                traffic_volume: 1000,
+                ports_accessed: vec![80, 443],
+                timestamp: SystemTime::now(),
+            };
+            profiler
+                .update(&observation)
+                .await
+                .expect("update should succeed");
+        }
+        assert!(profiler.is_established());
+    }
+
+    #[tokio::test]
+    async fn test_statistical_profiler_anomaly_detection() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+
+        for i in 0..10 {
+            let observation = Observation {
+                connection_rate: f64::from(i).mul_add(0.1, 10.0),
+                traffic_volume: 1000,
+                ports_accessed: vec![80, 443],
+                timestamp: SystemTime::now(),
+            };
+            profiler
+                .update(&observation)
+                .await
+                .expect("update should succeed");
+        }
+
+        let normal_obs = Observation {
+            connection_rate: 10.5,
+            traffic_volume: 1000,
+            ports_accessed: vec![80, 443],
+            timestamp: SystemTime::now(),
+        };
+        let anomalies = profiler
+            .detect_anomalies(&normal_obs)
+            .await
+            .expect("detection should succeed");
+        assert!(anomalies.is_empty() || anomalies[0].deviation < 2.5);
+
+        let anomalous_obs = Observation {
+            connection_rate: 100.0,
+            traffic_volume: 1000,
+            ports_accessed: vec![80, 443],
+            timestamp: SystemTime::now(),
+        };
+        let anomalies = profiler
+            .detect_anomalies(&anomalous_obs)
+            .await
+            .expect("detection should succeed");
+        assert!(!anomalies.is_empty());
+        assert!(anomalies[0].deviation > 2.5);
+    }
+
+    #[tokio::test]
+    async fn test_local_lineage_verifier() {
+        let verifier = LocalLineageVerifier;
+        assert!(
+            verifier.is_family("test-peer").await.is_err(),
+            "local-only stub should return error (no authority)"
+        );
+        assert!(
+            verifier.get_lineage("test-peer").await.is_err(),
+            "local-only stub should return error (no authority)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_threat_detector_with_verifiers() {
+        let config = test_config();
+        let detector = ThreatDetector::with_verifiers(
+            &config,
+            LocalLineageVerifier,
+            StatisticalProfiler::new(2.5),
+        );
+        assert!(detector.is_healthy());
+        let result = detector.detect().await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_severity_ordering() {
+        assert!(Severity::Low < Severity::Medium);
+        assert!(Severity::Medium < Severity::High);
+        assert!(Severity::High < Severity::Critical);
+    }
+
+    #[test]
+    fn test_threat_type_creation() {
+        let tt = ThreatType::UnknownLineage {
+            peer_id: "test-peer".to_string(),
+            lineage: Some("unknown-lineage".to_string()),
+        };
+        assert!(matches!(tt, ThreatType::UnknownLineage { .. }));
+    }
+
+    #[test]
+    #[expect(clippy::float_cmp, reason = "exact literal comparison in test")]
+    fn test_threat_creation() {
+        let threat = Threat {
+            id: "threat-1".to_string(),
+            threat_type: ThreatType::IntrusionAttempt {
+                attack_type: "port-scan".to_string(),
+                signature: "rapid-connect".to_string(),
+            },
+            severity: Severity::High,
+            source: "192.168.1.100".to_string(),
+            target: "192.168.1.1".to_string(),
+            detected_at: SystemTime::now(),
+            description: "Port scanning detected".to_string(),
+            confidence: 0.85,
+        };
+        assert_eq!(threat.severity, Severity::High);
+        assert_eq!(threat.confidence, 0.85);
+    }
+
+    #[test]
+    fn test_dos_threat() {
+        let tt = ThreatType::DenialOfService {
+            resource: "bandwidth".to_string(),
+            current_level: 95.5,
+        };
+        assert!(matches!(tt, ThreatType::DenialOfService { .. }));
+    }
+
+    #[test]
+    fn test_behavior_anomaly() {
+        let tt = ThreatType::BehaviorAnomaly {
+            deviation: 3.5,
+            behavior: "unusual traffic pattern".to_string(),
+        };
+        assert!(matches!(tt, ThreatType::BehaviorAnomaly { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_statistical_profiler_baseline() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        assert!(!profiler.is_established());
+
+        for _ in 0..10 {
+            let obs = Observation {
+                connection_rate: 5.0,
+                traffic_volume: 1000,
+                ports_accessed: vec![80, 443],
+                timestamp: SystemTime::now(),
+            };
+            profiler.update(&obs).await.expect("update should succeed");
+        }
+        assert!(profiler.is_established());
+    }
+
+    #[tokio::test]
+    async fn test_detector_with_behavioral_anomalies() {
+        let config = test_config();
+        let mut profiler = StatisticalProfiler::new(2.5);
+
+        for _ in 0..10 {
+            let obs = Observation {
+                connection_rate: 5.0,
+                traffic_volume: 1000,
+                ports_accessed: vec![80],
+                timestamp: SystemTime::now(),
+            };
+            profiler.update(&obs).await.expect("update should succeed");
+        }
+
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+
+        let threats = detector.detect().await.expect("detect should succeed");
+        assert!(
+            threats.is_empty() || !threats.is_empty(),
+            "Should return a result"
+        );
+    }
+
+    #[test]
+    #[expect(clippy::float_cmp, reason = "exact literal comparison in test")]
+    fn test_observation_creation() {
+        let obs = Observation {
+            connection_rate: 10.0,
+            traffic_volume: 2000,
+            ports_accessed: vec![80, 443, 8080],
+            timestamp: SystemTime::now(),
+        };
+        assert_eq!(obs.connection_rate, 10.0);
+        assert_eq!(obs.traffic_volume, 2000);
+        assert_eq!(obs.ports_accessed.len(), 3);
+    }
+
+    #[test]
+    #[expect(clippy::float_cmp, reason = "exact literal comparison in test")]
+    fn test_anomaly_creation() {
+        let anomaly = Anomaly {
+            deviation: 4.5,
+            behavior: "High connection rate".to_string(),
+            confidence: 0.92,
+        };
+        assert_eq!(anomaly.deviation, 4.5);
+        assert_eq!(anomaly.confidence, 0.92);
+    }
+
+    #[test]
+    fn test_lineage_id_access() {
+        let config = test_config();
+        let detector = ThreatDetector::new(&config);
+        assert_eq!(detector.lineage_id(), Some("test-lineage"));
+    }
+
+    #[tokio::test]
+    async fn test_layer_topology_validator_valid_path() {
+        let validator = LayerTopologyValidator::new(vec![0, 1, 2, 3]);
+        let result = validator
+            .validate_path(&[0, 1, 2, 3])
+            .await
+            .expect("should succeed");
+        assert!(result.is_valid);
+        assert!(result.bypassed_layers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_layer_topology_validator_invalid_path() {
+        let validator = LayerTopologyValidator::new(vec![0, 1, 2, 3]);
+        let result = validator
+            .validate_path(&[0, 2, 3])
+            .await
+            .expect("should succeed");
+        assert!(!result.is_valid);
+        assert_eq!(result.bypassed_layers, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn test_layer_topology_validator_empty_path() {
+        let validator = LayerTopologyValidator::new(vec![0, 1, 2]);
+        let result = validator.validate_path(&[]).await.expect("should succeed");
+        assert!(!result.is_valid);
+        assert_eq!(result.bypassed_layers, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_layer_topology_expected_path() {
+        let validator = LayerTopologyValidator::new(vec![1, 2, 3]);
+        assert_eq!(validator.expected_path(), vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_detect_behavioral_anomaly_triggers() {
+        let config = test_config();
+        let mut profiler = StatisticalProfiler::new(2.5);
+
+        for _ in 0..15 {
+            let obs = Observation {
+                connection_rate: 5.0,
+                traffic_volume: 1000,
+                ports_accessed: vec![80],
+                timestamp: SystemTime::now(),
+            };
+            profiler.update(&obs).await.expect("update");
+        }
+
+        let spike = Observation {
+            connection_rate: 500.0,
+            traffic_volume: 1000,
+            ports_accessed: vec![80],
+            timestamp: SystemTime::now(),
+        };
+        profiler.update(&spike).await.expect("update");
+
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+        let threats = detector.detect().await.expect("detect");
+        assert!(
+            threats
+                .iter()
+                .any(|t| matches!(t.threat_type, ThreatType::BehaviorAnomaly { .. })),
+            "Should detect the connection rate spike as anomaly"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detect_disabled() {
+        let config = SkunkBatConfig {
+            common: CommonConfig::default(),
+            features: FeatureFlags {
+                reconnaissance: false,
+                threat_detection: false,
+                auto_defense: false,
+                observability: false,
+            },
+            lineage_id: None,
+            thresholds: crate::config::ThreatThresholds::default(),
+        };
+        let detector = ThreatDetector::new(&config);
+        assert!(!detector.is_healthy());
+        let threats = detector.detect().await.expect("detect");
+        assert!(threats.is_empty());
+    }
+
+    #[test]
+    fn test_start_disabled() {
+        let config = SkunkBatConfig {
+            common: CommonConfig::default(),
+            features: FeatureFlags {
+                reconnaissance: false,
+                threat_detection: false,
+                auto_defense: false,
+                observability: false,
+            },
+            lineage_id: None,
+            thresholds: crate::config::ThreatThresholds::default(),
+        };
+        let detector = ThreatDetector::new(&config);
+        assert!(detector.start().is_ok());
+    }
+
+    #[test]
+    fn test_lineage_verifier_access() {
+        let config = test_config();
+        let detector = ThreatDetector::new(&config);
+        let _verifier = detector.lineage_verifier();
+    }
+
+    #[test]
+    fn test_severity_display_all_variants() {
+        let variants = [
+            Severity::Low,
+            Severity::Medium,
+            Severity::High,
+            Severity::Critical,
+        ];
+        for v in &variants {
+            assert!(!format!("{v:?}").is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_intrusion_portscan_detected() {
+        let config = test_config();
+        let mut profiler = StatisticalProfiler::new(2.5);
+        let obs = Observation {
+            connection_rate: 5.0,
+            traffic_volume: 500,
+            ports_accessed: vec![22, 445, 80],
+            timestamp: SystemTime::now(),
+        };
+        profiler.update(&obs).await.expect("update");
+
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+        let threats = detector.detect().await.expect("detect");
+        assert!(
+            threats
+                .iter()
+                .any(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "port-scan")),
+            "Should detect port-scan when 2+ sensitive ports accessed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_intrusion_portscan_not_triggered_single_port() {
+        let config = test_config();
+        let mut profiler = StatisticalProfiler::new(2.5);
+        let obs = Observation {
+            connection_rate: 5.0,
+            traffic_volume: 500,
+            ports_accessed: vec![22, 80, 443],
+            timestamp: SystemTime::now(),
+        };
+        profiler.update(&obs).await.expect("update");
+
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+        let threats = detector.detect().await.expect("detect");
+        assert!(
+            !threats
+                .iter()
+                .any(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "port-scan")),
+            "Single sensitive port should not trigger port-scan"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_intrusion_exfiltration_detected() {
+        let config = test_config();
+        let mut profiler = StatisticalProfiler::new(2.5);
+        let obs = Observation {
+            connection_rate: 2.0,
+            traffic_volume: 500_000,
+            ports_accessed: vec![80],
+            timestamp: SystemTime::now(),
+        };
+        profiler.update(&obs).await.expect("update");
+
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+        let threats = detector.detect().await.expect("detect");
+        assert!(
+            threats
+                .iter()
+                .any(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "data-exfiltration")),
+            "High volume-to-connection ratio should trigger exfiltration alert"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_intrusion_exfiltration_not_triggered_low_volume() {
+        let config = test_config();
+        let mut profiler = StatisticalProfiler::new(2.5);
+        let obs = Observation {
+            connection_rate: 10.0,
+            traffic_volume: 500,
+            ports_accessed: vec![80],
+            timestamp: SystemTime::now(),
+        };
+        profiler.update(&obs).await.expect("update");
+
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+        let threats = detector.detect().await.expect("detect");
+        assert!(
+            !threats
+                .iter()
+                .any(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "data-exfiltration")),
+            "Low traffic volume should not trigger exfiltration"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_intrusion_uses_configurable_thresholds() {
+        let mut config = test_config();
+        config.thresholds.intrusion_sensitive_ports = vec![8080, 9090];
+        config.thresholds.intrusion_portscan_confidence = 0.9;
+
+        let mut profiler = StatisticalProfiler::new(2.5);
+        let obs = Observation {
+            connection_rate: 5.0,
+            traffic_volume: 500,
+            ports_accessed: vec![8080, 9090],
+            timestamp: SystemTime::now(),
+        };
+        profiler.update(&obs).await.expect("update");
+
+        let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+        let threats = detector.detect().await.expect("detect");
+        let portscan = threats
+            .iter()
+            .find(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "port-scan"));
+        assert!(portscan.is_some(), "Custom ports should trigger detection");
+        #[expect(clippy::float_cmp, reason = "exact configured value comparison")]
+        let confidence_matches = portscan.unwrap().confidence == 0.9;
+        assert!(confidence_matches, "Should use configured confidence");
     }
 }

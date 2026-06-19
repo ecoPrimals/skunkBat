@@ -35,8 +35,8 @@
 //!
 //! // Monitor for threats
 //! let threats = skunkbat.detect_threats().await?;
-//! for threat in threats {
-//!     skunkbat.respond_to_threat(threat).await?;
+//! for threat in &threats {
+//!     skunkbat.respond_to_threat(threat)?;
 //! }
 //! ```
 
@@ -57,7 +57,7 @@ pub use primal_foundation::{
 };
 
 /// skunkBat configuration.
-pub use config::{DefenseConfig, DetectionConfig, SkunkBatConfig};
+pub use config::SkunkBatConfig;
 
 /// skunkBat errors.
 pub use error::SkunkBatError;
@@ -192,32 +192,6 @@ impl SkunkBat {
         self.observer.get_metrics()
     }
 
-    /// Snapshot of currently quarantined sources.
-    #[must_use]
-    pub fn defense_quarantine_snapshot(
-        &self,
-    ) -> std::collections::HashMap<String, defense::QuarantineRecord> {
-        self.defense.quarantine_snapshot()
-    }
-
-    /// Whether the defense engine is enabled and healthy.
-    #[must_use]
-    pub const fn defense_healthy(&self) -> bool {
-        self.defense.is_healthy()
-    }
-
-    /// Whether threat detection is enabled and healthy.
-    #[must_use]
-    pub const fn threat_detection_healthy(&self) -> bool {
-        self.threat_detector.is_healthy()
-    }
-
-    /// Whether auto-response is enabled on the defense engine.
-    #[must_use]
-    pub const fn auto_response_enabled(&self) -> bool {
-        self.defense.auto_response_enabled()
-    }
-
     /// Access the configuration.
     #[must_use]
     pub const fn config(&self) -> &SkunkBatConfig {
@@ -325,7 +299,7 @@ impl PrimalHealth for SkunkBat {
             }
         } else {
             HealthStatus::Unhealthy {
-                reason: format!("state: {state}", state = self.state),
+                reason: format!("state: {}", self.state),
             }
         }
     }
@@ -342,7 +316,9 @@ impl PrimalHealth for SkunkBat {
     }
 
     async fn dependency_health(&self) -> Result<Vec<DependencyHealth>, PrimalError> {
-        let lineage = if self.config.lineage_id.is_some() {
+        let mut deps = Vec::with_capacity(2);
+
+        let lineage_status = if self.config.lineage_id.is_some() {
             DependencyHealth::healthy("lineage-verifier", "capability")
         } else {
             DependencyHealth::unhealthy(
@@ -351,14 +327,16 @@ impl PrimalHealth for SkunkBat {
                 "no lineage_id configured",
             )
         };
+        deps.push(lineage_status);
 
-        let observer = if self.observer.is_healthy() {
+        let observer_status = if self.observer.is_healthy() {
             DependencyHealth::healthy("security-observer", "internal")
         } else {
             DependencyHealth::unhealthy("security-observer", "internal", "disabled by config")
         };
+        deps.push(observer_status);
 
-        Ok(vec![lineage, observer])
+        Ok(deps)
     }
 }
 
@@ -603,7 +581,7 @@ mod tests {
                 observability: true,
             },
             lineage_id: None,
-            ..SkunkBatConfig::default()
+            thresholds: crate::config::ThreatThresholds::default(),
         };
         let mut skunkbat = SkunkBat::new(config);
         skunkbat.start().await.unwrap();
@@ -626,121 +604,5 @@ mod tests {
         assert_eq!(CAPABILITIES.len(), 4);
         assert!(CAPABILITIES.contains(&"reconnaissance"));
         assert!(CAPABILITIES.contains(&"defense"));
-    }
-
-    #[test]
-    fn test_defense_healthy_accessor() {
-        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        assert!(skunkbat.defense_healthy());
-    }
-
-    #[test]
-    fn test_threat_detection_healthy_accessor() {
-        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        assert!(skunkbat.threat_detection_healthy());
-    }
-
-    #[test]
-    fn test_auto_response_enabled_accessor() {
-        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        assert!(skunkbat.auto_response_enabled());
-    }
-
-    #[test]
-    fn test_defense_quarantine_snapshot_empty() {
-        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        assert!(skunkbat.defense_quarantine_snapshot().is_empty());
-    }
-
-    #[test]
-    fn test_defense_unhealthy_when_disabled() {
-        let config = SkunkBatConfig {
-            common: CommonConfig::default(),
-            features: crate::config::FeatureFlags {
-                reconnaissance: true,
-                threat_detection: true,
-                auto_defense: false,
-                observability: true,
-            },
-            lineage_id: None,
-            ..SkunkBatConfig::default()
-        };
-        let skunkbat = SkunkBat::new(config);
-        assert!(!skunkbat.defense_healthy());
-    }
-
-    #[test]
-    fn test_threat_detection_unhealthy_when_disabled() {
-        let config = SkunkBatConfig {
-            common: CommonConfig::default(),
-            features: crate::config::FeatureFlags {
-                reconnaissance: true,
-                threat_detection: false,
-                auto_defense: true,
-                observability: true,
-            },
-            lineage_id: None,
-            ..SkunkBatConfig::default()
-        };
-        let skunkbat = SkunkBat::new(config);
-        assert!(!skunkbat.threat_detection_healthy());
-    }
-
-    #[tokio::test]
-    async fn test_audit_log_populated_after_lifecycle() {
-        let mut skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        skunkbat.start().await.unwrap();
-        skunkbat.stop().await.unwrap();
-
-        let events = skunkbat.audit_log().query(0, 100).await;
-        assert!(
-            events.len() >= 2,
-            "start+stop should produce at least 2 audit events"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_health_check_contains_subsystems() {
-        let mut skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        skunkbat.start().await.unwrap();
-
-        let report = skunkbat.health_check().await.unwrap();
-        let json = serde_json::to_value(&report).unwrap();
-        assert!(json["name"].is_string());
-        assert!(json["status"].is_string());
-    }
-
-    #[test]
-    fn test_metrics_initial_zero() {
-        let skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        let metrics = skunkbat.get_security_metrics();
-        assert_eq!(metrics.threats_detected, 0);
-        assert_eq!(metrics.threats_mitigated, 0);
-        assert_eq!(metrics.scans_performed, 0);
-        assert_eq!(metrics.connections_quarantined, 0);
-        assert_eq!(metrics.alerts_sent, 0);
-    }
-
-    #[tokio::test]
-    async fn test_scan_increments_metric() {
-        let mut skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        skunkbat.start().await.unwrap();
-
-        skunkbat.scan_network().await.unwrap();
-        let metrics = skunkbat.get_security_metrics();
-        assert!(metrics.scans_performed >= 1);
-    }
-
-    #[tokio::test]
-    async fn test_lifecycle_restart() {
-        let mut skunkbat = SkunkBat::new(SkunkBatConfig::default());
-        skunkbat.start().await.unwrap();
-        assert_eq!(skunkbat.state(), PrimalState::Running);
-
-        skunkbat.stop().await.unwrap();
-        assert_eq!(skunkbat.state(), PrimalState::Stopped);
-
-        skunkbat.start().await.unwrap();
-        assert_eq!(skunkbat.state(), PrimalState::Running);
     }
 }

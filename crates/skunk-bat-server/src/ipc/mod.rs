@@ -13,8 +13,6 @@
 //! - Standalone startup (degrades gracefully without ecosystem)
 
 mod dispatch;
-#[cfg(test)]
-mod dispatch_tests;
 mod jsonrpc;
 mod method_gate;
 mod registration;
@@ -31,12 +29,6 @@ use transport::SessionRegistry;
 /// Start IPC listeners and serve until shutdown signal.
 ///
 /// Traps `SIGINT`/`SIGTERM` for graceful lifecycle stop and UDS socket cleanup.
-///
-/// Supports four deployment modes:
-/// - Default: both TCP and UDS listeners
-/// - `--no-uds`: TCP-only (legacy, non-compliant)
-/// - `--no-tcp`: UDS-only (port-free, compliant with Tower Atomic)
-/// - `--no-tcp --socket /run/membrane/skunkbat.sock`: launcher-injected port-free
 pub async fn serve(
     skunkbat: SkunkBat,
     addr: String,
@@ -44,9 +36,7 @@ pub async fn serve(
     socket_override: Option<&str>,
     no_uds: bool,
     no_tcp: bool,
-) -> Result<(), transport::TransportError> {
-    dispatch::set_active_transports(no_tcp, no_uds);
-
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = Arc::new(RwLock::new(skunkbat));
     let sessions = Arc::new(SessionRegistry::new());
 
@@ -77,34 +67,30 @@ pub async fn serve(
         Some(tokio::spawn(transport::serve_uds(
             Arc::clone(&state),
             Arc::clone(&sessions),
-            socket_path.clone(),
         )))
     };
 
-    let mode_label = match (no_tcp, no_uds) {
-        (true, false) => "UDS-only (port-free)".to_owned(),
-        (false, true) => format!("TCP-only :{port}"),
-        (false, false) => format!("TCP :{port} + UDS"),
-        (true, true) => "ERROR: no listeners".to_owned(),
-    };
-    tracing::info!("skunkBat IPC ready ({mode_label})");
+    tracing::info!(
+        "skunkBat IPC ready (TCP: {}, UDS: {})",
+        !no_tcp,
+        !no_uds,
+    );
 
     let register_endpoint = socket_path.as_ref().map_or_else(
         || format!("tcp://0.0.0.0:{port}"),
         |p| format!("unix://{p}"),
     );
+    let register_handle = tokio::spawn(registration::self_register(register_endpoint));
+
     let announce_socket = socket_path
-        .as_deref()
-        .map_or_else(|| format!("tcp://127.0.0.1:{port}"), str::to_owned);
-    tokio::spawn(registration::self_register(register_endpoint));
-    tokio::spawn(async move {
+        .clone()
+        .unwrap_or_else(|| format!("tcp://127.0.0.1:{port}"));
+    let announce_handle = tokio::spawn(async move {
         registration::neural_announce(&announce_socket).await;
     });
 
-    sessions.spawn_reaper();
-
     let audit_log = state.read().await.audit_log().clone();
-    tokio::spawn(forwarding::run_forwarding_loop(
+    let forwarding_handle = tokio::spawn(forwarding::run_forwarding_loop(
         audit_log,
         ForwardingConfig::default(),
     ));
@@ -135,6 +121,10 @@ pub async fn serve(
             tracing::info!("SIGTERM received, stopping skunkBat");
         }
     }
+
+    register_handle.abort();
+    announce_handle.abort();
+    forwarding_handle.abort();
 
     {
         let mut sb = state.write().await;

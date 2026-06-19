@@ -129,15 +129,30 @@ impl ContentProtector {
         let addresses = self.list_content().await?;
         let total = addresses.len();
         let mut violations = Vec::new();
+        let mut errors = 0usize;
 
         for addr in &addresses {
             let params = serde_json::json!({ "address": addr });
-            if let Ok(val) = self.call("content.get", Some(params)).await {
-                let stored_hash = val["hash"].as_str().unwrap_or("");
-                if stored_hash.is_empty() {
-                    violations.push(addr.clone());
+            match self.call("content.get", Some(params)).await {
+                Ok(val) => {
+                    let stored_hash = val["hash"].as_str().unwrap_or("");
+                    if stored_hash.is_empty() {
+                        violations.push(addr.clone());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(address = %addr, err = %e, "content.get failed during sweep");
+                    errors += 1;
                 }
             }
+        }
+
+        if errors > 0 {
+            tracing::warn!(
+                total,
+                errors,
+                "integrity sweep completed with unreachable content entries"
+            );
         }
 
         Ok(IntegritySweepResult {
