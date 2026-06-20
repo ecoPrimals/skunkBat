@@ -8,8 +8,9 @@
 //! - **attribution** braids via `braid.create` (provenance attribution)
 //!
 //! Uses capability-based discovery — no hardcoded primal endpoints.
-//! Forwarding is best-effort: if targets are unreachable, events stay
-//! in the local ring buffer and are retried on the next poll cycle.
+//! Forwarding is best-effort: if a target is unreachable the cursor
+//! stops advancing at the last successfully forwarded event, so
+//! unforwarded events are retried on the next poll cycle.
 
 use std::time::Duration;
 
@@ -200,10 +201,15 @@ pub async fn run_forwarding_loop(audit_log: AuditLog, config: ForwardingConfig) 
             continue;
         }
 
+        let mut last_success_seq = cursor;
+
         for event in &events {
             if event.severity < config.min_severity {
+                last_success_seq = event.seq;
                 continue;
             }
+
+            let mut event_ok = true;
 
             if config.dag_enabled {
                 match forward_to_dag(event, config.timeout).await {
@@ -212,6 +218,7 @@ pub async fn run_forwarding_loop(audit_log: AuditLog, config: ForwardingConfig) 
                     }
                     Err(e) => {
                         tracing::warn!(seq = event.seq, err = %e, "provenance DAG forward failed");
+                        event_ok = false;
                     }
                 }
             }
@@ -223,14 +230,19 @@ pub async fn run_forwarding_loop(audit_log: AuditLog, config: ForwardingConfig) 
                     }
                     Err(e) => {
                         tracing::warn!(seq = event.seq, err = %e, "attribution braid forward failed");
+                        event_ok = false;
                     }
                 }
             }
+
+            if event_ok {
+                last_success_seq = event.seq;
+            } else {
+                break;
+            }
         }
 
-        if let Some(last) = events.last() {
-            cursor = last.seq;
-        }
+        cursor = last_success_seq;
     }
 }
 
@@ -448,5 +460,68 @@ mod tests {
     fn config_default_timeout() {
         let config = ForwardingConfig::default();
         assert_eq!(config.timeout, Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn cursor_stops_on_failed_forward() {
+        let log = AuditLog::new();
+        for i in 0..3 {
+            log.record(
+                EventSource::ThreatDetection,
+                EventSeverity::Warn,
+                EventKind::ThreatDetected {
+                    threat_id: format!("t-{i}"),
+                    threat_type: "scan".to_owned(),
+                    severity: "Medium".to_owned(),
+                    source: "10.0.0.1".to_owned(),
+                },
+            )
+            .await;
+        }
+
+        let config = ForwardingConfig {
+            poll_interval: Duration::from_millis(10),
+            timeout: Duration::from_millis(50),
+            ..Default::default()
+        };
+
+        let log_clone = log.clone();
+        let handle = tokio::spawn(async move {
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                run_forwarding_loop(log_clone, config),
+            )
+            .await
+        });
+
+        let _ = handle.await;
+        let seq = log.latest_seq().await;
+        assert_eq!(seq, 3, "events remain available for retry after failure");
+    }
+
+    #[tokio::test]
+    async fn low_severity_events_advance_cursor() {
+        let log = AuditLog::new();
+        log.record(
+            EventSource::Lifecycle,
+            EventSeverity::Info,
+            EventKind::LifecycleTransition {
+                from_state: "Created".to_owned(),
+                to_state: "Running".to_owned(),
+            },
+        )
+        .await;
+        log.record(
+            EventSource::ThreatDetection,
+            EventSeverity::Warn,
+            EventKind::ThreatDetected {
+                threat_id: "t-after-info".to_owned(),
+                threat_type: "scan".to_owned(),
+                severity: "Low".to_owned(),
+                source: "10.0.0.1".to_owned(),
+            },
+        )
+        .await;
+        assert_eq!(log.latest_seq().await, 2);
     }
 }

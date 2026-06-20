@@ -24,7 +24,64 @@ use skunk_bat_core::SkunkBat;
 use skunk_bat_integrations::forwarding::{self, ForwardingConfig};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use transport::SessionRegistry;
+
+/// Background service handles — aborted on shutdown.
+struct BackgroundTasks {
+    register: JoinHandle<()>,
+    announce: JoinHandle<()>,
+    forwarding: JoinHandle<()>,
+    federation: JoinHandle<()>,
+}
+
+impl BackgroundTasks {
+    fn abort_all(&self) {
+        self.register.abort();
+        self.announce.abort();
+        self.forwarding.abort();
+        self.federation.abort();
+    }
+}
+
+/// Spawn all background services (registration, announcement, forwarding, federation).
+async fn spawn_background(
+    state: &Arc<RwLock<SkunkBat>>,
+    socket_path: Option<&String>,
+    port: u16,
+) -> BackgroundTasks {
+    let register_endpoint = socket_path.map_or_else(
+        || format!("tcp://0.0.0.0:{port}"),
+        |p| format!("unix://{p}"),
+    );
+    let register = tokio::spawn(registration::self_register(register_endpoint));
+
+    let announce_socket = socket_path
+        .cloned()
+        .unwrap_or_else(|| format!("tcp://127.0.0.1:{port}"));
+    let announce = tokio::spawn(async move {
+        registration::neural_announce(&announce_socket).await;
+    });
+
+    let audit_log = state.read().await.audit_log().clone();
+    let forwarding = tokio::spawn(forwarding::run_forwarding_loop(
+        audit_log.clone(),
+        ForwardingConfig::default(),
+    ));
+
+    let federation_client = skunk_bat_integrations::songbird::FederationClient::from_env();
+    let federation = tokio::spawn(skunk_bat_integrations::songbird::run_federation_loop(
+        audit_log,
+        federation_client,
+    ));
+
+    BackgroundTasks {
+        register,
+        announce,
+        forwarding,
+        federation,
+    }
+}
 
 /// Start IPC listeners and serve until shutdown signal.
 ///
@@ -70,30 +127,9 @@ pub async fn serve(
         )))
     };
 
-    tracing::info!(
-        "skunkBat IPC ready (TCP: {}, UDS: {})",
-        !no_tcp,
-        !no_uds,
-    );
+    tracing::info!("skunkBat IPC ready (TCP: {}, UDS: {})", !no_tcp, !no_uds,);
 
-    let register_endpoint = socket_path.as_ref().map_or_else(
-        || format!("tcp://0.0.0.0:{port}"),
-        |p| format!("unix://{p}"),
-    );
-    let register_handle = tokio::spawn(registration::self_register(register_endpoint));
-
-    let announce_socket = socket_path
-        .clone()
-        .unwrap_or_else(|| format!("tcp://127.0.0.1:{port}"));
-    let announce_handle = tokio::spawn(async move {
-        registration::neural_announce(&announce_socket).await;
-    });
-
-    let audit_log = state.read().await.audit_log().clone();
-    let forwarding_handle = tokio::spawn(forwarding::run_forwarding_loop(
-        audit_log,
-        ForwardingConfig::default(),
-    ));
+    let bg = spawn_background(&state, socket_path.as_ref(), port).await;
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
@@ -122,9 +158,7 @@ pub async fn serve(
         }
     }
 
-    register_handle.abort();
-    announce_handle.abort();
-    forwarding_handle.abort();
+    bg.abort_all();
 
     {
         let mut sb = state.write().await;

@@ -43,7 +43,32 @@ pub async fn write_frame<W: tokio::io::AsyncWriteExt + Unpin>(
 
 // ── Provider Client ────────────────────────────────────────────────────
 
+/// Timeout for provider (`BearDog`) UDS calls.
+///
+/// 10s is generous for local UDS on the same gate; accommodates slow
+/// crypto on resource-constrained hardware without hanging indefinitely.
+const PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub async fn provider_call(
+    socket: &std::path::Path,
+    method: &str,
+    params: Value,
+) -> Result<Value, TransportError> {
+    tokio::time::timeout(
+        PROVIDER_TIMEOUT,
+        provider_call_inner(socket, method, params),
+    )
+    .await
+    .map_err(|_| {
+        TransportError::Provider(format!(
+            "{}: timed out after {}s",
+            socket.display(),
+            PROVIDER_TIMEOUT.as_secs()
+        ))
+    })?
+}
+
+async fn provider_call_inner(
     socket: &std::path::Path,
     method: &str,
     params: Value,
@@ -139,7 +164,30 @@ pub struct HandshakeResult {
     pub handshake_key: Option<Vec<u8>>,
 }
 
+/// Maximum time allowed for the full BTSP handshake sequence.
+///
+/// 30s accommodates WAN latency (65ms+ RTT) plus `BearDog` provider calls
+/// while preventing indefinite connection hangs from slow/malicious peers.
+const HANDSHAKE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub async fn perform_server_handshake<S>(
+    stream: &mut S,
+    config: &super::config::BtspHandshakeConfig,
+) -> Result<HandshakeResult, TransportError>
+where
+    S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    tokio::time::timeout(
+        HANDSHAKE_DEADLINE,
+        perform_server_handshake_inner(stream, config),
+    )
+    .await
+    .map_err(|_| {
+        TransportError::Handshake(format!("timed out after {}s", HANDSHAKE_DEADLINE.as_secs()))
+    })?
+}
+
+async fn perform_server_handshake_inner<S>(
     stream: &mut S,
     config: &super::config::BtspHandshakeConfig,
 ) -> Result<HandshakeResult, TransportError>

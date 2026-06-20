@@ -366,19 +366,28 @@ async fn dispatch_respond(
 
     let sb = state.read().await;
     match sb.respond_to_threat(&threat) {
-        Ok(()) => {
+        Ok(action) => {
+            let severity = match action {
+                skunk_bat_core::defense::ActionType::Block
+                | skunk_bat_core::defense::ActionType::Quarantine
+                | skunk_bat_core::defense::ActionType::QuarantineAndAlert
+                | skunk_bat_core::defense::ActionType::MonitorAndAlert => EventSeverity::Warn,
+            };
             sb.audit_log()
                 .record(
                     EventSource::DefenseEngine,
-                    EventSeverity::Info,
+                    severity,
                     EventKind::DefenseAction {
                         threat_id: threat.id.clone(),
-                        action: "responded".to_owned(),
+                        action: format!("{action:?}"),
                     },
                 )
                 .await;
             drop(sb);
-            Response::success(id, serde_json::json!({"status": "ok"}))
+            Response::success(
+                id,
+                serde_json::json!({"status": "ok", "action": format!("{action:?}")}),
+            )
         }
         Err(e) => {
             drop(sb);

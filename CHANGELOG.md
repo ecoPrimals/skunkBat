@@ -15,6 +15,12 @@ All notable changes to skunkBat are documented here.
   ports) and data-exfiltration (traffic-to-connection ratio) heuristics
 - **Chaos tests wired** — `tests/chaos_testing.rs` registered in `Cargo.toml`
   (9 passing: rapid lifecycle, concurrent load, degradation, recovery)
+- **Federation broadcast loop** — `run_federation_loop()` monitors audit log
+  for `ThreatDetected` events and broadcasts via Songbird `federation.broadcast`;
+  spawned at server startup alongside forwarding loop
+- **BTSP WAN timeouts** — `provider_call` (10s) and `perform_server_handshake`
+  (30s) wrapped in `tokio::time::timeout` to prevent indefinite hangs from
+  slow/malicious peers or stalled BearDog providers
 
 ### Changed
 
@@ -34,7 +40,13 @@ All notable changes to skunkBat are documented here.
   `songbird_integration.rs` uses real `SkunkBatConfig` fields
 - `lib.rs` quick-start doc fixed (removed `.await` on sync `respond_to_threat`)
 - XDG socket dir resolution centralized in `resolve_socket_dir()`
-- Background tasks (registration, forwarding) aborted on graceful shutdown
+- Background tasks (registration, forwarding, federation) aborted on graceful
+  shutdown via `BackgroundTasks::abort_all()`
+- `respond_to_threat()` returns `Result<ActionType, E>` (was `Result<(), E>`)
+  so callers can log/attest the specific defense action taken
+- Defense audit events emitted at `EventSeverity::Warn` with actual `ActionType`
+  (was `Info` with generic `"responded"`) — now flows through JH-5 forwarding
+  pipeline to provenance DAG and attribution braids
 
 ### Fixed
 
@@ -42,6 +54,8 @@ All notable changes to skunkBat are documented here.
 - `clippy::significant_drop_tightening` in dispatch (scoped `RwLock` guards)
 - `defense_actions` example `too_many_lines` lint
 - File count in docs (49→50 after `dispatch_tests.rs` extraction)
+- **Forwarding cursor bug** — cursor now only advances past successfully
+  forwarded events; previously advanced on failure, silently dropping events
 
 ## [0.2.0] — 2026-05-17
 

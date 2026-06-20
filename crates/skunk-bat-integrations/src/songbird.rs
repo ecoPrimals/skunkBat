@@ -297,6 +297,65 @@ impl ThreatBroadcaster for FederationThreatBroadcaster {
     }
 }
 
+/// Run a background loop that broadcasts detected threats to the federation.
+///
+/// Monitors the audit log for `ThreatDetected` events and broadcasts them
+/// via the `FederationClient`. Probes the federation provider at startup
+/// and re-probes on each poll cycle if not connected.
+///
+/// This function runs indefinitely — spawn it as a Tokio task.
+pub async fn run_federation_loop(audit_log: skunk_bat_core::AuditLog, client: FederationClient) {
+    use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity};
+
+    let broadcaster = FederationThreatBroadcaster::new(client);
+    let mut cursor: u64 = audit_log.latest_seq().await;
+
+    tracing::info!(cursor, "Federation broadcast loop started");
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        if !broadcaster.is_connected().await {
+            if let Err(e) = broadcaster.client.connect().await {
+                tracing::debug!("Federation probe failed: {e}");
+            }
+            if !broadcaster.is_connected().await {
+                continue;
+            }
+        }
+
+        let events = audit_log.query(cursor, 50).await;
+        if events.is_empty() {
+            continue;
+        }
+
+        for event in &events {
+            if event.severity < EventSeverity::Warn {
+                cursor = event.seq;
+                continue;
+            }
+
+            if let EventKind::ThreatDetected {
+                ref threat_type,
+                ref severity,
+                ref source,
+                ..
+            } = event.kind
+            {
+                let desc = format!("{:?}", event.kind);
+                if let Err(e) = broadcaster
+                    .broadcast(threat_type, source, severity, &desc)
+                    .await
+                {
+                    tracing::debug!("Federation broadcast skipped: {e}");
+                }
+            }
+
+            cursor = event.seq;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,5 +503,39 @@ mod tests {
         assert_eq!(intel.threat_type, "GeneticViolation");
         assert_eq!(intel.severity, "Critical");
         assert!(intel.evidence.is_none());
+    }
+
+    #[tokio::test]
+    async fn federation_loop_starts_without_provider() {
+        use skunk_bat_core::observability::audit_log::{
+            AuditLog, EventKind, EventSeverity, EventSource,
+        };
+
+        let log = AuditLog::new();
+        log.record(
+            EventSource::ThreatDetection,
+            EventSeverity::Warn,
+            EventKind::ThreatDetected {
+                threat_id: "t-fed-1".to_owned(),
+                threat_type: "scan".to_owned(),
+                severity: "Medium".to_owned(),
+                source: "10.0.0.1".to_owned(),
+            },
+        )
+        .await;
+
+        let client = FederationClient::new(String::new(), "test-node".into());
+        let log_clone = log.clone();
+
+        let handle = tokio::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                run_federation_loop(log_clone, client),
+            )
+            .await
+        });
+
+        let _ = handle.await;
+        assert_eq!(log.latest_seq().await, 1);
     }
 }

@@ -152,7 +152,10 @@ impl SkunkBat {
     /// # Errors
     ///
     /// Returns an error if the threat response fails.
-    pub fn respond_to_threat(&self, threat: &threats::Threat) -> Result<(), SkunkBatError> {
+    pub fn respond_to_threat(
+        &self,
+        threat: &threats::Threat,
+    ) -> Result<defense::ActionType, SkunkBatError> {
         let action = self.defense.respond(threat)?;
         self.observer.record_threat_mitigated();
         match action {
@@ -167,7 +170,7 @@ impl SkunkBat {
         ) {
             self.observer.record_alert();
         }
-        Ok(())
+        Ok(action)
     }
 
     /// Scan network topology.
@@ -418,8 +421,31 @@ mod tests {
             confidence: 0.5,
         };
 
-        let result = skunkbat.respond_to_threat(&threat);
-        assert!(result.is_ok());
+        let action = skunkbat.respond_to_threat(&threat).unwrap();
+        assert_eq!(action, defense::ActionType::MonitorAndAlert);
+    }
+
+    #[test]
+    fn test_respond_returns_quarantine_for_critical() {
+        let config = SkunkBatConfig::default();
+        let skunkbat = SkunkBat::new(config);
+
+        let threat = threats::Threat {
+            id: "crit-threat".to_string(),
+            threat_type: threats::ThreatType::IntrusionAttempt {
+                attack_type: "exploit".to_string(),
+                signature: "cve-2025-0001".to_string(),
+            },
+            severity: threats::Severity::Critical,
+            source: "10.0.0.99".to_string(),
+            target: "10.0.0.1".to_string(),
+            detected_at: std::time::SystemTime::now(),
+            description: "Critical exploit attempt".to_string(),
+            confidence: 0.95,
+        };
+
+        let action = skunkbat.respond_to_threat(&threat).unwrap();
+        assert_eq!(action, defense::ActionType::Quarantine);
     }
 
     #[tokio::test]

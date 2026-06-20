@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-466 tests passing (core + integrations + server + transport + chaos), all workspace.
+470 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
@@ -105,7 +105,7 @@ and Wire Standard L2/L3 compliance. Consumed capabilities: `btsp.server.verify`,
 No magic numbers — all thresholds configurable via `ThreatThresholds`. 50 source files, max 902 lines/file (threats/mod.rs
 with detection + tests). Zero cross-repo path dependencies — `sourdough-core` types internalized
 as `primal_foundation`. `async-trait` eliminated and banned — native RPITIT throughout.
-`RemoteLineageVerifier` integration ready. 466 tests, pure Rust crypto deps
+`RemoteLineageVerifier` integration ready. 470 tests, pure Rust crypto deps
 wired and tested (chacha20poly1305, hkdf, sha2, base64 — HKDF key derivation, AEAD exercised;
 `rand` crate eliminated — `OsRng` via `chacha20poly1305::aead::rand_core`).
 Self-registration with discovery (`ipc.register`) wired — standalone-safe probe on startup.
