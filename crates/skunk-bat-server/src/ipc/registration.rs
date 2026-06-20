@@ -70,7 +70,7 @@ pub async fn self_register(endpoint: String) {
 /// 2. `{socket_dir}/discovery-{FAMILY_ID}.sock` (family-scoped)
 /// 3. `{socket_dir}/discovery.sock` (generic capability)
 fn resolve_discovery_socket() -> Option<String> {
-    if let Ok(path) = std::env::var("DISCOVERY_SOCKET")
+    if let Ok(path) = std::env::var(skunk_bat_core::env_keys::DISCOVERY_SOCKET)
         && !path.is_empty()
         && std::path::Path::new(&path).exists()
     {

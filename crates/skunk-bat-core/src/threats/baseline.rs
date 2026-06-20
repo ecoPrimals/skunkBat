@@ -19,48 +19,64 @@ use std::time::SystemTime;
 
 use super::types::Observation;
 
-/// Representative self-port for baseline seed data. Matches the skunkBat
-/// default TCP listen port; actual runtime port is configurable via env.
-const SELF_PORT: u16 = 9750;
+/// Default self-port for baseline seed data when no runtime port is configured.
+const DEFAULT_SELF_PORT: u16 = 9750;
 
 /// Normal inter-primal traffic baseline (12 observations).
 ///
 /// Represents ~60 seconds of typical ecosystem activity:
 /// - Connection rate: 2–8 conn/s (IPC heartbeats, capability queries)
 /// - Traffic volume: 1–5 KB/s (JSON-RPC payloads, health checks)
-/// - Ports: `SELF_PORT` (TCP listener), plus UDS (represented as port 0)
+/// - Ports: `self_port` (TCP listener), plus UDS (represented as port 0)
+///
+/// Pass `0` to use the default port (9750).
+#[must_use]
+pub fn normal_baseline_with_port(self_port: u16) -> Vec<Observation> {
+    let port = if self_port == 0 {
+        DEFAULT_SELF_PORT
+    } else {
+        self_port
+    };
+    build_baseline(port)
+}
+
+/// Convenience wrapper using the default self-port.
 #[must_use]
 pub fn normal_baseline() -> Vec<Observation> {
+    build_baseline(DEFAULT_SELF_PORT)
+}
+
+fn build_baseline(self_port: u16) -> Vec<Observation> {
     let now = SystemTime::now();
     vec![
         Observation {
             connection_rate: 3.2,
             traffic_volume: 2048,
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
             connection_rate: 2.8,
             traffic_volume: 1536,
-            ports_accessed: vec![SELF_PORT, 0],
+            ports_accessed: vec![self_port, 0],
             timestamp: now,
         },
         Observation {
             connection_rate: 4.1,
             traffic_volume: 3072,
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.5,
             traffic_volume: 2560,
-            ports_accessed: vec![SELF_PORT, 0],
+            ports_accessed: vec![self_port, 0],
             timestamp: now,
         },
         Observation {
             connection_rate: 5.0,
             traffic_volume: 4096,
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
@@ -72,13 +88,13 @@ pub fn normal_baseline() -> Vec<Observation> {
         Observation {
             connection_rate: 4.8,
             traffic_volume: 3584,
-            ports_accessed: vec![SELF_PORT, 0],
+            ports_accessed: vec![self_port, 0],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.9,
             traffic_volume: 2816,
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
@@ -90,19 +106,19 @@ pub fn normal_baseline() -> Vec<Observation> {
         Observation {
             connection_rate: 4.3,
             traffic_volume: 3328,
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         Observation {
             connection_rate: 3.0,
             traffic_volume: 2048,
-            ports_accessed: vec![SELF_PORT, 0],
+            ports_accessed: vec![self_port, 0],
             timestamp: now,
         },
         Observation {
             connection_rate: 5.2,
             traffic_volume: 4352,
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
     ]
@@ -124,6 +140,7 @@ pub fn normal_baseline() -> Vec<Observation> {
 /// 7. Protocol confusion (unexpected ports, moderate rate)
 #[must_use]
 pub fn pentest_attack_patterns() -> Vec<Observation> {
+    let self_port = DEFAULT_SELF_PORT;
     let now = SystemTime::now();
     vec![
         // 1: Port enumeration sweep — 150 conn/s across 20+ common ports
@@ -140,35 +157,35 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
         Observation {
             connection_rate: 5.0,
             traffic_volume: 10_485_760, // 10 MB/s
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         // 3: Malformed JSON-RPC burst — rapid small payloads
         Observation {
             connection_rate: 500.0,
             traffic_volume: 512,
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         // 4: Service enumeration — methodical probing at moderate rate
         Observation {
             connection_rate: 45.0,
             traffic_volume: 4096,
-            ports_accessed: (SELF_PORT..SELF_PORT + 6).collect(),
+            ports_accessed: (self_port..self_port + 6).collect(),
             timestamp: now,
         },
         // 5: Amplification attempt — tiny request, expecting large response
         Observation {
             connection_rate: 80.0,
             traffic_volume: 128,
-            ports_accessed: vec![SELF_PORT],
+            ports_accessed: vec![self_port],
             timestamp: now,
         },
         // 6: Slow-rate exhaustion — sustained elevated connections
         Observation {
             connection_rate: 25.0,
             traffic_volume: 2048,
-            ports_accessed: vec![SELF_PORT, 0],
+            ports_accessed: vec![self_port, 0],
             timestamp: now,
         },
         // 7: Protocol confusion — unexpected ports, moderate rate

@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::{DetectionConfig, FeatureFlags, SkunkBatConfig};
+use crate::config::{FeatureFlags, SkunkBatConfig};
 use crate::primal_foundation::config::CommonConfig;
 
 fn test_config() -> SkunkBatConfig {
@@ -15,7 +15,7 @@ fn test_config() -> SkunkBatConfig {
             observability: true,
         },
         lineage_id: Some("test-lineage".to_string()),
-        ..SkunkBatConfig::default()
+        thresholds: crate::config::ThreatThresholds::default(),
     }
 }
 
@@ -39,10 +39,12 @@ async fn test_threat_detection_with_local_verifier() {
     let config = test_config();
     let detector = ThreatDetector::new(&config);
     let threats = detector.detect().await.expect("detection should succeed");
-    assert!(
-        threats.is_empty(),
-        "LocalLineageVerifier returns Err (no authority) → genetic detection skipped"
+    assert_eq!(
+        threats.len(),
+        1,
+        "LocalLineageVerifier errors → degraded genetic threat"
     );
+    assert!(threats[0].id.starts_with("genetic-degraded-"));
 }
 
 #[tokio::test]
@@ -120,15 +122,15 @@ async fn test_statistical_profiler_anomaly_detection() {
 }
 
 #[tokio::test]
-async fn test_local_lineage_verifier_no_authority() {
+async fn test_local_lineage_verifier() {
     let verifier = LocalLineageVerifier;
     assert!(
         verifier.is_family("test-peer").await.is_err(),
-        "local verifier has no authority — returns Err"
+        "local-only verifier should return error (no authority)"
     );
     assert!(
         verifier.get_lineage("test-peer").await.is_err(),
-        "local verifier has no authority — returns Err"
+        "local-only verifier should return error (no authority)"
     );
 }
 
@@ -353,7 +355,7 @@ async fn test_detect_disabled() {
             observability: false,
         },
         lineage_id: None,
-        ..SkunkBatConfig::default()
+        thresholds: crate::config::ThreatThresholds::default(),
     };
     let detector = ThreatDetector::new(&config);
     assert!(!detector.is_healthy());
@@ -372,7 +374,7 @@ fn test_start_disabled() {
             observability: false,
         },
         lineage_id: None,
-        ..SkunkBatConfig::default()
+        thresholds: crate::config::ThreatThresholds::default(),
     };
     let detector = ThreatDetector::new(&config);
     assert!(detector.start().is_ok());
@@ -399,221 +401,115 @@ fn test_severity_display_all_variants() {
 }
 
 #[tokio::test]
-async fn test_custom_detection_thresholds() {
-    let mut config = test_config();
-    config.detection = DetectionConfig {
-        sigma_threshold: 1.0,
-        port_scan_threshold: 3,
-        ..DetectionConfig::default()
-    };
-
-    let mut profiler = StatisticalProfiler::new(config.detection.sigma_threshold);
-    for _ in 0..15 {
-        let obs = Observation {
-            connection_rate: 5.0,
-            traffic_volume: 1000,
-            ports_accessed: vec![80],
-            timestamp: SystemTime::now(),
-        };
-        profiler.update(&obs).await.expect("update");
-    }
-
-    let mild_spike = Observation {
-        connection_rate: 12.0,
-        traffic_volume: 1000,
-        ports_accessed: vec![80],
+async fn test_intrusion_portscan_detected() {
+    let config = test_config();
+    let mut profiler = StatisticalProfiler::new(2.5);
+    let obs = Observation {
+        connection_rate: 5.0,
+        traffic_volume: 500,
+        ports_accessed: vec![22, 445, 80],
         timestamp: SystemTime::now(),
     };
-    profiler.update(&mild_spike).await.expect("update");
+    profiler.update(&obs).await.expect("update");
 
     let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
     let threats = detector.detect().await.expect("detect");
     assert!(
         threats
             .iter()
-            .any(|t| matches!(t.threat_type, ThreatType::BehaviorAnomaly { .. })),
-        "Lower sigma threshold should catch mild spike"
+            .any(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "port-scan")),
+        "Should detect port-scan when 2+ sensitive ports accessed"
     );
 }
 
 #[tokio::test]
-async fn test_port_scan_detection_with_sequential() {
+async fn test_intrusion_portscan_not_triggered_single_port() {
     let config = test_config();
-    let mut profiler = StatisticalProfiler::new(config.detection.sigma_threshold);
-
-    for _ in 0..15 {
-        let obs = Observation {
-            connection_rate: 2.0,
-            traffic_volume: 512,
-            ports_accessed: vec![80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90],
-            timestamp: SystemTime::now(),
-        };
-        profiler.update(&obs).await.expect("update");
-    }
+    let mut profiler = StatisticalProfiler::new(2.5);
+    let obs = Observation {
+        connection_rate: 5.0,
+        traffic_volume: 500,
+        ports_accessed: vec![22, 80, 443],
+        timestamp: SystemTime::now(),
+    };
+    profiler.update(&obs).await.expect("update");
 
     let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
-    let threats = detector.detect().await.expect("detect");
-    assert!(
-        threats.iter().any(|t| matches!(
-            &t.threat_type,
-            ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "port_scan"
-        )),
-        "Sequential ports above threshold should trigger port scan detection"
-    );
-    let port_scan = threats
-        .iter()
-        .find(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { .. }))
-        .expect("port scan threat");
-    assert_eq!(port_scan.severity, Severity::High);
-}
-
-#[tokio::test]
-async fn test_port_scan_below_threshold() {
-    let config = test_config();
-    let mut profiler = StatisticalProfiler::new(config.detection.sigma_threshold);
-
-    for _ in 0..15 {
-        let obs = Observation {
-            connection_rate: 2.0,
-            traffic_volume: 512,
-            ports_accessed: vec![80, 443, 8080],
-            timestamp: SystemTime::now(),
-        };
-        profiler.update(&obs).await.expect("update");
-    }
-
-    let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
-    let threats = detector.detect().await.expect("detect");
-    assert!(
-        !threats.iter().any(|t| matches!(
-            &t.threat_type,
-            ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "port_scan"
-        )),
-        "3 ports is below the 10-port threshold"
-    );
-}
-
-type DefaultDetector =
-    ThreatDetector<LocalLineageVerifier, StatisticalProfiler, LayerTopologyValidator>;
-
-#[test]
-fn test_has_sequential_ports() {
-    assert!(DefaultDetector::has_sequential_ports(&[1, 2, 3], 3));
-    assert!(DefaultDetector::has_sequential_ports(
-        &[10, 11, 12, 50, 51],
-        3
-    ));
-    assert!(!DefaultDetector::has_sequential_ports(&[1, 5, 10], 3));
-    assert!(!DefaultDetector::has_sequential_ports(&[1, 2], 3));
-    assert!(!DefaultDetector::has_sequential_ports(&[], 3));
-}
-
-#[test]
-fn test_has_sequential_ports_custom_window() {
-    assert!(DefaultDetector::has_sequential_ports(&[1, 2, 3, 4], 4));
-    assert!(!DefaultDetector::has_sequential_ports(&[1, 2, 3], 4));
-    assert!(DefaultDetector::has_sequential_ports(&[5, 6], 2));
-}
-
-#[test]
-fn test_port_to_layer_mapping() {
-    assert_eq!(DefaultDetector::port_to_layer(22), 0);
-    assert_eq!(DefaultDetector::port_to_layer(443), 0);
-    assert_eq!(DefaultDetector::port_to_layer(1024), 1);
-    assert_eq!(DefaultDetector::port_to_layer(5000), 1);
-    assert_eq!(DefaultDetector::port_to_layer(8080), 2);
-    assert_eq!(DefaultDetector::port_to_layer(9750), 2);
-    assert_eq!(DefaultDetector::port_to_layer(10000), 3);
-    assert_eq!(DefaultDetector::port_to_layer(65535), 3);
-}
-
-#[tokio::test]
-async fn test_topology_violation_multi_layer() {
-    let config = test_config();
-    let mut profiler = StatisticalProfiler::new(config.detection.sigma_threshold);
-
-    for _ in 0..15 {
-        let obs = Observation {
-            connection_rate: 2.0,
-            traffic_volume: 512,
-            ports_accessed: vec![22, 5000, 8080, 10000],
-            timestamp: SystemTime::now(),
-        };
-        profiler.update(&obs).await.expect("update");
-    }
-
-    let topo = LayerTopologyValidator::new(vec![0, 1, 2, 3]);
-    let detector =
-        ThreatDetector::with_full_injection(&config, LocalLineageVerifier, profiler, topo);
     let threats = detector.detect().await.expect("detect");
     assert!(
         !threats
             .iter()
-            .any(|t| matches!(t.threat_type, ThreatType::TopologyViolation { .. })),
-        "Valid layer path should not trigger topology violation"
+            .any(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "port-scan")),
+        "Single sensitive port should not trigger port-scan"
     );
 }
 
 #[tokio::test]
-async fn test_topology_violation_bypass_detected() {
+async fn test_intrusion_exfiltration_detected() {
     let config = test_config();
-    let mut profiler = StatisticalProfiler::new(config.detection.sigma_threshold);
+    let mut profiler = StatisticalProfiler::new(2.5);
+    let obs = Observation {
+        connection_rate: 2.0,
+        traffic_volume: 500_000,
+        ports_accessed: vec![80],
+        timestamp: SystemTime::now(),
+    };
+    profiler.update(&obs).await.expect("update");
 
-    for _ in 0..15 {
-        let obs = Observation {
-            connection_rate: 2.0,
-            traffic_volume: 512,
-            ports_accessed: vec![22, 10000, 8080],
-            timestamp: SystemTime::now(),
-        };
-        profiler.update(&obs).await.expect("update");
-    }
-
-    let topo = LayerTopologyValidator::new(vec![0, 1, 2, 3]);
-    let detector =
-        ThreatDetector::with_full_injection(&config, LocalLineageVerifier, profiler, topo);
+    let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
     let threats = detector.detect().await.expect("detect");
     assert!(
         threats
             .iter()
-            .any(|t| matches!(t.threat_type, ThreatType::TopologyViolation { .. })),
-        "Missing layer 1 should trigger topology bypass"
+            .any(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "data-exfiltration")),
+        "High volume-to-connection ratio should trigger exfiltration alert"
     );
 }
 
-#[test]
-fn test_detection_config_serde_roundtrip() {
-    let config = DetectionConfig {
-        sigma_threshold: 3.0,
-        port_scan_threshold: 20,
-        ..DetectionConfig::default()
-    };
-    let json = serde_json::to_string(&config).unwrap();
-    let parsed: DetectionConfig = serde_json::from_str(&json).unwrap();
-    assert!((parsed.sigma_threshold - 3.0).abs() < f64::EPSILON);
-    assert_eq!(parsed.port_scan_threshold, 20);
-}
-
-#[test]
-fn test_lineage_id_accessor() {
+#[tokio::test]
+async fn test_intrusion_exfiltration_not_triggered_low_volume() {
     let config = test_config();
-    let detector = ThreatDetector::new(&config);
-    assert_eq!(detector.lineage_id(), Some("test-lineage"));
-}
-
-#[test]
-fn test_lineage_id_none() {
-    let config = SkunkBatConfig {
-        lineage_id: None,
-        ..test_config()
+    let mut profiler = StatisticalProfiler::new(2.5);
+    let obs = Observation {
+        connection_rate: 10.0,
+        traffic_volume: 500,
+        ports_accessed: vec![80],
+        timestamp: SystemTime::now(),
     };
-    let detector = ThreatDetector::new(&config);
-    assert!(detector.lineage_id().is_none());
+    profiler.update(&obs).await.expect("update");
+
+    let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        !threats
+            .iter()
+            .any(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "data-exfiltration")),
+        "Low traffic volume should not trigger exfiltration"
+    );
 }
 
-#[test]
-fn test_stop_returns_ok() {
-    let config = test_config();
-    let detector = ThreatDetector::new(&config);
-    assert!(detector.stop().is_ok());
+#[tokio::test]
+async fn test_intrusion_uses_configurable_thresholds() {
+    let mut config = test_config();
+    config.thresholds.intrusion_sensitive_ports = vec![8080, 9090];
+    config.thresholds.intrusion_portscan_confidence = 0.9;
+
+    let mut profiler = StatisticalProfiler::new(2.5);
+    let obs = Observation {
+        connection_rate: 5.0,
+        traffic_volume: 500,
+        ports_accessed: vec![8080, 9090],
+        timestamp: SystemTime::now(),
+    };
+    profiler.update(&obs).await.expect("update");
+
+    let detector = ThreatDetector::with_verifiers(&config, LocalLineageVerifier, profiler);
+    let threats = detector.detect().await.expect("detect");
+    let portscan = threats
+        .iter()
+        .find(|t| matches!(&t.threat_type, ThreatType::IntrusionAttempt { attack_type, .. } if attack_type == "port-scan"));
+    assert!(portscan.is_some(), "Custom ports should trigger detection");
+    #[expect(clippy::float_cmp, reason = "exact configured value comparison")]
+    let confidence_matches = portscan.unwrap().confidence == 0.9;
+    assert!(confidence_matches, "Should use configured confidence");
 }

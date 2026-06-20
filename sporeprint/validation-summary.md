@@ -14,7 +14,7 @@ springs = []
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
 - **Tests**: 470 passing
-- **Source**: 50 files, max 902 lines
+- **Source**: max 728 lines (no file exceeds 800L)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)

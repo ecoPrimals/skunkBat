@@ -230,25 +230,33 @@ pub async fn serve_tcp(
     }
 }
 
-/// Bind UDS and accept connections per BTSP Phase 1 naming + riboCipher routing.
+/// Set up the UDS listener: create directory, clean stale socket, bind, create symlink.
 #[cfg(unix)]
-pub async fn serve_uds(
-    state: Arc<RwLock<SkunkBat>>,
-    sessions: Arc<BtspSessionRegistry>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-    use tokio::net::UnixListener;
-
+async fn setup_uds_listener() -> Result<
+    (tokio::net::UnixListener, Option<Arc<BtspHandshakeConfig>>),
+    Box<dyn std::error::Error + Send + Sync + 'static>,
+> {
     let btsp = BtspConfig::from_env()?;
     btsp.log_mode();
 
     let socket_path = btsp.socket_path();
 
-    if let Some(parent) = std::path::Path::new(&socket_path).parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
+    if let Some(parent) = std::path::Path::new(&socket_path).parent()
+        && let Err(e) = tokio::fs::create_dir_all(parent).await
+    {
+        tracing::warn!(
+            "Failed to create UDS socket directory {}: {e}",
+            parent.display()
+        );
     }
 
-    tokio::fs::remove_file(&socket_path).await.ok();
-    let listener = UnixListener::bind(&socket_path)?;
+    if let Err(e) = tokio::fs::remove_file(&socket_path).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("Failed to remove stale UDS socket {socket_path}: {e}");
+    }
+
+    let listener = tokio::net::UnixListener::bind(&socket_path)?;
     tracing::info!("UDS JSON-RPC listening on {socket_path}");
 
     create_capability_symlink(&btsp);
@@ -260,6 +268,17 @@ pub async fn serve_uds(
             cfg.provider_socket.display()
         );
     }
+
+    Ok((listener, btsp_config))
+}
+
+/// Bind UDS and accept connections per BTSP Phase 1 naming + riboCipher routing.
+#[cfg(unix)]
+pub async fn serve_uds(
+    state: Arc<RwLock<SkunkBat>>,
+    sessions: Arc<BtspSessionRegistry>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let (listener, btsp_config) = setup_uds_listener().await?;
 
     loop {
         let (mut stream, _addr) = listener.accept().await?;

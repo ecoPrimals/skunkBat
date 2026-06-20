@@ -1,12 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
-
-//! Tests for BTSP Phase 3 cipher negotiation and session key management.
-
-use super::negotiate::{
-    BondType, CipherSuite, NONCE_SIZE, SessionRegistry, decrypt_frame, derive_session_keys,
-    encrypt_frame, extract_offered_ciphers, handle_negotiate, select_best_cipher,
-};
+use super::*;
 
 #[test]
 fn cipher_suite_roundtrip() {
@@ -187,9 +179,13 @@ fn select_best_cipher_prefers_chacha20() {
 }
 
 #[test]
-fn select_best_cipher_falls_back_to_hmac() {
+fn select_best_cipher_hmac_not_implemented_falls_to_null() {
     let offered = vec![CipherSuite::Null, CipherSuite::HmacPlain];
-    assert_eq!(select_best_cipher(&offered, true), CipherSuite::HmacPlain);
+    assert_eq!(
+        select_best_cipher(&offered, true),
+        CipherSuite::Null,
+        "hmac-plain recognized but not implemented on wire — falls to null"
+    );
 }
 
 #[test]
@@ -332,7 +328,7 @@ fn decrypt_too_short_fails() {
 fn encrypt_empty_payload() {
     let key = [0x11; 32];
     let frame = encrypt_frame(&key, b"").unwrap();
-    assert_eq!(frame.len(), NONCE_SIZE + 16);
+    assert_eq!(frame.len(), NONCE_SIZE + 16); // nonce + tag only
     let decrypted = decrypt_frame(&key, &frame).unwrap();
     assert!(decrypted.is_empty());
 }

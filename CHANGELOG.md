@@ -26,16 +26,28 @@ All notable changes to skunkBat are documented here.
 
 - `dispatch.rs` refactored: tests extracted to `dispatch_tests.rs` (862→430L
   production code), `id` passed by value to sub-dispatchers (fewer clones)
+- `threats/mod.rs` smart refactored: 899→160L orchestrator + `detection.rs`
+  (246L) + tests extracted to `threats_tests.rs`; deleted 619L orphan `mod_tests.rs`
+- `negotiate.rs` smart refactored: 826→484L, tests extracted to
+  `negotiate_tests.rs` via `#[path]`; deleted 351L orphan duplicate
 - `method_gate.check()` takes `&serde_json::Value` (clone only on rejection path)
 - `lifecycle.status` returns actual primal state (was hardcoded "running")
 - `detect_genetic_threats` reports degraded threat on verifier error (was silent)
 - Discovery: hardcoded primal names (`songbird.sock`, `biomeos.sock`) removed —
   capability-based `DISCOVERY_SOCKET`/`NEURAL_API_SOCKET` env convention only
+- Registration uses `env_keys::DISCOVERY_SOCKET` constant (was string literal)
 - Trace labels evolved from primal names to capabilities (`provenance`, `attribution`)
-- Baseline port sweep patterns decoupled from ecosystem-specific ports
+- Baseline `normal_baseline_with_port()` accepts runtime port (was hardcoded 9750);
+  `ThreatDetector::new` passes `config.common.listen_port`
 - `Timestamp::now()` uses non-panicking fallback (was `.expect()`)
 - Silent error drops in BTSP (handshake, negotiate, HKDF) now log warnings
+- UDS setup failures (dir creation, stale socket removal) surfaced with `tracing::warn`
+- Defense `quarantine_map` mutex poison now logged at error (was silent skip)
 - NestGate `integrity_sweep` tracks and logs RPC failures (was silent skip)
+- `serve_uds` refactored: setup extracted to `setup_uds_listener()`, resolving
+  `clippy::too_many_lines`
+- `hmac-plain` cipher: recognized in protocol but excluded from `select_best_cipher`
+  (not implemented on wire — was silently negotiated then ignored)
 - Example code updated: `beardog_integration.rs` uses `RemoteLineageVerifier`,
   `songbird_integration.rs` uses real `SkunkBatConfig` fields
 - `lib.rs` quick-start doc fixed (removed `.await` on sync `respond_to_threat`)
@@ -51,11 +63,15 @@ All notable changes to skunkBat are documented here.
 ### Fixed
 
 - `clippy::too_many_lines` in dispatch (extracted sub-dispatchers)
+- `clippy::too_many_lines` in `serve_uds` (extracted setup)
 - `clippy::significant_drop_tightening` in dispatch (scoped `RwLock` guards)
 - `defense_actions` example `too_many_lines` lint
-- File count in docs (49→50 after `dispatch_tests.rs` extraction)
 - **Forwarding cursor bug** — cursor now only advances past successfully
   forwarded events; previously advanced on failure, silently dropping events
+- **Federation cursor bug** — cursor now stops advancing on broadcast failure,
+  matching forwarding loop retry semantics
+- Deleted 970 lines of orphan test files (`mod_tests.rs`, `negotiate_tests.rs`)
+  that were never compiled — replaced with `#[path]` references
 
 ## [0.2.0] — 2026-05-17
 

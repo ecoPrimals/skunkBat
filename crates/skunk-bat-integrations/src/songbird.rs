@@ -347,7 +347,8 @@ pub async fn run_federation_loop(audit_log: skunk_bat_core::AuditLog, client: Fe
                     .broadcast(threat_type, source, severity, &desc)
                     .await
                 {
-                    tracing::debug!("Federation broadcast skipped: {e}");
+                    tracing::debug!("Federation broadcast failed, will retry: {e}");
+                    break;
                 }
             }
 

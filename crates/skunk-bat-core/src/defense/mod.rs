@@ -165,26 +165,36 @@ impl DefenseEngine {
 
     /// Quarantine a connection — records the quarantine and logs the action.
     fn quarantine_connection(&self, source: &str, threat: &Threat) {
-        if let Ok(mut map) = self.quarantine_map.lock() {
-            map.insert(
-                source.to_owned(),
-                QuarantineRecord {
-                    source: source.to_owned(),
-                    started_at: SystemTime::now(),
-                    reason: threat.description.clone(),
-                    threat_id: threat.id.clone(),
-                },
-            );
+        match self.quarantine_map.lock() {
+            Ok(mut map) => {
+                map.insert(
+                    source.to_owned(),
+                    QuarantineRecord {
+                        source: source.to_owned(),
+                        started_at: SystemTime::now(),
+                        reason: threat.description.clone(),
+                        threat_id: threat.id.clone(),
+                    },
+                );
+                tracing::debug!("Quarantining connection from {source}");
+            }
+            Err(e) => {
+                tracing::error!("Quarantine map poisoned, cannot quarantine {source}: {e}");
+            }
         }
-        tracing::debug!("Quarantining connection from {source}");
     }
 
     /// Block a connection — removes from quarantine (escalation) and logs.
     fn block_connection(&self, source: &str) {
-        if let Ok(mut map) = self.quarantine_map.lock() {
-            map.remove(source);
+        match self.quarantine_map.lock() {
+            Ok(mut map) => {
+                map.remove(source);
+                tracing::debug!("Blocking connection from {source}");
+            }
+            Err(e) => {
+                tracing::error!("Quarantine map poisoned, cannot block {source}: {e}");
+            }
         }
-        tracing::debug!("Blocking connection from {source}");
     }
 
     /// Alert operator about threat via tracing.
