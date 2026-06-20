@@ -1,9 +1,9 @@
 # skunkBat — Handoff Blurb
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
-**Version**: 0.2.10
+**Version**: 0.2.11
 **Date**: Jun 20, 2026
-**Wave**: 119
+**Wave**: 120
 
 ---
 
@@ -14,7 +14,7 @@
 | Tests | 470 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
 | Max file | 728 lines (all under 800L cap) |
-| IPC methods | 18 (all Stable tier) |
+| IPC methods | 19 (all Stable tier, incl. `baseline.observe`) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
 | License | AGPL-3.0-or-later (scyBorg triple-copyleft) |
@@ -35,13 +35,23 @@
 - **Configurable thresholds**: all detection constants via `ThreatThresholds`
 - **Capability-based discovery**: no primal names hardcoded in routing
 
+## What's Implemented (Wave 120)
+
+- **Live observation feed**: `baseline.observe` IPC method feeds live traffic into `StatisticalProfiler` via `RwLock`
+- **5-category detection LIVE**: genetic, behavioral, intrusion, resource, topology — all wired into `detect()`
+- **Defense enforcement**: quarantined sources rejected at dispatch gate; health probes exempt
+- **riboCipher probe response**: probes receive ack payload + close (TCP + UDS)
+- **BTSP session cleanup**: evict on disconnect + periodic TTL sweep (1h TTL, 5m interval)
+- **Auto-response policy**: driven from config (no hardcoded `true`)
+- **RuntimeVerifier probe**: startup log of verifier availability
+
 ## What's Not Wired (Library-Ready)
 
 These modules exist as complete library APIs but are not wired into the server binary:
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `RuntimeVerifier` | Library-ready | Probes for remote lineage provider; server uses `LocalLineageVerifier` |
+| `RuntimeVerifier` injection | Probed at startup | Needs `SkunkBat` generic refactor to inject into `ThreatDetector` |
 | `ToadStool` discovery | Library-ready | `CapabilityPrimalDiscovery` for mesh scanning |
 | `NestGate` content protection | Library-ready | `ContentProtector` for content integrity |
 | `UniversalAdapter` | Experimental | Capability-based adapter pattern |
@@ -49,12 +59,11 @@ These modules exist as complete library APIs but are not wired into the server b
 
 ## Known Gaps (for upstream teams)
 
-1. **Profiler not fed live data**: `StatisticalProfiler` seeded at startup with static baseline. Nothing feeds live network observations in production — detection runs on stale seed data.
-2. **Topology detection not wired**: Documented as 5th category but `detect()` only runs 4 (genetic, behavioral, intrusion, resource). `LayerTopologyValidator` exists but unused.
-3. **Defense actions are in-memory only**: Quarantine/block update a `HashMap` and emit traces — no firewall/IPC/connection teardown integration.
-4. **BTSP session cleanup**: `SessionRegistry::remove()` exists but never called on disconnect. No TTL task.
-5. **riboCipher Tiers 2/3**: Mito (`0xED`) and Nuclear (`0xEE`) signals logged and rejected — not implemented.
-6. **Probe response**: `0x00` probe logged but no response sent back.
+1. **RuntimeVerifier injection**: server probes for BearDog at startup but can't inject it into `ThreatDetector` without making `SkunkBat` generic (structural refactor, blocked on BearDog BTSP).
+2. **Defense actions in-memory only**: Quarantine/block update a `HashMap`, reject at dispatch gate, and emit traces — no OS firewall/nftables integration yet.
+3. **riboCipher Tiers 2/3**: Mito (`0xED`) and Nuclear (`0xEE`) signals logged and rejected — not implemented (needs upstream crypto spec).
+4. **Topology path source**: `record_connection_path()` API exists but transport layer doesn't emit paths yet (needs BTSP handshake metadata or mesh routing context).
+5. **ConfigurationDrift detection**: `ThreatType::ConfigurationDrift` defined but no detection category implemented.
 
 ## Cascade Status
 
@@ -69,7 +78,8 @@ Key deps: `tokio`, `chacha20poly1305`, `hkdf`, `sha2`, `serde`/`serde_json`, `tr
 
 ## For Upstream Overwatch
 
-- Zero known P0/P1 debt remaining
+- All 6 original known gaps resolved (profiler, topology, sessions, probe, defense, auto-response)
+- Zero known P0 debt remaining
 - All detection constants configurable
 - All production error paths surfaced (no silent drops)
 - No hardcoded primal names in routing

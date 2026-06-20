@@ -82,6 +82,8 @@ pub(super) struct CallerContext {
     pub bearer_token: Option<String>,
     /// Where the connection came from.
     pub origin: ConnectionOrigin,
+    /// Source address for quarantine lookup (e.g. "192.168.1.5:4321").
+    pub source_addr: Option<String>,
 }
 
 impl CallerContext {
@@ -91,6 +93,7 @@ impl CallerContext {
         Self {
             bearer_token: None,
             origin: ConnectionOrigin::Unix,
+            source_addr: None,
         }
     }
 
@@ -100,15 +103,28 @@ impl CallerContext {
         Self {
             bearer_token: None,
             origin: ConnectionOrigin::Loopback,
+            source_addr: None,
         }
     }
 
     /// Context for a remote TCP connection.
     #[must_use]
+    pub const fn remote_with_addr(addr: String) -> Self {
+        Self {
+            bearer_token: None,
+            origin: ConnectionOrigin::Remote,
+            source_addr: Some(addr),
+        }
+    }
+
+    /// Context for a remote TCP connection (no address available).
+    #[must_use]
+    #[cfg(test)]
     pub const fn remote() -> Self {
         Self {
             bearer_token: None,
             origin: ConnectionOrigin::Remote,
+            source_addr: None,
         }
     }
 }
@@ -343,6 +359,7 @@ mod tests {
         let caller = CallerContext {
             bearer_token: Some("valid-ionic-token".to_owned()),
             origin: ConnectionOrigin::Remote,
+            source_addr: None,
         };
         let id = serde_json::json!(1);
         assert!(gate.check("security.scan", &id, &caller).is_ok());

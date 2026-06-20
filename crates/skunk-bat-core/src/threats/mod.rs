@@ -29,7 +29,9 @@ pub use types::*;
 use crate::SkunkBatConfig;
 use crate::config::ThreatThresholds;
 use crate::error::SkunkBatError;
+use std::sync::Mutex;
 use std::time::SystemTime;
+use tokio::sync::RwLock;
 
 /// Threat detector — orchestrates all five detection categories.
 ///
@@ -44,7 +46,11 @@ pub struct ThreatDetector<
     lineage_id: Option<String>,
     thresholds: ThreatThresholds,
     lineage_verifier: L,
-    baseline_profiler: B,
+    baseline_profiler: RwLock<B>,
+    topology_validator: Option<LayerTopologyValidator>,
+    /// Connection paths observed since the last `detect()` call.
+    /// Fed by the transport layer via `record_connection_path()`.
+    observed_paths: Mutex<Vec<Vec<u8>>>,
 }
 
 impl ThreatDetector {
@@ -70,12 +76,18 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         lineage_verifier: L,
         baseline_profiler: B,
     ) -> Self {
+        let topology_validator = config
+            .expected_topology_path
+            .as_ref()
+            .map(|path| LayerTopologyValidator::new(path.clone()));
         Self {
             enabled: config.features.threat_detection,
             lineage_id: config.lineage_id.clone(),
             thresholds: config.thresholds.clone(),
             lineage_verifier,
-            baseline_profiler,
+            baseline_profiler: RwLock::new(baseline_profiler),
+            topology_validator,
+            observed_paths: Mutex::new(Vec::new()),
         }
     }
 
@@ -119,17 +131,46 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             return Ok(vec![]);
         }
 
-        let mut threats = Vec::with_capacity(4);
+        let mut threats = Vec::with_capacity(8);
         threats.extend(self.detect_genetic_threats().await?);
         threats.extend(self.detect_behavioral_anomalies().await?);
         threats.extend(self.detect_intrusions().await?);
         threats.extend(self.detect_resource_exhaustion().await?);
+        threats.extend(self.detect_topology_threats().await?);
 
         if !threats.is_empty() {
             tracing::warn!("Detected {} threats", threats.len());
         }
 
         Ok(threats)
+    }
+
+    /// Feed a live network observation into the baseline profiler.
+    ///
+    /// Updates the rolling window and keeps the anomaly baseline current
+    /// with real traffic. Can be called from the IPC dispatch path
+    /// or from the transport layer's connection accept loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profiler update fails.
+    pub async fn observe(&self, observation: &types::Observation) -> Result<(), SkunkBatError> {
+        self.baseline_profiler
+            .write()
+            .await
+            .update(observation)
+            .await
+    }
+
+    /// Record an observed connection path for topology validation.
+    ///
+    /// Called by the transport layer when a connection's layer traversal
+    /// is known (e.g. from BTSP handshake metadata or `CallerContext`).
+    /// Paths are consumed and validated on the next `detect()` call.
+    pub fn record_connection_path(&self, path: Vec<u8>) {
+        if let Ok(mut paths) = self.observed_paths.lock() {
+            paths.push(path);
+        }
     }
 
     /// Access the lineage identifier (if configured).

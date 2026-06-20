@@ -6,6 +6,41 @@ All notable changes to skunkBat are documented here.
 
 ### Added
 
+- **Live observation feed** — `baseline.observe` IPC method + `ThreatDetector::observe()`
+  wraps profiler in `RwLock` so live traffic observations update the rolling window;
+  anomaly detection now uses current data instead of frozen startup baseline
+- **Topology detection (5th category)** — `detect_topology_threats()` wired into
+  `detect()` via `LayerTopologyValidator`; configurable `expected_topology_path` on
+  `SkunkBatConfig`; `record_connection_path()` API for transport layer integration
+- **Defense enforcement** — quarantined sources rejected at dispatch gate with
+  `PERMISSION_DENIED`; health probes exempt; `CallerContext` carries `source_addr`
+  from TCP transport
+- **riboCipher probe response** — probes now receive `{"primal":"skunkbat","status":"alive"}`
+  ack + close (TCP and UDS); discovery agents no longer hang until timeout
+- **BTSP session cleanup** — `handle_connection` evicts sessions on disconnect;
+  periodic TTL sweep (1h TTL, 5m interval) prevents unbounded `HashMap` growth;
+  `SessionRegistry::sweep_expired()` added; `remove()`/`created_at` dead_code removed
+- **Auto-response policy** — `auto_response_enabled` driven from `config.features.auto_defense`
+  (was hardcoded `true`); `execute_action()` downgrades quarantine/block to alert when disabled
+- **Quarantine query** — `DefenseEngine::is_quarantined()` and `SkunkBat::is_quarantined()`
+  for pre-dispatch enforcement
+- **RuntimeVerifier probe** — server logs verifier availability at startup (remote/local);
+  structural injection deferred (requires `SkunkBat` generic refactor + BearDog BTSP)
+- **`BaselineObservation` audit event** — audit log records live observation feeds
+
+### Changed
+
+- `baseline_profiler` wrapped in `tokio::sync::RwLock` for interior mutability
+- `detect_intrusions`/`detect_behavioral_anomalies` acquire profiler read lock
+  and drop it before building threat responses
+- `alert_operator` refactored to associated function (no `&self`)
+
+---
+
+## [0.2.10]
+
+### Added
+
 - **riboCipher Tier 1** — `classify_connection()` reads `0xEC` clear signal + 
   protocol type byte, routing to NDJSON, BTSP, or probe. Legacy `{` peek falls
   back with deprecation warning. Tiers 2/3 (`0xED`/`0xEE`) log + reject.

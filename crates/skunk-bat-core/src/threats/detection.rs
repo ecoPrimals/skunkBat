@@ -6,7 +6,7 @@
 //! Called by [`super::ThreatDetector::detect`] — one function per category.
 
 use super::ThreatDetector;
-use super::traits::{BaselineProfiler, LineageVerifier};
+use super::traits::{BaselineProfiler, LineageVerifier, TopologyValidator};
 use super::types::{Severity, Threat, ThreatType};
 use crate::config::ThreatThresholds;
 use crate::error::SkunkBatError;
@@ -64,20 +64,20 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
     }
 
     pub(super) async fn detect_behavioral_anomalies(&self) -> Result<Vec<Threat>, SkunkBatError> {
-        if !self.baseline_profiler.is_established() {
+        let profiler = self.baseline_profiler.read().await;
+
+        if !profiler.is_established() {
             tracing::debug!("Baseline not established, learning normal behavior");
             return Ok(Vec::new());
         }
 
-        let observation = match self.baseline_profiler.latest_observation() {
+        let observation = match profiler.latest_observation() {
             Some(obs) => obs.clone(),
             None => return Ok(Vec::new()),
         };
 
-        let anomalies = self
-            .baseline_profiler
-            .detect_anomalies(&observation)
-            .await?;
+        let anomalies = profiler.detect_anomalies(&observation).await?;
+        drop(profiler);
 
         let threats = anomalies
             .into_iter()
@@ -102,14 +102,14 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         Ok(threats)
     }
 
-    #[expect(
-        clippy::unused_async,
-        reason = "async signature for future network-driven intrusion detection"
-    )]
     pub(super) async fn detect_intrusions(&self) -> Result<Vec<Threat>, SkunkBatError> {
         let mut threats = Vec::new();
+        let obs = {
+            let profiler = self.baseline_profiler.read().await;
+            profiler.latest_observation().cloned()
+        };
 
-        if let Some(obs) = self.baseline_profiler.latest_observation() {
+        if let Some(obs) = obs.as_ref() {
             let sensitive = &self.thresholds.intrusion_sensitive_ports;
             let suspicious_ports: Vec<u16> = obs
                 .ports_accessed
@@ -189,6 +189,54 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             }]);
         }
         Ok(Vec::new())
+    }
+
+    pub(super) async fn detect_topology_threats(&self) -> Result<Vec<Threat>, SkunkBatError> {
+        let Some(ref validator) = self.topology_validator else {
+            return Ok(Vec::new());
+        };
+
+        let paths = {
+            let mut guard = self
+                .observed_paths
+                .lock()
+                .map_err(|_| SkunkBatError::Internal("observed_paths lock poisoned".into()))?;
+            std::mem::take(&mut *guard)
+        };
+
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut threats = Vec::new();
+        for path in &paths {
+            let validation = validator.validate_path(path).await?;
+            if !validation.is_valid {
+                threats.push(Threat {
+                    id: format!("topology-violation-{}", Self::threat_id_suffix()),
+                    threat_type: ThreatType::TopologyViolation {
+                        expected_path: validation.expected_path,
+                        actual_path: validation.actual_path,
+                        bypassed_layers: validation.bypassed_layers.clone(),
+                    },
+                    severity: if validation.bypassed_layers.is_empty() {
+                        Severity::Medium
+                    } else {
+                        Severity::High
+                    },
+                    source: "transport".to_owned(),
+                    target: "local".to_owned(),
+                    detected_at: SystemTime::now(),
+                    description: format!(
+                        "Connection bypassed layers {:?}",
+                        validation.bypassed_layers
+                    ),
+                    confidence: 0.9,
+                });
+            }
+        }
+
+        Ok(threats)
     }
 }
 

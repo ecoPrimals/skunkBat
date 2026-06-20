@@ -98,6 +98,12 @@ pub struct SkunkBatConfig {
     /// Threat detection thresholds
     #[serde(default)]
     pub thresholds: ThreatThresholds,
+
+    /// Expected layer traversal path for topology validation.
+    /// When set, connections whose observed paths deviate from this
+    /// sequence generate `TopologyViolation` threats.
+    #[serde(default)]
+    pub expected_topology_path: Option<Vec<u8>>,
 }
 
 impl Default for SkunkBatConfig {
@@ -110,6 +116,7 @@ impl Default for SkunkBatConfig {
             features: FeatureFlags::default(),
             lineage_id: None,
             thresholds: ThreatThresholds::default(),
+            expected_topology_path: None,
         }
     }
 }
@@ -146,6 +153,7 @@ mod tests {
             },
             lineage_id: Some("family-alpha".to_owned()),
             thresholds: ThreatThresholds::default(),
+            expected_topology_path: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: SkunkBatConfig = serde_json::from_str(&json).unwrap();

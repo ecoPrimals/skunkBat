@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::jsonrpc::{self, Request, Response};
-use super::method_gate::{CallerContext, EnforcementMode, MethodGate};
+use super::method_gate::{CallerContext, EnforcementMode, MethodGate, PERMISSION_DENIED};
 
 /// Application-layer methods routed through `dispatch()`.
 const METHODS: &[&str] = &[
@@ -26,6 +26,7 @@ const METHODS: &[&str] = &[
     "security.respond",
     "security.metrics",
     "security.audit_log",
+    "baseline.observe",
     "lifecycle.state",
     "lifecycle.status",
     "lifecycle.capabilities",
@@ -139,6 +140,7 @@ pub(super) async fn dispatch(
             dispatch_security(state, id, &request.method, request.params).await
         }
         "security.respond" => dispatch_respond(state, id, request.params).await,
+        "baseline.observe" => dispatch_baseline_observe(state, id, request.params).await,
         "lifecycle.state" | "lifecycle.status" | "lifecycle.capabilities" => {
             dispatch_lifecycle(state, id, &request.method).await
         }
@@ -157,6 +159,10 @@ pub(super) async fn dispatch(
 }
 
 /// Run method-gate authorization and audit any gate events.
+///
+/// Checks quarantine status before method-gate authorization:
+/// quarantined sources are rejected with `PERMISSION_DENIED` regardless
+/// of method or token. Health probes are exempt so monitoring stays alive.
 async fn enforce_gate(
     state: &Arc<RwLock<SkunkBat>>,
     gate: &MethodGate,
@@ -164,6 +170,35 @@ async fn enforce_gate(
     request: &Request,
     id: &serde_json::Value,
 ) -> Result<(), Response> {
+    if let Some(ref addr) = caller.source_addr {
+        let is_health = request.method.starts_with("health.");
+        if !is_health && state.read().await.is_quarantined(addr) {
+            tracing::warn!(
+                method = request.method,
+                source = addr,
+                "Rejecting request from quarantined source"
+            );
+            state
+                .read()
+                .await
+                .audit_log()
+                .record(
+                    EventSource::MethodGate,
+                    EventSeverity::Warn,
+                    EventKind::GateRejection {
+                        method: request.method.clone(),
+                        origin: format!("quarantined:{addr}"),
+                    },
+                )
+                .await;
+            return Err(Response::error(
+                id.clone(),
+                PERMISSION_DENIED,
+                format!("source '{addr}' is quarantined"),
+            ));
+        }
+    }
+
     if let Err(resp) = gate.check(&request.method, id, caller) {
         state
             .read()
@@ -388,6 +423,54 @@ async fn dispatch_respond(
                 id,
                 serde_json::json!({"status": "ok", "action": format!("{action:?}")}),
             )
+        }
+        Err(e) => {
+            drop(sb);
+            Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string())
+        }
+    }
+}
+
+/// Handle `baseline.observe` — feed a live observation into the threat profiler.
+///
+/// Accepts an `Observation` JSON payload. Returns `{"status":"ok"}` on success.
+async fn dispatch_baseline_observe(
+    state: &Arc<RwLock<SkunkBat>>,
+    id: serde_json::Value,
+    params: Option<serde_json::Value>,
+) -> Response {
+    let Some(params) = params else {
+        return Response::error(id, jsonrpc::INVALID_PARAMS, "params required");
+    };
+
+    let observation: skunk_bat_core::threats::types::Observation =
+        match serde_json::from_value(params) {
+            Ok(o) => o,
+            Err(e) => {
+                return Response::error(
+                    id,
+                    jsonrpc::INVALID_PARAMS,
+                    format!("invalid observation: {e}"),
+                );
+            }
+        };
+
+    let sb = state.read().await;
+    let result = sb.observe(&observation).await;
+    let rate = observation.connection_rate;
+    match result {
+        Ok(()) => {
+            sb.audit_log()
+                .record(
+                    EventSource::ThreatDetection,
+                    EventSeverity::Info,
+                    EventKind::BaselineObservation {
+                        connection_rate: rate,
+                    },
+                )
+                .await;
+            drop(sb);
+            Response::success(id, serde_json::json!({"status": "ok"}))
         }
         Err(e) => {
             drop(sb);

@@ -94,7 +94,7 @@ and encrypted notification (no-response) verification.
 
 ## Status
 
-v0.2.10 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.11 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
 **470 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
@@ -105,25 +105,33 @@ Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkd
 **IPC**: JSON-RPC 2.0 over TCP + UDS with BTSP Phase 1/2/3. BearDog-delegated handshake,
 `btsp.negotiate` with session registry, `ChaCha20-Poly1305` AEAD encrypted framing.
 riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compliance.
-18 stable IPC methods. `hmac-plain` cipher recognized but excluded from negotiation
-(not implemented on wire — falls to null).
+19 stable IPC methods (incl. `baseline.observe`). `hmac-plain` cipher recognized but
+excluded from negotiation (not implemented on wire — falls to null).
 
 **Detection**: 5-category threat detection (genetic, behavioral, intrusion, resource,
-topology). Configurable thresholds. Baseline seeded from runtime-port-aware observations.
-Federation broadcast loop monitors audit log for `ThreatDetected` events.
+topology) — all wired into `detect()`. Live observation feed via `baseline.observe` IPC
+and `RwLock`-wrapped profiler. Configurable thresholds. Baseline seeded from
+runtime-port-aware observations. Federation broadcast loop monitors audit log for
+`ThreatDetected` events.
+
+**Defense**: Auto-response policy from config. Quarantined sources rejected at dispatch
+gate (`PERMISSION_DENIED`). Health probes exempt. BTSP sessions evicted on disconnect
+with periodic TTL sweep (1h/5m).
 
 **Observability**: JH-5 audit log (1024-event ring buffer) with cursor-based forwarding
 to provenance DAG and attribution braids. Cursor only advances on successful forward.
 Defense attestation with `ActionType`-specific audit events at `Warn` severity.
+`BaselineObservation` audit events for profiler feed tracking.
 
 **Integration**: Capability-based runtime discovery. No primal names hardcoded in routing.
-`RemoteLineageVerifier` integration ready. Self-registration with discovery (`ipc.register`).
+RuntimeVerifier probed at startup. Self-registration with discovery (`ipc.register`).
 BTSP WAN timeouts (10s provider call, 30s handshake). Graceful shutdown via `BackgroundTasks`.
+riboCipher probes respond with health JSON + close.
 
 **Code Quality**: Zero TODO/FIXME/HACK in production. Zero `.unwrap()`/`.expect()` in
 production paths. Silent error drops surfaced (UDS setup, mutex poison, BTSP handshake).
 Registration uses `env_keys` constants. `MethodGate` pre-dispatch capability gate with
-enforced/permissive modes.
+enforced/permissive modes + quarantine enforcement.
 
 ## Stadial Composition Readiness
 
@@ -147,6 +155,7 @@ enforced/permissive modes.
 | `auth.check` | Stable | Token presence + gate mode |
 | `auth.mode` | Stable | Current enforcement mode |
 | `auth.peer_info` | Stable | Connection origin + token status |
+| `baseline.observe` | Stable | Feed live observation into threat profiler |
 | `btsp.negotiate` | Stable | Phase 3 cipher negotiation + encrypted framing |
 | `btsp.capabilities` | Stable | Protocol version, ciphers, key derivation |
 

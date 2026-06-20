@@ -31,11 +31,15 @@ use super::transport::negotiate::{self, SessionKeys, SessionRegistry};
 use super::transport::{read_frame, write_frame};
 
 /// Handle a single JSON-RPC connection (NDJSON → encrypted upgrade).
+///
+/// When `session_id` is `Some`, the session is removed from the registry
+/// on connection close (disconnect, error, or EOF).
 pub(super) async fn handle_connection<S>(
     state: Arc<RwLock<SkunkBat>>,
     sessions: Arc<SessionRegistry>,
     stream: S,
     caller: CallerContext,
+    session_id: Option<String>,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
 {
@@ -64,7 +68,7 @@ pub(super) async fn handle_connection<S>(
                 let inner_reader = buf_reader.into_inner();
                 run_encrypted_frame_loop(
                     state,
-                    sessions,
+                    sessions.clone(),
                     &gate,
                     &caller,
                     inner_reader,
@@ -72,6 +76,7 @@ pub(super) async fn handle_connection<S>(
                     &keys,
                 )
                 .await;
+                evict_session(&sessions, session_id.as_ref()).await;
                 return;
             }
             NegotiateAction::Handled => continue,
@@ -95,6 +100,14 @@ pub(super) async fn handle_connection<S>(
         if writer.flush().await.is_err() {
             break;
         }
+    }
+    evict_session(&sessions, session_id.as_ref()).await;
+}
+
+async fn evict_session(sessions: &SessionRegistry, session_id: Option<&String>) {
+    if let Some(id) = session_id {
+        sessions.remove(id).await;
+        tracing::debug!("Session {id} evicted on connection close");
     }
 }
 

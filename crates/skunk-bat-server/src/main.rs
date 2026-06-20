@@ -260,6 +260,9 @@ async fn run_server(
 
     let config = SkunkBatConfig::default();
     let mut skunkbat = SkunkBat::new(config);
+
+    log_verifier_availability();
+
     skunkbat.start().await?;
 
     match bind_mode {
@@ -284,4 +287,22 @@ async fn run_server(
     )
     .await?;
     Ok(())
+}
+
+/// Log whether a remote lineage verifier (`BearDog`) is discoverable.
+///
+/// Currently informational only — structural refactor needed to inject
+/// `RuntimeVerifier` into `SkunkBat` (requires making `SkunkBat` generic
+/// over `LineageVerifier`, cascading through dispatch/server/transport).
+/// Tracked as a future evolution once `BearDog` BTSP trust bootstrap is live.
+fn log_verifier_availability() {
+    let verifier = skunk_bat_integrations::verifier::RuntimeVerifier::from_env();
+    match verifier {
+        skunk_bat_integrations::verifier::RuntimeVerifier::Remote(_) => {
+            tracing::info!("Remote lineage verifier available — BearDog integration ready");
+        }
+        skunk_bat_integrations::verifier::RuntimeVerifier::Local(_) => {
+            tracing::debug!("No remote lineage provider — using local conservative default");
+        }
+    }
 }

@@ -154,7 +154,7 @@ pub async fn serve_tcp(
             let caller = if addr.ip().is_loopback() {
                 CallerContext::loopback()
             } else {
-                CallerContext::remote()
+                CallerContext::remote_with_addr(addr.to_string())
             };
 
             let intent = match classify_connection(&mut stream).await {
@@ -167,30 +167,35 @@ pub async fn serve_tcp(
 
             match intent {
                 ConnectionIntent::NdjsonJsonRpc => {
-                    handle_connection(state, sessions, stream, caller).await;
+                    handle_connection(state, sessions, stream, caller, None).await;
                 }
                 ConnectionIntent::BtspHandshake => {
-                    if let Some(ref cfg) = btsp {
+                    let sid = if let Some(ref cfg) = btsp {
                         match perform_server_handshake(&mut stream, cfg).await {
                             Ok(result) => {
                                 tracing::debug!(
                                     "BTSP authenticated TCP {addr}: session={}",
                                     result.session_id
                                 );
+                                let sid = result.session_id.clone();
                                 sessions
                                     .insert(result.session_id, result.handshake_key)
                                     .await;
+                                Some(sid)
                             }
                             Err(e) => {
                                 tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
                                 return;
                             }
                         }
-                    }
-                    handle_connection(state, sessions, stream, caller).await;
+                    } else {
+                        None
+                    };
+                    handle_connection(state, sessions, stream, caller, sid).await;
                 }
                 ConnectionIntent::Probe => {
                     tracing::debug!("riboCipher probe from TCP {addr}");
+                    respond_to_probe(&mut stream).await;
                 }
                 ConnectionIntent::Legacy { first_byte } => {
                     let peeked = PeekedStream {
@@ -209,20 +214,21 @@ pub async fn serve_tcp(
                                         "BTSP authenticated TCP {addr}: session={}",
                                         result.session_id
                                     );
+                                    let sid = result.session_id.clone();
                                     sessions
                                         .insert(result.session_id, result.handshake_key)
                                         .await;
+                                    handle_connection(state, sessions, ps, caller, Some(sid)).await;
                                 }
                                 Err(e) => {
                                     tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
                                     return;
                                 }
                             }
-                            handle_connection(state, sessions, ps, caller).await;
                         }
                         return;
                     }
-                    handle_connection(state, sessions, peeked, caller).await;
+                    handle_connection(state, sessions, peeked, caller, None).await;
                 }
                 ConnectionIntent::Reject => {}
             }
@@ -299,30 +305,35 @@ pub async fn serve_uds(
 
             match intent {
                 ConnectionIntent::NdjsonJsonRpc => {
-                    handle_connection(state, sessions, stream, caller).await;
+                    handle_connection(state, sessions, stream, caller, None).await;
                 }
                 ConnectionIntent::BtspHandshake => {
-                    if let Some(ref cfg) = btsp {
+                    let sid = if let Some(ref cfg) = btsp {
                         match perform_server_handshake(&mut stream, cfg).await {
                             Ok(result) => {
                                 tracing::debug!(
                                     "BTSP authenticated UDS: session={}",
                                     result.session_id
                                 );
+                                let sid = result.session_id.clone();
                                 sessions
                                     .insert(result.session_id, result.handshake_key)
                                     .await;
+                                Some(sid)
                             }
                             Err(e) => {
                                 tracing::warn!("BTSP handshake failed UDS: {e}");
                                 return;
                             }
                         }
-                    }
-                    handle_connection(state, sessions, stream, caller).await;
+                    } else {
+                        None
+                    };
+                    handle_connection(state, sessions, stream, caller, sid).await;
                 }
                 ConnectionIntent::Probe => {
                     tracing::debug!("riboCipher probe from UDS");
+                    respond_to_probe(&mut stream).await;
                 }
                 ConnectionIntent::Legacy { first_byte } => {
                     if first_byte != b'{' {
@@ -337,16 +348,17 @@ pub async fn serve_uds(
                                         "BTSP authenticated UDS: session={}",
                                         result.session_id
                                     );
+                                    let sid = result.session_id.clone();
                                     sessions
                                         .insert(result.session_id, result.handshake_key)
                                         .await;
+                                    handle_connection(state, sessions, ps, caller, Some(sid)).await;
                                 }
                                 Err(e) => {
                                     tracing::warn!("BTSP handshake failed UDS: {e}");
                                     return;
                                 }
                             }
-                            handle_connection(state, sessions, ps, caller).await;
                         }
                         return;
                     }
@@ -354,7 +366,7 @@ pub async fn serve_uds(
                         peeked: Some(first_byte),
                         inner: stream,
                     };
-                    handle_connection(state, sessions, peeked, caller).await;
+                    handle_connection(state, sessions, peeked, caller, None).await;
                 }
                 ConnectionIntent::Reject => {}
             }
@@ -369,6 +381,23 @@ pub async fn serve_uds(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     tracing::warn!("Unix domain sockets not available on this platform");
     std::future::pending().await
+}
+
+/// Respond to a riboCipher probe with a minimal JSON health payload, then close.
+///
+/// Probes are used by `ToadStool` and other discovery agents to check liveness
+/// without establishing a full IPC session.
+async fn respond_to_probe<S: tokio::io::AsyncWrite + Unpin>(stream: &mut S) {
+    use tokio::io::AsyncWriteExt;
+    let payload = format!(
+        "{{\"primal\":\"{}\",\"status\":\"alive\"}}\n",
+        skunk_bat_core::PRIMAL_ID
+    );
+    if let Err(e) = stream.write_all(payload.as_bytes()).await {
+        tracing::debug!("Probe response write failed: {e}");
+        return;
+    }
+    let _ = stream.flush().await;
 }
 
 /// Create capability-domain symlink: `security.sock` → `skunkbat[-{fid}].sock`

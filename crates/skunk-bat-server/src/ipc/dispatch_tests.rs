@@ -407,6 +407,7 @@ async fn enforced_gate_allows_protected_with_token() {
     let caller = CallerContext {
         bearer_token: Some("test-ionic-token".to_owned()),
         origin: ConnectionOrigin::Remote,
+        source_addr: None,
     };
     let resp = dispatch(&state, &gate, &caller, make_request("security.scan")).await;
     assert!(resp.error.is_none());

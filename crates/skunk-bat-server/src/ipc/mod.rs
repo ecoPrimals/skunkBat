@@ -33,6 +33,7 @@ struct BackgroundTasks {
     announce: JoinHandle<()>,
     forwarding: JoinHandle<()>,
     federation: JoinHandle<()>,
+    session_sweep: JoinHandle<()>,
 }
 
 impl BackgroundTasks {
@@ -41,12 +42,20 @@ impl BackgroundTasks {
         self.announce.abort();
         self.forwarding.abort();
         self.federation.abort();
+        self.session_sweep.abort();
     }
 }
 
-/// Spawn all background services (registration, announcement, forwarding, federation).
+/// Session TTL — connections older than this are evicted by the sweep task.
+const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Interval between session TTL sweeps.
+const SESSION_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Spawn all background services (registration, announcement, forwarding, federation, session sweep).
 async fn spawn_background(
     state: &Arc<RwLock<SkunkBat>>,
+    sessions: &Arc<SessionRegistry>,
     socket_path: Option<&String>,
     port: u16,
 ) -> BackgroundTasks {
@@ -75,11 +84,20 @@ async fn spawn_background(
         federation_client,
     ));
 
+    let sweep_sessions = Arc::clone(sessions);
+    let session_sweep = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(SESSION_SWEEP_INTERVAL).await;
+            sweep_sessions.sweep_expired(SESSION_TTL).await;
+        }
+    });
+
     BackgroundTasks {
         register,
         announce,
         forwarding,
         federation,
+        session_sweep,
     }
 }
 
@@ -129,7 +147,7 @@ pub async fn serve(
 
     tracing::info!("skunkBat IPC ready (TCP: {}, UDS: {})", !no_tcp, !no_uds,);
 
-    let bg = spawn_background(&state, socket_path.as_ref(), port).await;
+    let bg = spawn_background(&state, &sessions, socket_path.as_ref(), port).await;
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 

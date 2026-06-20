@@ -117,11 +117,7 @@ impl std::fmt::Display for BondType {
 /// State for an authenticated BTSP session.
 #[derive(Debug, Clone)]
 pub struct SessionState {
-    /// When this session was created (for TTL expiry in Phase 3+).
-    #[expect(
-        dead_code,
-        reason = "used for session expiry once cleanup task is added"
-    )]
+    /// When this session was created — used for TTL sweep.
     pub created_at: Instant,
     /// The negotiated cipher (initially Null after Phase 2).
     pub cipher: CipherSuite,
@@ -174,10 +170,6 @@ impl SessionRegistry {
     }
 
     /// Remove a session (on disconnect or timeout).
-    #[allow(
-        dead_code,
-        reason = "target-conditional: used in tests + future session TTL"
-    )]
     pub async fn remove(&self, session_id: &str) {
         self.sessions.write().await.remove(session_id);
     }
@@ -189,6 +181,20 @@ impl SessionRegistry {
     )]
     pub async fn len(&self) -> usize {
         self.sessions.read().await.len()
+    }
+
+    /// Evict sessions older than `ttl`. Returns the number of evicted sessions.
+    pub async fn sweep_expired(&self, ttl: std::time::Duration) -> usize {
+        let now = Instant::now();
+        let mut sessions = self.sessions.write().await;
+        let before = sessions.len();
+        sessions.retain(|_, state| now.duration_since(state.created_at) < ttl);
+        let evicted = before - sessions.len();
+        drop(sessions);
+        if evicted > 0 {
+            tracing::info!("Session TTL sweep: evicted {evicted} expired sessions");
+        }
+        evicted
     }
 }
 

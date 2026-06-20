@@ -118,6 +118,11 @@ pub enum EventKind {
         /// Reason for the failure.
         reason: String,
     },
+    /// Baseline profiler received a live observation.
+    BaselineObservation {
+        /// Connection rate from the observation.
+        connection_rate: f64,
+    },
     /// Primal started or stopped.
     LifecycleTransition {
         /// Previous state.

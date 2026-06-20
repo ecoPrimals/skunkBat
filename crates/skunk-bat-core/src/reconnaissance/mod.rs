@@ -141,6 +141,7 @@ mod tests {
             },
             lineage_id: None,
             thresholds: crate::config::ThreatThresholds::default(),
+            expected_topology_path: None,
         }
     }
 

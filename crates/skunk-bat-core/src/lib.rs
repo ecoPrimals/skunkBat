@@ -173,6 +173,32 @@ impl SkunkBat {
         Ok(action)
     }
 
+    /// Feed a live network observation into the threat detector's profiler.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profiler update fails.
+    pub async fn observe(
+        &self,
+        observation: &threats::types::Observation,
+    ) -> Result<(), SkunkBatError> {
+        self.threat_detector.observe(observation).await
+    }
+
+    /// Record a connection's layer traversal path for topology validation.
+    ///
+    /// The path is consumed on the next `detect_threats()` call. If no
+    /// `expected_topology_path` is configured, this is a no-op.
+    pub fn record_connection_path(&self, path: Vec<u8>) {
+        self.threat_detector.record_connection_path(path);
+    }
+
+    /// Check if a source address is currently quarantined.
+    #[must_use]
+    pub fn is_quarantined(&self, source: &str) -> bool {
+        self.defense.is_quarantined(source)
+    }
+
     /// Scan network topology.
     ///
     /// Returns reconnaissance data about the network.
@@ -608,6 +634,7 @@ mod tests {
             },
             lineage_id: None,
             thresholds: crate::config::ThreatThresholds::default(),
+            expected_topology_path: None,
         };
         let mut skunkbat = SkunkBat::new(config);
         skunkbat.start().await.unwrap();

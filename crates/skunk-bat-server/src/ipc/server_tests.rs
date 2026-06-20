@@ -23,6 +23,7 @@ async fn roundtrip(input: &str) -> String {
         sessions,
         server,
         CallerContext::loopback(),
+        None,
     ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
@@ -69,6 +70,7 @@ async fn setup_encrypted_session(
         sessions,
         server,
         CallerContext::loopback(),
+        None,
     ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
@@ -170,6 +172,7 @@ async fn test_notification_no_response() {
         sessions,
         server,
         CallerContext::loopback(),
+        None,
     ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
@@ -219,6 +222,7 @@ async fn test_btsp_negotiate_null_cipher_session() {
         sessions,
         server,
         CallerContext::loopback(),
+        None,
     ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
@@ -333,6 +337,7 @@ async fn test_null_cipher_stays_ndjson() {
         sessions,
         server,
         CallerContext::loopback(),
+        None,
     ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);
@@ -468,6 +473,7 @@ async fn test_negotiate_in_batch_rejected() {
         sessions,
         server,
         CallerContext::loopback(),
+        None,
     ));
 
     let (client_reader, mut client_writer) = tokio::io::split(client);

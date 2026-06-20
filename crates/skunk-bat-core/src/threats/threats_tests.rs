@@ -16,6 +16,7 @@ fn test_config() -> SkunkBatConfig {
         },
         lineage_id: Some("test-lineage".to_string()),
         thresholds: crate::config::ThreatThresholds::default(),
+        expected_topology_path: None,
     }
 }
 
@@ -356,6 +357,7 @@ async fn test_detect_disabled() {
         },
         lineage_id: None,
         thresholds: crate::config::ThreatThresholds::default(),
+        expected_topology_path: None,
     };
     let detector = ThreatDetector::new(&config);
     assert!(!detector.is_healthy());
@@ -375,6 +377,7 @@ fn test_start_disabled() {
         },
         lineage_id: None,
         thresholds: crate::config::ThreatThresholds::default(),
+        expected_topology_path: None,
     };
     let detector = ThreatDetector::new(&config);
     assert!(detector.start().is_ok());

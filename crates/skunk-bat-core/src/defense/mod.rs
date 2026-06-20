@@ -32,7 +32,7 @@ impl DefenseEngine {
     pub fn new(config: &SkunkBatConfig) -> Self {
         Self {
             enabled: config.features.auto_defense,
-            auto_response_enabled: true,
+            auto_response_enabled: config.features.auto_defense,
             quarantine_map: Mutex::new(HashMap::new()),
         }
     }
@@ -125,7 +125,21 @@ impl DefenseEngine {
     }
 
     /// Execute defense action.
+    ///
+    /// When `auto_response_enabled` is false, quarantine/block actions are
+    /// downgraded to alerts — the operator must act manually.
     fn execute_action(&self, action: &DefenseAction, threat: &Threat) {
+        if !self.auto_response_enabled {
+            Self::alert_operator(threat, action);
+            tracing::info!(
+                "Auto-response disabled: would {:?} {} (reason: {})",
+                action.action_type,
+                action.target,
+                action.reason
+            );
+            return;
+        }
+
         match action.action_type {
             ActionType::Quarantine => {
                 self.quarantine_connection(&action.target, threat);
@@ -137,7 +151,7 @@ impl DefenseEngine {
             }
             ActionType::QuarantineAndAlert => {
                 self.quarantine_connection(&action.target, threat);
-                self.alert_operator(threat, action);
+                Self::alert_operator(threat, action);
                 tracing::warn!(
                     "Quarantined and alerted for {} (reason: {})",
                     action.target,
@@ -145,7 +159,7 @@ impl DefenseEngine {
                 );
             }
             ActionType::MonitorAndAlert => {
-                self.alert_operator(threat, action);
+                Self::alert_operator(threat, action);
                 tracing::info!(
                     "Monitoring connection from {} (reason: {})",
                     action.target,
@@ -202,14 +216,22 @@ impl DefenseEngine {
     /// In production, this is the IPC integration point — the server
     /// layer broadcasts alerts to any primal announcing the `federation`
     /// capability.
-    fn alert_operator(&self, threat: &Threat, action: &DefenseAction) {
-        let _ = &self.auto_response_enabled; // future: gate alert on auto-response policy
+    fn alert_operator(threat: &Threat, action: &DefenseAction) {
         tracing::info!(
             "ALERT: Threat detected - {:?} from {} (action: {:?})",
             threat.threat_type,
             threat.source,
             action.action_type
         );
+    }
+
+    /// Check whether a source address is currently quarantined.
+    #[must_use]
+    pub fn is_quarantined(&self, source: &str) -> bool {
+        self.quarantine_map
+            .lock()
+            .map(|map| map.contains_key(source))
+            .unwrap_or(false)
     }
 
     /// Get a snapshot of the current quarantine map.
@@ -288,6 +310,7 @@ mod tests {
             },
             lineage_id: None,
             thresholds: crate::config::ThreatThresholds::default(),
+            expected_topology_path: None,
         }
     }
 
