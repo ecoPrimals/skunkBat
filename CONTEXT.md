@@ -14,7 +14,7 @@ observability — all metadata-only, no content inspection by architecture.
 
 ## Key Concepts
 
-- **5 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion)
+- **6 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion), Configuration Drift
 - **Graduated Response**: Monitor, Quarantine, Block — always preserving user authority
 - **Statistical Baselines**: Learns the owner's network normal via `VecDeque` rolling window profiler
 - **Universal Adapter**: Capability-based discovery and announcement via `primal_foundation` traits
@@ -94,10 +94,10 @@ and encrypted notification (no-response) verification.
 
 ## Status
 
-v0.2.11 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.12 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**470 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
+**484 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
 the 800-line cap. All thresholds configurable via `ThreatThresholds` — zero magic numbers.
 Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkdf, sha2).
 `async-trait` eliminated and banned — native RPITIT throughout.
@@ -108,8 +108,8 @@ riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compl
 19 stable IPC methods (incl. `baseline.observe`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
 
-**Detection**: 5-category threat detection (genetic, behavioral, intrusion, resource,
-topology) — all wired into `detect()`. Live observation feed via `baseline.observe` IPC
+**Detection**: 6-category threat detection (genetic, behavioral, intrusion, resource,
+topology, configuration drift) — all wired into `detect()`. Live observation feed via `baseline.observe` IPC
 and `RwLock`-wrapped profiler. Configurable thresholds. Baseline seeded from
 runtime-port-aware observations. Federation broadcast loop monitors audit log for
 `ThreatDetected` events.

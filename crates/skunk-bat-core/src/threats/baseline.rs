@@ -20,7 +20,7 @@ use std::time::SystemTime;
 use super::types::Observation;
 
 /// Default self-port for baseline seed data when no runtime port is configured.
-const DEFAULT_SELF_PORT: u16 = 9750;
+const DEFAULT_SELF_PORT: u16 = crate::DEFAULT_PORT;
 
 /// Normal inter-primal traffic baseline (12 observations).
 ///

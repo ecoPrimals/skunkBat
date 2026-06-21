@@ -9,10 +9,10 @@
 //!
 //! | Module | Capability | Runtime Discovery | Server Wiring |
 //! |--------|-----------|-------------------|---------------|
-//! | [`beardog`] | `lineage-verification` | `LINEAGE_ENDPOINT` env | via [`verifier::RuntimeVerifier`] |
-//! | [`songbird`] | `federation` | `FEDERATION_ENDPOINT` env | library-ready (server: future) |
-//! | [`toadstool`] | `discovery` | `DISCOVERY_ENDPOINT` env | library-ready (server: future) |
-//! | [`forwarding`] | `provenance` + `attribution` | `RHIZOCRYPT_ENDPOINT` / `SWEETGRASS_ENDPOINT` | **wired** in server |
+//! | [`beardog`] | `lineage-verification` | `LINEAGE_ENDPOINT` env | probed at startup via [`verifier::RuntimeVerifier`] |
+//! | [`songbird`] | `federation` | `FEDERATION_ENDPOINT` env | **wired** — audit-log-driven broadcast loop |
+//! | [`toadstool`] | `discovery` | `DISCOVERY_ENDPOINT` env | library-ready (registration wired, scan not yet) |
+//! | [`forwarding`] | `provenance` + `attribution` | `RHIZOCRYPT_ENDPOINT` / `SWEETGRASS_ENDPOINT` | **wired** — provenance/attribution forwarding |
 //! | [`nestgate`] | `content` | `NESTGATE_ENDPOINT` env | library-ready (server: future) |
 //!
 //! ## Example

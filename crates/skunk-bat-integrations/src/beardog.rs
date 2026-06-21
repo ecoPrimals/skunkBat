@@ -107,7 +107,9 @@ impl LineageVerifier for RemoteLineageVerifier {
             Ok(value) => Ok(value["is_family"].as_bool().unwrap_or(false)),
             Err(e) => {
                 tracing::debug!("Lineage verification unavailable ({e}), conservative deny");
-                Ok(false)
+                Err(SkunkBatError::Integration(format!(
+                    "lineage provider unreachable: {e}"
+                )))
             }
         }
     }
@@ -118,7 +120,9 @@ impl LineageVerifier for RemoteLineageVerifier {
             Ok(value) => Ok(value["lineage"].as_str().map(String::from)),
             Err(e) => {
                 tracing::debug!("Lineage query unavailable ({e}), returning None");
-                Ok(None)
+                Err(SkunkBatError::Integration(format!(
+                    "lineage query unavailable: {e}"
+                )))
             }
         }
     }
@@ -152,24 +156,21 @@ mod tests {
     async fn test_is_family_graceful_degradation() {
         let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999".into());
         let result = verifier.is_family("unknown-peer").await;
-        assert!(result.is_ok());
-        assert!(!result.expect("ok"), "should conservatively deny");
+        assert!(result.is_err(), "unreachable provider should return Err");
     }
 
     #[tokio::test]
     async fn test_get_lineage_graceful_degradation() {
         let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999".into());
         let result = verifier.get_lineage("unknown-peer").await;
-        assert!(result.is_ok());
-        assert!(result.expect("ok").is_none());
+        assert!(result.is_err(), "unreachable provider should return Err");
     }
 
     #[tokio::test]
     async fn test_from_env_verify() {
         let verifier = RemoteLineageVerifier::from_env();
         let result = verifier.is_family("test-peer").await;
-        assert!(result.is_ok());
-        assert!(!result.expect("ok"));
+        assert!(result.is_err(), "no provider should return Err");
     }
 
     /// Integration test: mock bearDog server confirms family membership.

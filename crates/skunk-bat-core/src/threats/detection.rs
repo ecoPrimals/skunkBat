@@ -53,7 +53,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
                     source: "verifier-unavailable".to_owned(),
                     target: "self".to_owned(),
                     severity: Severity::Medium,
-                    confidence: 0.5,
+                    confidence: self.thresholds.degraded_genetic_confidence,
                     description: format!(
                         "Lineage verifier unavailable ({e}) — unable to confirm family membership"
                     ),
@@ -231,7 +231,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
                         "Connection bypassed layers {:?}",
                         validation.bypassed_layers
                     ),
-                    confidence: 0.9,
+                    confidence: self.thresholds.topology_confidence,
                 });
             }
         }
@@ -268,7 +268,7 @@ fn check_system_load() -> f64 {
 
     #[cfg(not(target_os = "linux"))]
     {
-        std::process::Command::new("uptime")
+        let load = std::process::Command::new("uptime")
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -289,6 +289,12 @@ fn check_system_load() -> f64 {
                     .unwrap_or(1.0);
                 (raw / cpus).min(1.0)
             })
-            .unwrap_or(0.0)
+            .unwrap_or(0.0);
+
+        if load == 0.0 {
+            tracing::debug!("Resource detection: unable to read system load on this platform");
+        }
+
+        load
     }
 }

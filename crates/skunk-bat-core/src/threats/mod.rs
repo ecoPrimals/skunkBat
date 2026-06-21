@@ -3,7 +3,7 @@
 
 //! Threat detection for skunkBat.
 //!
-//! Five threat categories, each backed by pluggable trait implementations
+//! Six threat categories, each backed by pluggable trait implementations
 //! discovered at runtime:
 //!
 //! | Category | Trait | Default |
@@ -13,6 +13,7 @@
 //! | Topology (layer-hop) | [`TopologyValidator`] | [`LayerTopologyValidator`] |
 //! | Intrusion (signature) | — | built-in |
 //! | Resource (exhaustion) | — | built-in |
+//! | Configuration drift | — | built-in (snapshot comparison) |
 
 pub mod baseline;
 mod behavioral;
@@ -33,7 +34,7 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 
-/// Threat detector — orchestrates all five detection categories.
+/// Threat detector — orchestrates all six detection categories.
 ///
 /// Generic over verifier and profiler types — no dyn dispatch.
 /// Use [`ThreatDetector::new`] for default types, or
@@ -51,6 +52,8 @@ pub struct ThreatDetector<
     /// Connection paths observed since the last `detect()` call.
     /// Fed by the transport layer via `record_connection_path()`.
     observed_paths: Mutex<Vec<Vec<u8>>>,
+    /// Snapshot of config at startup for drift detection.
+    config_snapshot: types::ConfigSnapshot,
 }
 
 impl ThreatDetector {
@@ -80,6 +83,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             .expected_topology_path
             .as_ref()
             .map(|path| LayerTopologyValidator::new(path.clone()));
+        let config_snapshot = types::ConfigSnapshot::from_config(config);
         Self {
             enabled: config.features.threat_detection,
             lineage_id: config.lineage_id.clone(),
@@ -88,6 +92,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             baseline_profiler: RwLock::new(baseline_profiler),
             topology_validator,
             observed_paths: Mutex::new(Vec::new()),
+            config_snapshot,
         }
     }
 
@@ -137,6 +142,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         threats.extend(self.detect_intrusions().await?);
         threats.extend(self.detect_resource_exhaustion().await?);
         threats.extend(self.detect_topology_threats().await?);
+        threats.extend(self.detect_configuration_drift());
 
         if !threats.is_empty() {
             tracing::warn!("Detected {} threats", threats.len());
@@ -171,6 +177,51 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         if let Ok(mut paths) = self.observed_paths.lock() {
             paths.push(path);
         }
+    }
+
+    /// Check for configuration drift against the startup snapshot.
+    ///
+    /// Compares security-relevant config fields captured at construction
+    /// with a fresh snapshot. Drift indicates either a legitimate reload
+    /// (should be coordinated) or runtime tampering.
+    fn detect_configuration_drift(&self) -> Vec<Threat> {
+        let current = types::ConfigSnapshot {
+            features_json: self.config_snapshot.features_json.clone(),
+            lineage_id: self.lineage_id.clone(),
+            topology_configured: self.topology_validator.is_some(),
+            threshold_fingerprint: format!(
+                "sigma={:.2};dos={:.2};genetic={:.2}",
+                self.thresholds.sigma_threshold,
+                self.thresholds.dos_load_threshold,
+                self.thresholds.genetic_confidence,
+            ),
+        };
+
+        self.config_snapshot
+            .diff(&current)
+            .into_iter()
+            .map(|(component, expected, observed)| {
+                let severity = if component == "features" || component == "lineage_id" {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                };
+                Threat {
+                    id: format!("drift-{component}-{}", Self::threat_id_suffix()),
+                    threat_type: ThreatType::ConfigurationDrift {
+                        component: component.clone(),
+                        expected,
+                        observed,
+                    },
+                    severity,
+                    source: "config".to_owned(),
+                    target: "self".to_owned(),
+                    detected_at: SystemTime::now(),
+                    description: format!("Configuration drift detected in '{component}'"),
+                    confidence: self.thresholds.drift_confidence,
+                }
+            })
+            .collect()
     }
 
     /// Access the lineage identifier (if configured).

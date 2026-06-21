@@ -62,6 +62,12 @@ pub struct ThreatThresholds {
     pub intrusion_portscan_confidence: f64,
     /// Confidence assigned to data-exfiltration detections.
     pub intrusion_exfil_confidence: f64,
+    /// Confidence assigned when lineage verifier is unreachable (degraded mode).
+    pub degraded_genetic_confidence: f64,
+    /// Confidence assigned to topology violation detections.
+    pub topology_confidence: f64,
+    /// Confidence assigned to configuration drift detections.
+    pub drift_confidence: f64,
 }
 
 impl Default for ThreatThresholds {
@@ -78,6 +84,9 @@ impl Default for ThreatThresholds {
             intrusion_exfil_ratio: 10_000.0,
             intrusion_portscan_confidence: 0.75,
             intrusion_exfil_confidence: 0.6,
+            degraded_genetic_confidence: 0.5,
+            topology_confidence: 0.9,
+            drift_confidence: 0.85,
         }
     }
 }

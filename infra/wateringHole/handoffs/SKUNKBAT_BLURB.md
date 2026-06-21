@@ -1,8 +1,8 @@
 # skunkBat — Handoff Blurb
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
-**Version**: 0.2.11
-**Date**: Jun 20, 2026
+**Version**: 0.2.12
+**Date**: Jun 21, 2026
 **Wave**: 120
 
 ---
@@ -11,7 +11,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 470 passing (0 failed) |
+| Tests | 484 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
 | Max file | 728 lines (all under 800L cap) |
 | IPC methods | 19 (all Stable tier, incl. `baseline.observe`) |
@@ -23,7 +23,7 @@
 
 ## What's Implemented
 
-- **5-category threat detection**: genetic (lineage), behavioral (statistical), intrusion (signature), resource (exhaustion), topology (layer-hop)
+- **6-category threat detection**: genetic (lineage), behavioral (statistical), intrusion (signature), resource (exhaustion), topology (layer-hop), configuration drift
 - **BTSP Phase 1/2/3**: socket naming, BearDog-delegated handshake (TCP + UDS), `btsp.negotiate` with ChaCha20-Poly1305 AEAD encrypted framing
 - **riboCipher Tier 1**: signal-first routing (`0xEC` clear signal + protocol type byte)
 - **JH-5 audit log**: 1024-event ring buffer with cursor-based forwarding to provenance/attribution DAGs
@@ -38,7 +38,7 @@
 ## What's Implemented (Wave 120)
 
 - **Live observation feed**: `baseline.observe` IPC method feeds live traffic into `StatisticalProfiler` via `RwLock`
-- **5-category detection LIVE**: genetic, behavioral, intrusion, resource, topology — all wired into `detect()`
+- **6-category detection LIVE**: genetic, behavioral, intrusion, resource, topology, configuration drift — all wired into `detect()`
 - **Defense enforcement**: quarantined sources rejected at dispatch gate; health probes exempt
 - **riboCipher probe response**: probes receive ack payload + close (TCP + UDS)
 - **BTSP session cleanup**: evict on disconnect + periodic TTL sweep (1h TTL, 5m interval)
@@ -63,7 +63,7 @@ These modules exist as complete library APIs but are not wired into the server b
 2. **Defense actions in-memory only**: Quarantine/block update a `HashMap`, reject at dispatch gate, and emit traces — no OS firewall/nftables integration yet.
 3. **riboCipher Tiers 2/3**: Mito (`0xED`) and Nuclear (`0xEE`) signals logged and rejected — not implemented (needs upstream crypto spec).
 4. **Topology path source**: `record_connection_path()` API exists but transport layer doesn't emit paths yet (needs BTSP handshake metadata or mesh routing context).
-5. **ConfigurationDrift detection**: `ThreatType::ConfigurationDrift` defined but no detection category implemented.
+5. **BearDog false-Critical on degradation**: Fixed — `RemoteLineageVerifier` now returns `Err` on RPC failure (detection correctly emits Medium/degraded instead of Critical).
 
 ## Cascade Status
 

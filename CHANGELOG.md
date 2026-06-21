@@ -27,6 +27,15 @@ All notable changes to skunkBat are documented here.
 - **RuntimeVerifier probe** — server logs verifier availability at startup (remote/local);
   structural injection deferred (requires `SkunkBat` generic refactor + BearDog BTSP)
 - **`BaselineObservation` audit event** — audit log records live observation feeds
+- **Configuration drift detection (6th category)** — `detect_configuration_drift()`
+  compares startup `ConfigSnapshot` against live state; monitors features, lineage_id,
+  topology_configured, and threshold fingerprint; emits `ConfigurationDrift` threats
+- **`ConfigSnapshot`** — captures security-relevant config at construction for
+  drift comparison; serde-serializable with diff support
+- **`DEFAULT_PORT` constant** — consolidated from duplicate definitions in
+  `main.rs` and `baseline.rs` to single `skunk_bat_core::DEFAULT_PORT`
+- **`ThreatThresholds` expansion** — added `degraded_genetic_confidence` (0.5),
+  `topology_confidence` (0.9), `drift_confidence` (0.85); replaces hardcoded literals
 
 ### Changed
 
@@ -34,6 +43,10 @@ All notable changes to skunkBat are documented here.
 - `detect_intrusions`/`detect_behavioral_anomalies` acquire profiler read lock
   and drop it before building threat responses
 - `alert_operator` refactored to associated function (no `&self`)
+- `RemoteLineageVerifier` returns `Err` on RPC failure (was `Ok(false)`, which
+  caused false Critical genetic alerts instead of correct Medium/degraded)
+- `lib.rs` tests extracted to `lib_tests.rs` (377L → 377L + 280L, was 662L)
+- Non-Linux resource detection logs warning when load unavailable
 
 ---
 

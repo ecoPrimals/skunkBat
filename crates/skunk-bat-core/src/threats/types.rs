@@ -128,6 +128,76 @@ pub struct PathValidation {
     pub bypassed_layers: Vec<u8>,
 }
 
+/// Snapshot of security-relevant configuration fields for drift detection.
+///
+/// Captured at startup and compared on each `detect()` cycle. Any field
+/// that changes at runtime without a corresponding config-reload IPC call
+/// is flagged as `ConfigurationDrift`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigSnapshot {
+    /// Feature flag states (JSON-serialized for stable comparison).
+    pub features_json: String,
+    /// Lineage ID binding.
+    pub lineage_id: Option<String>,
+    /// Whether topology validation is active.
+    pub topology_configured: bool,
+    /// Detection-relevant threshold fingerprint (stringified sigma + dos).
+    pub threshold_fingerprint: String,
+}
+
+impl ConfigSnapshot {
+    /// Capture from a live config.
+    #[must_use]
+    pub fn from_config(config: &super::super::SkunkBatConfig) -> Self {
+        Self {
+            features_json: serde_json::to_string(&config.features).unwrap_or_default(),
+            lineage_id: config.lineage_id.clone(),
+            topology_configured: config.expected_topology_path.is_some(),
+            threshold_fingerprint: format!(
+                "sigma={:.2};dos={:.2};genetic={:.2}",
+                config.thresholds.sigma_threshold,
+                config.thresholds.dos_load_threshold,
+                config.thresholds.genetic_confidence,
+            ),
+        }
+    }
+
+    /// Compare with another snapshot and return changed fields.
+    #[must_use]
+    pub fn diff(&self, other: &Self) -> Vec<(String, String, String)> {
+        let mut diffs = Vec::new();
+        if self.features_json != other.features_json {
+            diffs.push((
+                "features".to_owned(),
+                self.features_json.clone(),
+                other.features_json.clone(),
+            ));
+        }
+        if self.lineage_id != other.lineage_id {
+            diffs.push((
+                "lineage_id".to_owned(),
+                format!("{:?}", self.lineage_id),
+                format!("{:?}", other.lineage_id),
+            ));
+        }
+        if self.topology_configured != other.topology_configured {
+            diffs.push((
+                "topology_configured".to_owned(),
+                self.topology_configured.to_string(),
+                other.topology_configured.to_string(),
+            ));
+        }
+        if self.threshold_fingerprint != other.threshold_fingerprint {
+            diffs.push((
+                "thresholds".to_owned(),
+                self.threshold_fingerprint.clone(),
+                other.threshold_fingerprint.clone(),
+            ));
+        }
+        diffs
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

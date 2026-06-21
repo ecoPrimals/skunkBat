@@ -48,14 +48,11 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for ServerError {
     }
 }
 
-/// Default TCP port for JSON-RPC (Tier 5 fallback only).
-const DEFAULT_PORT: u16 = 9750;
-
 fn default_port() -> u16 {
     std::env::var(skunk_bat_core::env_keys::SKUNKBAT_PORT)
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_PORT)
+        .unwrap_or(skunk_bat_core::DEFAULT_PORT)
 }
 
 fn default_bind() -> String {

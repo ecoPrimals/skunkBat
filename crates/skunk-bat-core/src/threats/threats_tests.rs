@@ -516,3 +516,205 @@ async fn test_intrusion_uses_configurable_thresholds() {
     let confidence_matches = portscan.unwrap().confidence == 0.9;
     assert!(confidence_matches, "Should use configured confidence");
 }
+
+#[tokio::test]
+async fn test_topology_threat_detected_on_bypass() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.expected_topology_path = Some(vec![0, 1, 2, 3]);
+
+    let detector = ThreatDetector::new(&config);
+    detector.record_connection_path(vec![0, 3]);
+
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        threats
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::TopologyViolation { .. })),
+        "Bypassed layers should trigger topology violation"
+    );
+}
+
+#[tokio::test]
+async fn test_topology_no_threat_on_valid_path() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.expected_topology_path = Some(vec![0, 1, 2]);
+
+    let detector = ThreatDetector::new(&config);
+    detector.record_connection_path(vec![0, 1, 2]);
+
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        !threats
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::TopologyViolation { .. })),
+        "Valid path should not trigger violation"
+    );
+}
+
+#[tokio::test]
+async fn test_topology_no_threat_without_config() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.expected_topology_path = None;
+
+    let detector = ThreatDetector::new(&config);
+    detector.record_connection_path(vec![99, 98]);
+
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        !threats
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::TopologyViolation { .. })),
+        "No expected path → no topology detection"
+    );
+}
+
+#[tokio::test]
+async fn test_topology_paths_consumed_after_detect() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.expected_topology_path = Some(vec![0, 1, 2]);
+
+    let detector = ThreatDetector::new(&config);
+    detector.record_connection_path(vec![0, 2]);
+
+    let threats1 = detector.detect().await.expect("detect");
+    assert!(!threats1.is_empty());
+
+    let threats2 = detector.detect().await.expect("detect");
+    assert!(
+        !threats2
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::TopologyViolation { .. })),
+        "Paths should be consumed after first detect()"
+    );
+}
+
+#[tokio::test]
+async fn test_topology_uses_configured_confidence() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.expected_topology_path = Some(vec![0, 1]);
+    config.thresholds.topology_confidence = 0.77;
+
+    let detector = ThreatDetector::new(&config);
+    detector.record_connection_path(vec![1]);
+
+    let threats = detector.detect().await.expect("detect");
+    let topo = threats
+        .iter()
+        .find(|t| matches!(t.threat_type, ThreatType::TopologyViolation { .. }));
+    assert!(topo.is_some());
+    #[expect(clippy::float_cmp, reason = "exact configured value comparison")]
+    let matches = topo.unwrap().confidence == 0.77;
+    assert!(matches, "Should use configured topology_confidence");
+}
+
+#[test]
+fn test_config_snapshot_no_drift() {
+    let config = test_config();
+    let snap = types::ConfigSnapshot::from_config(&config);
+    let diffs = snap.diff(&snap);
+    assert!(diffs.is_empty(), "Identical snapshots should not drift");
+}
+
+#[test]
+fn test_config_snapshot_detects_lineage_change() {
+    let config = test_config();
+    let snap1 = types::ConfigSnapshot::from_config(&config);
+
+    let mut config2 = config;
+    config2.lineage_id = Some("different-lineage".to_owned());
+    let snap2 = types::ConfigSnapshot::from_config(&config2);
+
+    let diffs = snap1.diff(&snap2);
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(diffs[0].0, "lineage_id");
+}
+
+#[test]
+fn test_config_snapshot_detects_feature_change() {
+    let config = test_config();
+    let snap1 = types::ConfigSnapshot::from_config(&config);
+
+    let mut config2 = config;
+    config2.features.auto_defense = false;
+    let snap2 = types::ConfigSnapshot::from_config(&config2);
+
+    let diffs = snap1.diff(&snap2);
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(diffs[0].0, "features");
+}
+
+#[test]
+fn test_config_snapshot_detects_topology_change() {
+    let config = test_config();
+    let snap1 = types::ConfigSnapshot::from_config(&config);
+
+    let mut config2 = config;
+    config2.expected_topology_path = Some(vec![1, 2, 3]);
+    let snap2 = types::ConfigSnapshot::from_config(&config2);
+
+    let diffs = snap1.diff(&snap2);
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(diffs[0].0, "topology_configured");
+}
+
+#[test]
+fn test_config_snapshot_serde_roundtrip() {
+    let config = test_config();
+    let snap = types::ConfigSnapshot::from_config(&config);
+    let json = serde_json::to_string(&snap).unwrap();
+    let parsed: types::ConfigSnapshot = serde_json::from_str(&json).unwrap();
+    assert_eq!(snap, parsed);
+}
+
+#[tokio::test]
+async fn test_drift_detection_stable_config() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    let detector = ThreatDetector::new(&config);
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        !threats
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::ConfigurationDrift { .. })),
+        "Stable config should produce no drift"
+    );
+}
+
+#[tokio::test]
+async fn test_degraded_genetic_uses_configured_confidence() {
+    let mut config = test_config();
+    config.thresholds.degraded_genetic_confidence = 0.33;
+
+    let detector = ThreatDetector::new(&config);
+    let threats = detector.detect().await.expect("detect");
+    let degraded = threats
+        .iter()
+        .find(|t| t.id.starts_with("genetic-degraded-"));
+    assert!(degraded.is_some());
+    #[expect(clippy::float_cmp, reason = "exact configured value comparison")]
+    let matches = degraded.unwrap().confidence == 0.33;
+    assert!(matches, "Should use configured degraded_genetic_confidence");
+}
+
+#[tokio::test]
+async fn test_observe_updates_profiler() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    let detector = ThreatDetector::new(&config);
+
+    let obs = Observation {
+        connection_rate: 42.0,
+        traffic_volume: 9999,
+        ports_accessed: vec![80],
+        timestamp: SystemTime::now(),
+    };
+    detector
+        .observe(&obs)
+        .await
+        .expect("observe should succeed");
+}
