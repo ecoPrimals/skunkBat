@@ -7,7 +7,7 @@
 
 [primal]
 name = "skunkbat"
-version = "0.2.10"
+version = "0.2.13"
 description = "Defensive network security — metadata-only threat detection, graduated response, security observability"
 license = "AGPL-3.0-or-later"
 protocol = "jsonrpc-2.0"
@@ -45,13 +45,17 @@ methods = ["get"]
 description = "Authorization and method gate status"
 methods = ["check", "mode", "peer_info"]
 
+[domains.baseline]
+description = "Live observation feed for threat profiler"
+methods = ["observe"]
+
 [domains.btsp]
 description = "BTSP Phase 3 transport encryption"
 methods = ["negotiate", "capabilities"]
 
-# Capabilities consumed from other primals (runtime-discovered)
+# Capabilities consumed from other primals (runtime-discovered, not hardcoded)
 [consumed]
-primals = ["bearDog", "songBird", "toadStool"]
+capabilities = ["lineage-verification", "federation", "discovery"]
 methods = [
     "btsp.server.verify",
     "lineage.verify",
@@ -154,6 +158,11 @@ stability = "beta"
 depends_on = []
 cost = "low"
 stability = "beta"
+
+[operations."baseline.observe"]
+depends_on = []
+cost = "low"
+stability = "stable"
 
 [operations."btsp.negotiate"]
 depends_on = []

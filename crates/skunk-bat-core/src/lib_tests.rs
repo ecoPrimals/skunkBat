@@ -25,8 +25,15 @@ async fn test_detect_threats() {
     let skunkbat = SkunkBat::new(config);
 
     let result = skunkbat.detect_threats().await;
-    assert!(result.is_ok());
-    assert!(result.unwrap().is_empty());
+    assert!(result.is_ok(), "detect_threats should not error");
+    let threats = result.unwrap();
+    for t in &threats {
+        assert!(
+            matches!(t.threat_type, threats::ThreatType::DenialOfService { .. }),
+            "default config (no lineage_id) should only produce DoS threats under load, got: {:?}",
+            t.threat_type
+        );
+    }
 }
 
 #[test]
@@ -214,7 +221,10 @@ async fn test_integration_detect_and_respond() {
     skunkbat.start().await.unwrap();
 
     let threats = skunkbat.detect_threats().await.unwrap();
-    assert!(threats.is_empty());
+    assert!(
+        !threats.iter().any(|t| t.id.starts_with("genetic-")),
+        "default config (no lineage_id) should produce no genetic threats"
+    );
 
     let test_threat = threats::Threat {
         id: "integration-threat".to_string(),

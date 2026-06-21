@@ -1,7 +1,7 @@
 # skunkBat — Handoff Blurb
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
-**Version**: 0.2.12
+**Version**: 0.2.13
 **Date**: Jun 21, 2026
 **Wave**: 120
 
@@ -14,7 +14,7 @@
 | Tests | 484 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
 | Max file | 728 lines (all under 800L cap) |
-| IPC methods | 19 (all Stable tier, incl. `baseline.observe`) |
+| IPC methods | 20 (all Stable tier, incl. `baseline.observe`, `defense.status`) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
 | License | AGPL-3.0-or-later (scyBorg triple-copyleft) |
@@ -40,10 +40,14 @@
 - **Live observation feed**: `baseline.observe` IPC method feeds live traffic into `StatisticalProfiler` via `RwLock`
 - **6-category detection LIVE**: genetic, behavioral, intrusion, resource, topology, configuration drift — all wired into `detect()`
 - **Defense enforcement**: quarantined sources rejected at dispatch gate; health probes exempt
+- **`defense.status` IPC method**: returns engine status, auto-response flag, quarantine snapshot
+- **Transport topology wiring**: `record_connection_path()` called from BTSP handshake layer
 - **riboCipher probe response**: probes receive ack payload + close (TCP + UDS)
 - **BTSP session cleanup**: evict on disconnect + periodic TTL sweep (1h TTL, 5m interval)
 - **Auto-response policy**: driven from config (no hardcoded `true`)
+- **Quarantine thresholds configurable**: critical (0.9) and high (0.7) moved to `ThreatThresholds`
 - **RuntimeVerifier probe**: startup log of verifier availability
+- **`hmac-plain` removed from btsp.capabilities**: only advertises implemented ciphers
 
 ## What's Not Wired (Library-Ready)
 
@@ -62,8 +66,9 @@ These modules exist as complete library APIs but are not wired into the server b
 1. **RuntimeVerifier injection**: server probes for BearDog at startup but can't inject it into `ThreatDetector` without making `SkunkBat` generic (structural refactor, blocked on BearDog BTSP).
 2. **Defense actions in-memory only**: Quarantine/block update a `HashMap`, reject at dispatch gate, and emit traces — no OS firewall/nftables integration yet.
 3. **riboCipher Tiers 2/3**: Mito (`0xED`) and Nuclear (`0xEE`) signals logged and rejected — not implemented (needs upstream crypto spec).
-4. **Topology path source**: `record_connection_path()` API exists but transport layer doesn't emit paths yet (needs BTSP handshake metadata or mesh routing context).
-5. **BearDog false-Critical on degradation**: Fixed — `RemoteLineageVerifier` now returns `Err` on RPC failure (detection correctly emits Medium/degraded instead of Critical).
+4. **MeshRelay transport**: `TransportEndpoint::MeshRelay` returns error stub — needs Songbird mesh API for relay protocol.
+5. **Auth gate token validation**: bearer_token presence-only check; no signature/HMAC verification yet.
+6. **ToadStool discovery**: library-ready but `ReconnaissanceEngine` still uses `LocalDiscovery` at runtime.
 
 ## Cascade Status
 

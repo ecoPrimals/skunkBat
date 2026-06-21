@@ -202,6 +202,28 @@ impl SkunkBat {
         self.defense.is_quarantined(source)
     }
 
+    /// Defense engine status snapshot for IPC.
+    #[must_use]
+    pub fn defense_status(&self) -> serde_json::Value {
+        let quarantine = self.defense.quarantine_snapshot();
+        let entries: Vec<serde_json::Value> = quarantine
+            .iter()
+            .map(|(source, record)| {
+                serde_json::json!({
+                    "source": source,
+                    "reason": record.reason,
+                    "threat_id": record.threat_id,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "enabled": self.config.features.auto_defense,
+            "auto_response": self.defense.auto_response_enabled(),
+            "quarantined_count": quarantine.len(),
+            "quarantined": entries,
+        })
+    }
+
     /// Scan network topology.
     ///
     /// Returns reconnaissance data about the network.

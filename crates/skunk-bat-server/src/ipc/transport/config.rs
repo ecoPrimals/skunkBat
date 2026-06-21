@@ -7,7 +7,6 @@
 //! Phase 2: capability-delegated handshake via provider RPC.
 
 use super::error::TransportError;
-use super::sys::proc_uid;
 
 /// Resolve the biomeOS socket directory from the environment.
 ///
@@ -15,7 +14,7 @@ use super::sys::proc_uid;
 fn resolve_socket_dir() -> String {
     std::env::var(skunk_bat_core::env_keys::BIOMEOS_SOCKET_DIR).unwrap_or_else(|_| {
         let runtime_dir = std::env::var(skunk_bat_core::env_keys::XDG_RUNTIME_DIR)
-            .unwrap_or_else(|_| format!("/run/user/{}", proc_uid()));
+            .unwrap_or_else(|_| format!("/run/user/{}", skunk_bat_core::platform::proc_uid()));
         format!("{runtime_dir}/biomeos")
     })
 }

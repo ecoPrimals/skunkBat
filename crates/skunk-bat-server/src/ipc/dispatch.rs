@@ -27,6 +27,7 @@ const METHODS: &[&str] = &[
     "security.metrics",
     "security.audit_log",
     "baseline.observe",
+    "defense.status",
     "lifecycle.state",
     "lifecycle.status",
     "lifecycle.capabilities",
@@ -141,6 +142,12 @@ pub(super) async fn dispatch(
         }
         "security.respond" => dispatch_respond(state, id, request.params).await,
         "baseline.observe" => dispatch_baseline_observe(state, id, request.params).await,
+        "defense.status" => {
+            let sb = state.read().await;
+            let status = sb.defense_status();
+            drop(sb);
+            Response::success(id, status)
+        }
         "lifecycle.state" | "lifecycle.status" | "lifecycle.capabilities" => {
             dispatch_lifecycle(state, id, &request.method).await
         }
@@ -374,7 +381,7 @@ fn dispatch_btsp_capabilities(id: serde_json::Value) -> Response {
         serde_json::json!({
             "protocol": "btsp-v1",
             "phase": 3,
-            "ciphers": ["chacha20-poly1305", "hmac-plain", "null"],
+            "ciphers": ["chacha20-poly1305", "null"],
             "preferred": "chacha20-poly1305",
             "key_derivation": "hkdf-sha256",
             "handshake": "btsp.negotiate"

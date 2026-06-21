@@ -4,6 +4,66 @@ All notable changes to skunkBat are documented here.
 
 ## [Unreleased]
 
+---
+
+## [0.2.13]
+
+### Added
+
+- **`defense.status` IPC method** — returns defense engine status snapshot (enabled,
+  auto_response, quarantine list); was advertised in PUBLIC_METHODS but never dispatched
+- **Transport topology wiring** — `record_connection_path()` now called from BTSP
+  handshake in TCP transport layer; topology paths encoded as layer-traversal bytes
+  (0=UDS, 1=loopback, 2=remote, 2+3=remote+BTSP)
+
+### Changed
+
+- Quarantine confidence thresholds (`0.9` critical, `0.7` high) moved from hardcoded
+  constants to `ThreatThresholds` fields (`quarantine_critical_confidence`,
+  `quarantine_high_confidence`); `determine_action()` now uses configurable values
+- `hmac-plain` cipher removed from `btsp.capabilities` response (was advertised but
+  never implemented on wire; only `chacha20-poly1305` and `null` are functional)
+- Redundant `transport/sys.rs` shim removed; `config.rs` calls
+  `skunk_bat_core::platform::proc_uid()` directly
+- Duplicate `proc_uid()` wrapper in `rpc.rs` consolidated to `skunk_bat_core::platform`
+- Tautological test assertion fixed (`threats.is_empty() || !threats.is_empty()` → meaningful
+  assertion on genetic threat count)
+- Flaky tests fixed: `test_detect_threats`, `test_integration_detect_and_respond`,
+  `test_threat_detection_with_local_verifier`, `test_threat_detection_no_lineage_id` now
+  filter by threat category instead of asserting total count (system load varies at CI)
+- Docs updated from "5 threat types" to "6" across README, CONTEXT, sporeprint,
+  THYMIC_SELECTION_SPEC, and capability_registry.toml
+- `capability_registry.toml` version bumped, `baseline.observe` domain added,
+  consumed primals replaced with consumed capabilities (no hardcoded primal names)
+- README updated to v0.2.13 (was 0.2.0), 20 IPC methods, 484+ tests
+
+---
+
+## [0.2.12]
+
+### Added
+
+- **Configuration drift detection (6th category)** — `detect_configuration_drift()`
+  compares startup `ConfigSnapshot` against live state; monitors features, lineage_id,
+  topology_configured, and threshold fingerprint; emits `ConfigurationDrift` threats
+- **`ConfigSnapshot`** — captures security-relevant config at construction for
+  drift comparison; serde-serializable with diff support
+- **`DEFAULT_PORT` constant** — consolidated from duplicate definitions in
+  `main.rs` and `baseline.rs` to single `skunk_bat_core::DEFAULT_PORT`
+- **`ThreatThresholds` expansion** — added `degraded_genetic_confidence` (0.5),
+  `topology_confidence` (0.9), `drift_confidence` (0.85); replaces hardcoded literals
+
+### Changed
+
+- `RemoteLineageVerifier` returns `Err` on RPC failure (was `Ok(false)`, which
+  caused false Critical genetic alerts instead of correct Medium/degraded)
+- `lib.rs` tests extracted to `lib_tests.rs` (377L → 377L + 280L, was 662L)
+- Non-Linux resource detection logs warning when load unavailable
+
+---
+
+## [0.2.11]
+
 ### Added
 
 - **Live observation feed** — `baseline.observe` IPC method + `ThreatDetector::observe()`
@@ -27,15 +87,6 @@ All notable changes to skunkBat are documented here.
 - **RuntimeVerifier probe** — server logs verifier availability at startup (remote/local);
   structural injection deferred (requires `SkunkBat` generic refactor + BearDog BTSP)
 - **`BaselineObservation` audit event** — audit log records live observation feeds
-- **Configuration drift detection (6th category)** — `detect_configuration_drift()`
-  compares startup `ConfigSnapshot` against live state; monitors features, lineage_id,
-  topology_configured, and threshold fingerprint; emits `ConfigurationDrift` threats
-- **`ConfigSnapshot`** — captures security-relevant config at construction for
-  drift comparison; serde-serializable with diff support
-- **`DEFAULT_PORT` constant** — consolidated from duplicate definitions in
-  `main.rs` and `baseline.rs` to single `skunk_bat_core::DEFAULT_PORT`
-- **`ThreatThresholds` expansion** — added `degraded_genetic_confidence` (0.5),
-  `topology_confidence` (0.9), `drift_confidence` (0.85); replaces hardcoded literals
 
 ### Changed
 
@@ -43,10 +94,6 @@ All notable changes to skunkBat are documented here.
 - `detect_intrusions`/`detect_behavioral_anomalies` acquire profiler read lock
   and drop it before building threat responses
 - `alert_operator` refactored to associated function (no `&self`)
-- `RemoteLineageVerifier` returns `Err` on RPC failure (was `Ok(false)`, which
-  caused false Critical genetic alerts instead of correct Medium/degraded)
-- `lib.rs` tests extracted to `lib_tests.rs` (377L → 377L + 280L, was 662L)
-- Non-Linux resource detection logs warning when load unavailable
 
 ---
 

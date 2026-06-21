@@ -68,6 +68,10 @@ pub struct ThreatThresholds {
     pub topology_confidence: f64,
     /// Confidence assigned to configuration drift detections.
     pub drift_confidence: f64,
+    /// Minimum confidence for automatic quarantine of critical threats.
+    pub quarantine_critical_confidence: f64,
+    /// Minimum confidence for automatic quarantine of high-severity threats.
+    pub quarantine_high_confidence: f64,
 }
 
 impl Default for ThreatThresholds {
@@ -87,6 +91,8 @@ impl Default for ThreatThresholds {
             degraded_genetic_confidence: 0.5,
             topology_confidence: 0.9,
             drift_confidence: 0.85,
+            quarantine_critical_confidence: 0.9,
+            quarantine_high_confidence: 0.7,
         }
     }
 }

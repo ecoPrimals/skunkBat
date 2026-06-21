@@ -26,7 +26,7 @@ springs = []
 | Capability | Description |
 |-----------|-------------|
 | `defense` | Graduated response (Monitor, Quarantine, Block) |
-| `threat` | 5-type detection (Genetic, Behavioral, Intrusion, Resource, Topology) |
+| `threat` | 6-type detection (Genetic, Behavioral, Intrusion, Resource, Topology, Config Drift) |
 | `metadata` | Content-free network pattern analysis |
 | `lineage` | BearDog-delegated lineage verification |
 | `baseline` | Statistical profiler with multi-dimensional anomaly scoring |
@@ -34,10 +34,11 @@ springs = []
 | `audit` | JH-5 structured security event trail + cross-primal forwarding |
 | `btsp` | Phase 3 cipher negotiation + encrypted framing |
 
-## Methods (18 — all Stable tier)
+## Methods (20 — all Stable tier)
 
 - `health.liveness`, `health.readiness`, `health.check`
 - `security.scan`, `security.detect`, `security.respond`, `security.metrics`, `security.audit_log`
+- `baseline.observe`, `defense.status`
 - `capabilities.list`, `identity.get`
 - `lifecycle.status`, `lifecycle.state`, `lifecycle.capabilities`
 - `auth.check`, `auth.mode`, `auth.peer_info`

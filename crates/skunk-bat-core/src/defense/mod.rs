@@ -13,17 +13,13 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-/// Confidence threshold for automatic quarantine of critical threats.
-const CRITICAL_CONFIDENCE_THRESHOLD: f64 = 0.9;
-
-/// Confidence threshold for automatic quarantine of high-severity threats.
-const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.7;
-
 /// Defense engine with thread-safe quarantine tracking.
 pub struct DefenseEngine {
     enabled: bool,
     auto_response_enabled: bool,
     quarantine_map: Mutex<HashMap<String, QuarantineRecord>>,
+    critical_confidence: f64,
+    high_confidence: f64,
 }
 
 impl DefenseEngine {
@@ -34,6 +30,8 @@ impl DefenseEngine {
             enabled: config.features.auto_defense,
             auto_response_enabled: config.features.auto_defense,
             quarantine_map: Mutex::new(HashMap::new()),
+            critical_confidence: config.thresholds.quarantine_critical_confidence,
+            high_confidence: config.thresholds.quarantine_high_confidence,
         }
     }
 
@@ -85,18 +83,15 @@ impl DefenseEngine {
             threat.confidence
         );
 
-        let action = Self::determine_action(threat);
+        let action = self.determine_action(threat);
         self.execute_action(&action, threat);
 
         Ok(action.action_type)
     }
 
-    /// Determine appropriate defense action.
-    fn determine_action(threat: &Threat) -> DefenseAction {
-        // Critical threats: immediate quarantine
-        if threat.severity == Severity::Critical
-            && threat.confidence > CRITICAL_CONFIDENCE_THRESHOLD
-        {
+    /// Determine appropriate defense action based on configured thresholds.
+    fn determine_action(&self, threat: &Threat) -> DefenseAction {
+        if threat.severity == Severity::Critical && threat.confidence > self.critical_confidence {
             return DefenseAction {
                 action_type: ActionType::Quarantine,
                 target: threat.source.clone(),
@@ -105,8 +100,7 @@ impl DefenseEngine {
             };
         }
 
-        // High severity: quarantine with alert
-        if threat.severity == Severity::High && threat.confidence > HIGH_CONFIDENCE_THRESHOLD {
+        if threat.severity == Severity::High && threat.confidence > self.high_confidence {
             return DefenseAction {
                 action_type: ActionType::QuarantineAndAlert,
                 target: threat.source.clone(),
@@ -115,7 +109,6 @@ impl DefenseEngine {
             };
         }
 
-        // Medium/Low: monitor and alert
         DefenseAction {
             action_type: ActionType::MonitorAndAlert,
             target: threat.source.clone(),
@@ -358,8 +351,10 @@ mod tests {
 
     #[test]
     fn test_critical_threat_response() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::Critical, 0.95);
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat);
 
         assert_eq!(action.action_type, ActionType::Quarantine);
         assert!(!action.requires_approval);
@@ -367,8 +362,10 @@ mod tests {
 
     #[test]
     fn test_high_severity_response() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::High, 0.8);
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat);
 
         assert_eq!(action.action_type, ActionType::QuarantineAndAlert);
         assert!(!action.requires_approval);
@@ -376,8 +373,10 @@ mod tests {
 
     #[test]
     fn test_medium_severity_response() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::Medium, 0.6);
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat);
 
         assert_eq!(action.action_type, ActionType::MonitorAndAlert);
         assert!(action.requires_approval);
@@ -385,10 +384,11 @@ mod tests {
 
     #[test]
     fn test_low_confidence_threat() {
+        let config = test_config();
+        let engine = DefenseEngine::new(&config);
         let threat = test_threat(Severity::Critical, 0.5);
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat);
 
-        // Low confidence, even critical, should require approval
         assert_eq!(action.action_type, ActionType::MonitorAndAlert);
     }
 
@@ -520,7 +520,7 @@ mod tests {
 
         engine.respond(&threat).expect("respond should succeed");
 
-        let action = DefenseEngine::determine_action(&threat);
+        let action = engine.determine_action(&threat);
         assert_eq!(action.action_type, ActionType::QuarantineAndAlert);
     }
 

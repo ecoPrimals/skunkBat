@@ -2,7 +2,7 @@
 
 Defensive network security primal for sovereign computing environments.
 
-**Version**: 0.2.0
+**Version**: 0.2.13
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 ---
@@ -14,8 +14,9 @@ defensive reconnaissance. It detects threats, orchestrates graduated responses,
 and federates threat intelligence across trusted peers — all without inspecting
 packet contents or tracking user behavior.
 
-- **5 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral
-  (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion)
+- **6 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral
+  (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion),
+  Configuration Drift
 - **Composable Primitives**: `baseline`, `metadata`, `response`, `lineage`, `health` —
   each independently useful as standalone capabilities
 - **Thymic Selection Model**: Self/non-self discrimination via BearDog lineage (design phase)
@@ -54,7 +55,7 @@ skunkBat/
 
 | Crate | Role | Type |
 |-------|------|------|
-| `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
+| `skunk-bat-core` | Threat detection (6 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin CLI with `server`, `health`, `scan`, `detect` subcommands | binary |
 
@@ -197,8 +198,8 @@ No primal names are hardcoded in production code.
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 470 tests passing (lib + integration + chaos), full workspace
-- All 18 IPC methods stability-tiered (Stable)
+- 484+ tests passing (lib + integration + chaos), full workspace
+- All 20 IPC methods stability-tiered (Stable)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 - Self-registration with discovery (`ipc.register`) + Neural API `primal.announce`

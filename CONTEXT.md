@@ -8,7 +8,7 @@ observability — all metadata-only, no content inspection by architecture.
 
 | Crate | Role | Type |
 |-------|------|------|
-| `skunk-bat-core` | Threat detection (5 types), defense orchestration, observability, universal adapter | library |
+| `skunk-bat-core` | Threat detection (6 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2/3 (BearDog-delegated handshake + `btsp.negotiate`), Wire Standard L2/L3 | binary |
 
@@ -94,7 +94,7 @@ and encrypted notification (no-response) verification.
 
 ## Status
 
-v0.2.12 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.13 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
 **484 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
@@ -105,7 +105,7 @@ Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkd
 **IPC**: JSON-RPC 2.0 over TCP + UDS with BTSP Phase 1/2/3. BearDog-delegated handshake,
 `btsp.negotiate` with session registry, `ChaCha20-Poly1305` AEAD encrypted framing.
 riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compliance.
-19 stable IPC methods (incl. `baseline.observe`). `hmac-plain` cipher recognized but
+20 stable IPC methods (incl. `baseline.observe`, `defense.status`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
 
 **Detection**: 6-category threat detection (genetic, behavioral, intrusion, resource,
@@ -156,6 +156,7 @@ enforced/permissive modes + quarantine enforcement.
 | `auth.mode` | Stable | Current enforcement mode |
 | `auth.peer_info` | Stable | Connection origin + token status |
 | `baseline.observe` | Stable | Feed live observation into threat profiler |
+| `defense.status` | Stable | Defense engine status + quarantine snapshot |
 | `btsp.negotiate` | Stable | Phase 3 cipher negotiation + encrypted framing |
 | `btsp.capabilities` | Stable | Protocol version, ciphers, key derivation |
 

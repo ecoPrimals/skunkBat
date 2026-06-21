@@ -31,7 +31,6 @@ mod config;
 mod error;
 pub mod negotiate;
 mod peek;
-mod sys;
 
 pub use error::TransportError;
 
@@ -181,6 +180,7 @@ pub async fn serve_tcp(
                                 sessions
                                     .insert(result.session_id, result.handshake_key)
                                     .await;
+                                record_transport_path(&state, &caller).await;
                                 Some(sid)
                             }
                             Err(e) => {
@@ -398,6 +398,23 @@ async fn respond_to_probe<S: tokio::io::AsyncWrite + Unpin>(stream: &mut S) {
         return;
     }
     let _ = stream.flush().await;
+}
+
+/// Record transport layer path for topology validation.
+///
+/// Encodes the connection transport as a layer-traversal path:
+/// - `[0]`: Unix domain socket (local)
+/// - `[1]`: TCP loopback
+/// - `[2]`: TCP remote (unauthenticated)
+/// - `[2, 3]`: TCP remote + BTSP authenticated
+async fn record_transport_path(state: &Arc<RwLock<SkunkBat>>, caller: &CallerContext) {
+    use super::method_gate::ConnectionOrigin;
+    let path = match caller.origin {
+        ConnectionOrigin::Unix => vec![0],
+        ConnectionOrigin::Loopback => vec![1],
+        ConnectionOrigin::Remote => vec![2, 3],
+    };
+    state.read().await.record_connection_path(path);
 }
 
 /// Create capability-domain symlink: `security.sock` → `skunkbat[-{fid}].sock`

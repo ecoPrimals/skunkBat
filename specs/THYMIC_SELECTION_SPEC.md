@@ -341,7 +341,7 @@ in the self-training set.
 
 ## 8. Relationship to Existing Detection
 
-The thymic model does not replace the existing five threat types. It
+The thymic model does not replace the existing six threat types. It
 deepens the genetic threat type and provides a training framework:
 
 | Threat Type | Thymic Role |
