@@ -1,7 +1,7 @@
 # skunkBat Automated Defense Specification
 
-**Version:** 0.2.0-dev  
-**Status:** Initial Specification  
+**Version:** 0.2.13  
+**Status:** Implemented  
 **Author:** ecoPrimals Project  
 **Date:** December 27, 2025  
 **License:** AGPL-3.0  
@@ -13,6 +13,15 @@
 skunkBat automated defense provides **defensive responses to detected threats** while maintaining user sovereignty. Defense mechanisms protect YOUR systems without attacking others, always with transparency and user control.
 
 **Core Principle:** Automate suggestions, not decisions. The user retains ultimate authority.
+
+---
+
+> **Implementation Note (v0.2.13):** The core defense engine is implemented with
+> four action types: `MonitorAndAlert`, `Quarantine`, `QuarantineAndAlert`, `Block`.
+> Quarantine thresholds are configurable via `ThreatThresholds`. Auto-response
+> gating, quarantine tracking, and dispatch-level enforcement are live.
+> Rate limiting (§2.2), self-healing (§2.4), user approval workflow (§4.2),
+> and auto-approve timeouts are design-phase — tracked for future evolution.
 
 ---
 

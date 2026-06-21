@@ -2,7 +2,7 @@
 
 # skunkBat Composable Primitives Specification
 
-**Version:** 0.2.0-dev (Design Phase)
+**Version:** 0.2.13 (Design Phase — only `baseline.observe` shipped)
 **Status:** Design — method surface not yet exposed over IPC
 **Date:** April 2026
 **License:** AGPL-3.0-or-later

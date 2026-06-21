@@ -2,7 +2,7 @@
 
 # skunkBat Specifications Index
 
-**Version:** 0.2.0-dev
+**Version:** 0.2.13
 **Status:** Core specs implemented; thymic and composition specs in design
 
 ---
@@ -23,7 +23,7 @@
    - **v0.2**: Thymic selection model, bond-type threat classification
 
 3. **[AUTO_DEFENSE_SPEC.md](./AUTO_DEFENSE_SPEC.md)** — COMPLETE
-   - Graduated threat response (Monitor, Warn, Throttle, Quarantine, Block)
+   - Graduated threat response (MonitorAndAlert, Quarantine, QuarantineAndAlert, Block)
    - User authority preservation
    - Alert and escalation
 

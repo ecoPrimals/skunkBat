@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-470 tests passing (core + integrations + server + transport + chaos), all workspace.
+484 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.

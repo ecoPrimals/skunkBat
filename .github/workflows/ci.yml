@@ -53,4 +53,4 @@ jobs:
           cargo deny check
 
       - name: Test
-        run: cargo test --workspace --lib --bins
+        run: cargo test --workspace

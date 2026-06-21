@@ -48,7 +48,7 @@ skunkBat/
 │   ├── skunk-bat-core/          # Threat detection, defense, observability
 │   ├── skunk-bat-integrations/  # JSON-RPC client, discovery, federation
 │   └── skunk-bat-server/        # UniBin server (TCP + UDS + BTSP)
-├── examples/                    # 12 working examples
+├── examples/                    # 12 narrative demos
 ├── tests/                       # Integration, e2e, chaos tests
 └── specs/                       # Technical specifications
 ```
@@ -105,13 +105,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Run Examples
+### Examples
 
-```bash
-cargo run --example basic_usage
-cargo run --example violation_detection
-cargo run --example songbird_integration
-```
+The `examples/` directory contains 12 narrative demos illustrating core API usage,
+threat response patterns, and integration architectures. See `examples/basic_usage.rs`
+for a walkthrough of scan → detect → respond.
 
 ---
 
