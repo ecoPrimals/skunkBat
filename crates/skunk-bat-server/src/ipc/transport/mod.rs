@@ -126,6 +126,10 @@ async fn classify_connection<S: tokio::io::AsyncRead + Unpin>(
 }
 
 /// Bind TCP and accept connections with riboCipher signal routing.
+#[expect(
+    clippy::too_many_lines,
+    reason = "TCP accept loop with 4 intent branches + BTSP"
+)]
 pub async fn serve_tcp(
     state: Arc<RwLock<SkunkBat>>,
     sessions: Arc<BtspSessionRegistry>,
@@ -150,7 +154,7 @@ pub async fn serve_tcp(
         let btsp = btsp_config.clone();
         let sessions = Arc::clone(&sessions);
         tokio::spawn(async move {
-            let caller = if addr.ip().is_loopback() {
+            let mut caller = if addr.ip().is_loopback() {
                 CallerContext::loopback()
             } else {
                 CallerContext::remote_with_addr(addr.to_string())
@@ -177,6 +181,7 @@ pub async fn serve_tcp(
                                     result.session_id
                                 );
                                 let sid = result.session_id.clone();
+                                caller.bearer_token = Some(format!("btsp:{}", result.session_id));
                                 sessions
                                     .insert(result.session_id, result.handshake_key)
                                     .await;
@@ -215,6 +220,8 @@ pub async fn serve_tcp(
                                         result.session_id
                                     );
                                     let sid = result.session_id.clone();
+                                    caller.bearer_token =
+                                        Some(format!("btsp:{}", result.session_id));
                                     sessions
                                         .insert(result.session_id, result.handshake_key)
                                         .await;
@@ -301,7 +308,7 @@ pub async fn serve_uds(
                 }
             };
 
-            let caller = CallerContext::unix();
+            let mut caller = CallerContext::unix();
 
             match intent {
                 ConnectionIntent::NdjsonJsonRpc => {
@@ -316,6 +323,7 @@ pub async fn serve_uds(
                                     result.session_id
                                 );
                                 let sid = result.session_id.clone();
+                                caller.bearer_token = Some(format!("btsp:{}", result.session_id));
                                 sessions
                                     .insert(result.session_id, result.handshake_key)
                                     .await;
@@ -349,6 +357,8 @@ pub async fn serve_uds(
                                         result.session_id
                                     );
                                     let sid = result.session_id.clone();
+                                    caller.bearer_token =
+                                        Some(format!("btsp:{}", result.session_id));
                                     sessions
                                         .insert(result.session_id, result.handshake_key)
                                         .await;

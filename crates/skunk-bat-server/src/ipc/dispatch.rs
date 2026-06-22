@@ -128,8 +128,9 @@ pub(super) async fn dispatch(
     }
 
     let id = request.id_or_null();
+    let caller = caller.with_request_token(request.params.as_ref());
 
-    if let Err(resp) = enforce_gate(state, gate, caller, &request, &id).await {
+    if let Err(resp) = enforce_gate(state, gate, &caller, &request, &id).await {
         return resp;
     }
 
@@ -154,7 +155,7 @@ pub(super) async fn dispatch(
         "capabilities.list" | "capability.list" => Response::success(id, capabilities_response()),
         "identity.get" => dispatch_identity(id),
         "auth.check" | "auth.mode" | "auth.peer_info" => {
-            dispatch_auth(id, gate, caller, &request.method)
+            dispatch_auth(id, gate, &caller, &request.method)
         }
         "btsp.capabilities" => dispatch_btsp_capabilities(id),
         _ => Response::error(
@@ -178,8 +179,9 @@ async fn enforce_gate(
     id: &serde_json::Value,
 ) -> Result<(), Response> {
     if let Some(ref addr) = caller.source_addr {
-        let is_health = request.method.starts_with("health.");
-        if !is_health && state.read().await.is_quarantined(addr) {
+        let host = addr.rsplit_once(':').map_or(addr.as_str(), |(h, _)| h);
+        let is_health = request.method.starts_with("health.") || request.method == "health";
+        if !is_health && state.read().await.is_quarantined(host) {
             tracing::warn!(
                 method = request.method,
                 source = addr,

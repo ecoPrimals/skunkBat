@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 484 tests, 20 IPC methods."
-date = 2026-06-21
+description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 510 tests, 20 IPC methods."
+date = 2026-06-22
 
 [taxonomies]
 primals = ["skunkbat"]
@@ -13,7 +13,7 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 484 passing
+- **Tests**: 510 passing
 - **Source**: max 728 lines (no file exceeds 800L)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned

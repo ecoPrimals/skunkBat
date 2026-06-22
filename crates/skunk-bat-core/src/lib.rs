@@ -196,6 +196,11 @@ impl SkunkBat {
         self.threat_detector.record_connection_path(path);
     }
 
+    /// Manually quarantine a source address.
+    pub fn quarantine(&self, source: &str, reason: &str, threat_id: &str) {
+        self.defense.quarantine(source, reason, threat_id);
+    }
+
     /// Check if a source address is currently quarantined.
     #[must_use]
     pub fn is_quarantined(&self, source: &str) -> bool {

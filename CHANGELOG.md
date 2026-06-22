@@ -6,6 +6,39 @@ All notable changes to skunkBat are documented here.
 
 ---
 
+## [0.2.14] — Wave 123: MethodGate Enforcement Validation
+
+### Added
+
+- **Origin-based trust** — UDS and loopback callers bypass MethodGate enforcement;
+  only remote callers require a bearer token under `Enforced` mode
+- **Bearer token extraction** — `_auth.token` field in JSON-RPC params wired into
+  `CallerContext` per-request (connection-level BTSP token takes precedence)
+- **BTSP session elevation** — successful BTSP handshake sets `btsp:{session_id}`
+  bearer token on the connection, allowing BTSP-authenticated remotes to pass gate
+- **Manual quarantine API** — `SkunkBat::quarantine()` and `DefenseEngine::quarantine()`
+  for operator-triggered or test quarantine injection
+- **`EnforcementMode::parse()`** — testable string parser extracted from `from_env()`
+- **26 new tests** — origin trust (UDS, loopback, remote), quarantine enforcement
+  (block, health exemption, audit logging), bearer token extraction (`_auth.token`,
+  connection precedence), BTSP session auth, permissive audit logging, enforced-mode
+  unknown method rejection, `EnforcementMode::parse()` variants
+
+### Changed
+
+- **`defense.status` moved to Protected** — quarantine state exposure requires
+  authentication for remote callers
+- **Quarantine health exemption** — bare `"health"` now exempt alongside `"health.*"`
+  prefix (consistency fix)
+- **Quarantine host matching** — dispatch strips port from `source_addr` before
+  quarantine lookup (fix: `10.0.0.5:4321` → `10.0.0.5`)
+
+### Test Count
+
+510 tests passing (was 484).
+
+---
+
 ## [0.2.13]
 
 ### Added

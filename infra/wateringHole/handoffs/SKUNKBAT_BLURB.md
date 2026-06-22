@@ -1,9 +1,9 @@
 # skunkBat — Handoff Blurb
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
-**Version**: 0.2.13
-**Date**: Jun 21, 2026
-**Wave**: 120
+**Version**: 0.2.14
+**Date**: Jun 22, 2026
+**Wave**: 123
 
 ---
 
@@ -11,7 +11,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 484 passing (0 failed) |
+| Tests | 510 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
 | Max file | 728 lines (all under 800L cap) |
 | IPC methods | 20 (all Stable tier, incl. `baseline.observe`, `defense.status`) |
@@ -49,6 +49,17 @@
 - **RuntimeVerifier probe**: startup log of verifier availability
 - **`hmac-plain` removed from btsp.capabilities**: only advertises implemented ciphers
 
+## What's Implemented (Wave 123 — MethodGate Enforcement Validation)
+
+- **Origin-based trust**: UDS and loopback callers bypass enforcement; only remote callers need tokens
+- **Bearer token extraction**: `_auth.token` in JSON-RPC params wired into `CallerContext` per-request
+- **BTSP session elevation**: successful handshake auto-sets `btsp:{session_id}` bearer token
+- **`defense.status` protected**: moved from public to protected (exposes quarantine state)
+- **Quarantine health exemption fix**: bare `"health"` now exempt alongside `"health.*"` prefix
+- **Quarantine host matching fix**: port stripped from `source_addr` before quarantine lookup
+- **Manual quarantine API**: `SkunkBat::quarantine()` for operator/test injection
+- **26 new enforcement tests**: origin trust, quarantine block/exempt/audit, token extraction, BTSP auth, permissive audit, enforced unknown-method rejection, parse variants
+
 ## What's Not Wired (Library-Ready)
 
 These modules exist as complete library APIs but are not wired into the server binary:
@@ -67,7 +78,7 @@ These modules exist as complete library APIs but are not wired into the server b
 2. **Defense actions in-memory only**: Quarantine/block update a `HashMap`, reject at dispatch gate, and emit traces — no OS firewall/nftables integration yet.
 3. **riboCipher Tiers 2/3**: Mito (`0xED`) and Nuclear (`0xEE`) signals logged and rejected — not implemented (needs upstream crypto spec).
 4. **MeshRelay transport**: `TransportEndpoint::MeshRelay` returns error stub — needs Songbird mesh API for relay protocol.
-5. **Auth gate token validation**: bearer_token presence-only check; no signature/HMAC verification yet.
+5. **Auth gate token signature validation**: bearer token extraction and BTSP elevation wired (Wave 123); signature/HMAC verification pending (blocked on BearDog ionic token spec).
 6. **ToadStool discovery**: library-ready but `ReconnaissanceEngine` still uses `LocalDiscovery` at runtime.
 
 ## Cascade Status

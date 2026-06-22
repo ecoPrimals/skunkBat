@@ -84,20 +84,23 @@ Full spec compliance including:
 
 ## Tests
 
-484 tests passing (core + integrations + server + transport + chaos), all workspace.
+510 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
 encrypted loop verification, plaintext-after-upgrade rejection, encrypted batch requests,
 and encrypted notification (no-response) verification.
+Wave 123: MethodGate enforcement validation — 26 new tests covering origin-based trust,
+quarantine enforcement, bearer token extraction, BTSP session elevation, and permissive/enforced
+mode semantics for local, loopback, and remote callers.
 
 ## Status
 
-v0.2.13 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.14 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**484 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
+**510 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
 the 800-line cap. All thresholds configurable via `ThreatThresholds` — zero magic numbers.
 Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkdf, sha2).
 `async-trait` eliminated and banned — native RPITIT throughout.
@@ -108,6 +111,13 @@ riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compl
 20 stable IPC methods (incl. `baseline.observe`, `defense.status`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
 
+**MethodGate**: Pre-dispatch authorization gate with `Permissive`/`Enforced` modes
+(env `SKUNKBAT_AUTH_MODE`). Origin-based trust: UDS + loopback bypass enforcement;
+remote callers require bearer token. Token extraction from `_auth.token` in JSON-RPC
+params. BTSP-authenticated sessions auto-elevated (`btsp:{session_id}` token).
+`defense.status` protected (exposes quarantine state). Unknown methods classified as
+Protected — gate rejects before `METHOD_NOT_FOUND` under enforcement.
+
 **Detection**: 6-category threat detection (genetic, behavioral, intrusion, resource,
 topology, configuration drift) — all wired into `detect()`. Live observation feed via `baseline.observe` IPC
 and `RwLock`-wrapped profiler. Configurable thresholds. Baseline seeded from
@@ -115,8 +125,9 @@ runtime-port-aware observations. Federation broadcast loop monitors audit log fo
 `ThreatDetected` events.
 
 **Defense**: Auto-response policy from config. Quarantined sources rejected at dispatch
-gate (`PERMISSION_DENIED`). Health probes exempt. BTSP sessions evicted on disconnect
-with periodic TTL sweep (1h/5m).
+gate (`PERMISSION_DENIED`) with host extraction (port-stripped). Health probes exempt
+(both `health.*` prefix and bare `health`). Manual quarantine API. BTSP sessions evicted
+on disconnect with periodic TTL sweep (1h/5m).
 
 **Observability**: JH-5 audit log (1024-event ring buffer) with cursor-based forwarding
 to provenance DAG and attribution braids. Cursor only advances on successful forward.

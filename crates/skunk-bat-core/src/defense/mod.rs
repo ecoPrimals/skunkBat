@@ -218,6 +218,21 @@ impl DefenseEngine {
         );
     }
 
+    /// Manually quarantine a source address (operator or test use).
+    pub fn quarantine(&self, source: &str, reason: &str, threat_id: &str) {
+        if let Ok(mut map) = self.quarantine_map.lock() {
+            map.insert(
+                source.to_owned(),
+                QuarantineRecord {
+                    source: source.to_owned(),
+                    started_at: SystemTime::now(),
+                    reason: reason.to_owned(),
+                    threat_id: threat_id.to_owned(),
+                },
+            );
+        }
+    }
+
     /// Check whether a source address is currently quarantined.
     #[must_use]
     pub fn is_quarantined(&self, source: &str) -> bool {
