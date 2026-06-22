@@ -1,6 +1,6 @@
 # skunkBat Automated Defense Specification
 
-**Version:** 0.2.13  
+**Version:** 0.2.14  
 **Status:** Implemented  
 **Author:** ecoPrimals Project  
 **Date:** December 27, 2025  
@@ -16,10 +16,13 @@ skunkBat automated defense provides **defensive responses to detected threats** 
 
 ---
 
-> **Implementation Note (v0.2.13):** The core defense engine is implemented with
+> **Implementation Note (v0.2.14):** The core defense engine is implemented with
 > four action types: `MonitorAndAlert`, `Quarantine`, `QuarantineAndAlert`, `Block`.
 > Quarantine thresholds are configurable via `ThreatThresholds`. Auto-response
 > gating, quarantine tracking, and dispatch-level enforcement are live.
+> **Wave 123**: MethodGate enforces origin-based trust (UDS/loopback bypass),
+> bearer token extraction from `_auth.token`, BTSP session elevation, quarantine
+> host matching with port stripping, and `defense.status` protected.
 > Rate limiting (§2.2), self-healing (§2.4), user approval workflow (§4.2),
 > and auto-approve timeouts are design-phase — tracked for future evolution.
 

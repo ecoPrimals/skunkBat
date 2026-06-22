@@ -2,7 +2,7 @@
 
 # skunkBat Thymic Selection Specification
 
-**Version:** 0.2.13 (Design Phase)
+**Version:** 0.2.14 (Design Phase)
 **Status:** Design — not yet implemented
 **Date:** April 2026
 **License:** AGPL-3.0-or-later

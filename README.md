@@ -165,6 +165,8 @@ All detection parameters are configurable via `SkunkBatConfig.thresholds`
 | `intrusion_sensitive_ports` | 22, 23, 3389, 445, 135 | Ports triggering port-scan detection |
 | `intrusion_exfil_volume` | 100,000 | Minimum bytes before exfil heuristic |
 | `intrusion_exfil_ratio` | 10,000 | Traffic/connection ratio threshold |
+| `quarantine_critical_confidence` | 0.9 | Confidence for immediate quarantine |
+| `quarantine_high_confidence` | 0.7 | Confidence for quarantine + alert |
 
 ---
 

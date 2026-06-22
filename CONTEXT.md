@@ -27,7 +27,7 @@ observability — all metadata-only, no content inspection by architecture.
 - **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with riboCipher signal-first routing (`0xEC` clear signal → protocol type, `{` → legacy NDJSON bypass with deprecation warning)
 - **BTSP Phase 3**: `btsp.negotiate` server handler with encrypted frame upgrade — session registry, cipher selection, HKDF key derivation, `ChaCha20-Poly1305` AEAD framing wired into connection loop (`[4B len][12B nonce][ct+tag]`)
 - **Wire Standard**: `capabilities.list` (L2) and `identity.get` (L3) methods
-- **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `btsp.*`
+- **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `auth.*`, `baseline.*`, `defense.*`, `btsp.*`
 - **Capability Symlinks**: `security.sock` domain symlink created on bind
 
 ## Ecosystem Integration
