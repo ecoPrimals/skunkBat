@@ -33,10 +33,10 @@ pub(super) enum MethodAccessLevel {
 }
 
 /// Methods that are always public (prefix matching).
-const PUBLIC_METHOD_PREFIXES: &[&str] = &["health.", "btsp."];
+pub(super) const PUBLIC_METHOD_PREFIXES: &[&str] = &["health.", "btsp."];
 
 /// Methods that are always public (exact matching).
-const PUBLIC_METHODS: &[&str] = &[
+pub(super) const PUBLIC_METHODS: &[&str] = &[
     "health",
     "identity.get",
     "capabilities.list",
@@ -47,6 +47,7 @@ const PUBLIC_METHODS: &[&str] = &[
     "auth.check",
     "auth.mode",
     "auth.peer_info",
+    "method_gate.status",
 ];
 
 /// Classify a method string into its access level.
@@ -303,6 +304,22 @@ mod tests {
         assert_eq!(classify_method("auth.check"), MethodAccessLevel::Public);
         assert_eq!(classify_method("auth.mode"), MethodAccessLevel::Public);
         assert_eq!(classify_method("auth.peer_info"), MethodAccessLevel::Public);
+    }
+
+    #[test]
+    fn method_gate_status_is_public() {
+        assert_eq!(
+            classify_method("method_gate.status"),
+            MethodAccessLevel::Public
+        );
+    }
+
+    #[test]
+    fn threat_report_is_protected() {
+        assert_eq!(
+            classify_method("threat.report"),
+            MethodAccessLevel::Protected
+        );
     }
 
     #[test]

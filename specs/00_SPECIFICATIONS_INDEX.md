@@ -2,7 +2,7 @@
 
 # skunkBat Specifications Index
 
-**Version:** 0.2.14
+**Version:** 0.2.15
 **Status:** Core specs implemented; thymic and composition specs in design
 
 ---

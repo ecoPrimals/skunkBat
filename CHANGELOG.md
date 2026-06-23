@@ -6,6 +6,25 @@ All notable changes to skunkBat are documented here.
 
 ---
 
+## [0.2.15] — Wave 124: Method Wiring
+
+### Added
+
+- **`method_gate.status` IPC method** (public) — returns enforcement mode, origin trust
+  policy, public methods/prefixes, token extraction format, BTSP elevation status;
+  enables cross-gate security posture probes
+- **`threat.report` IPC method** (protected) — structured report combining threat
+  detection results, full security metrics, and defense posture in one call; the single
+  endpoint for cross-gate threat intelligence
+- **8 new tests** — gate status introspection (posture, mode, public accessibility),
+  threat report structure/metrics/defense fields, protection levels, local origin bypass
+
+### Test Count
+
+518 tests passing (was 510).
+
+---
+
 ## [0.2.14] — Wave 123: MethodGate Enforcement Validation
 
 ### Added

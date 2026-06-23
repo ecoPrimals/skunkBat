@@ -7,7 +7,7 @@
 
 [primal]
 name = "skunkbat"
-version = "0.2.14"
+version = "0.2.15"
 description = "Defensive network security — metadata-only threat detection, graduated response, security observability"
 license = "AGPL-3.0-or-later"
 protocol = "jsonrpc-2.0"
@@ -49,6 +49,14 @@ methods = ["check", "mode", "peer_info"]
 description = "Live observation feed for threat profiler"
 methods = ["observe"]
 
+[domains.method_gate]
+description = "MethodGate enforcement posture introspection"
+methods = ["status"]
+
+[domains.threat]
+description = "Structured threat intelligence reporting"
+methods = ["report"]
+
 [domains.btsp]
 description = "BTSP Phase 3 transport encryption"
 methods = ["negotiate", "capabilities"]
@@ -87,6 +95,16 @@ stability = "stable"
 [operations."defense.status"]
 depends_on = []
 cost = "low"
+stability = "stable"
+
+[operations."method_gate.status"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."threat.report"]
+depends_on = ["security.detect"]
+cost = "high"
 stability = "stable"
 
 [operations."security.scan"]

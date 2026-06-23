@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-510 tests passing (core + integrations + server + transport + chaos), all workspace.
+518 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
@@ -97,10 +97,10 @@ mode semantics for local, loopback, and remote callers.
 
 ## Status
 
-v0.2.14 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.15 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**510 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
+**518 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
 the 800-line cap. All thresholds configurable via `ThreatThresholds` — zero magic numbers.
 Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkdf, sha2).
 `async-trait` eliminated and banned — native RPITIT throughout.
@@ -108,7 +108,7 @@ Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkd
 **IPC**: JSON-RPC 2.0 over TCP + UDS with BTSP Phase 1/2/3. BearDog-delegated handshake,
 `btsp.negotiate` with session registry, `ChaCha20-Poly1305` AEAD encrypted framing.
 riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compliance.
-20 stable IPC methods (incl. `baseline.observe`, `defense.status`). `hmac-plain` cipher recognized but
+22 stable IPC methods (incl. `baseline.observe`, `defense.status`, `method_gate.status`, `threat.report`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
 
 **MethodGate**: Pre-dispatch authorization gate with `Permissive`/`Enforced` modes
@@ -168,6 +168,8 @@ enforced/permissive modes + quarantine enforcement.
 | `auth.peer_info` | Stable | Connection origin + token status |
 | `baseline.observe` | Stable | Feed live observation into threat profiler |
 | `defense.status` | Stable | Defense engine status + quarantine snapshot |
+| `method_gate.status` | Stable | Enforcement posture, origin trust policy, public method list |
+| `threat.report` | Stable | Structured threat report + metrics + defense posture |
 | `btsp.negotiate` | Stable | Phase 3 cipher negotiation + encrypted framing |
 | `btsp.capabilities` | Stable | Protocol version, ciphers, key derivation |
 

@@ -1,6 +1,6 @@
 # skunkBat Observability Specification
 
-**Version:** 0.2.14  
+**Version:** 0.2.15  
 **Status:** Implemented  
 **Author:** ecoPrimals Project  
 **Date:** December 27, 2025  

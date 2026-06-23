@@ -1,9 +1,9 @@
 # skunkBat — Handoff Blurb
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
-**Version**: 0.2.14
-**Date**: Jun 22, 2026
-**Wave**: 123
+**Version**: 0.2.15
+**Date**: Jun 23, 2026
+**Wave**: 124
 
 ---
 
@@ -11,10 +11,10 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 510 passing (0 failed) |
+| Tests | 518 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
 | Max file | 728 lines (all under 800L cap) |
-| IPC methods | 20 (all Stable tier, incl. `baseline.observe`, `defense.status`) |
+| IPC methods | 22 (all Stable tier, incl. `method_gate.status`, `threat.report`) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
 | License | AGPL-3.0-or-later (scyBorg triple-copyleft) |
@@ -59,6 +59,12 @@
 - **Quarantine host matching fix**: port stripped from `source_addr` before quarantine lookup
 - **Manual quarantine API**: `SkunkBat::quarantine()` for operator/test injection
 - **26 new enforcement tests**: origin trust, quarantine block/exempt/audit, token extraction, BTSP auth, permissive audit, enforced unknown-method rejection, parse variants
+
+## What's Implemented (Wave 124 — Method Wiring)
+
+- **`method_gate.status` IPC method** (public): reports enforcement mode, origin trust policy (UDS/loopback bypass, remote token-required), public methods list, public prefixes, token extraction format, BTSP elevation status — enables cross-gate security posture probes
+- **`threat.report` IPC method** (protected): structured report with threat count, threat summaries (id/type/severity/source/confidence), full security metrics, and defense posture in one call — the single endpoint for cross-gate threat intelligence
+- **8 new tests**: gate status introspection, public accessibility, permissive/enforced modes, threat report structure, protection level, local origin bypass
 
 ## What's Not Wired (Library-Ready)
 

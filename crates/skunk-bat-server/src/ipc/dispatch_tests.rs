@@ -659,3 +659,87 @@ async fn unknown_method_permissive_gets_method_not_found() {
         "unknown methods in permissive mode pass gate and get METHOD_NOT_FOUND from dispatch"
     );
 }
+
+// === Wave 124: method_gate.status + threat.report ===
+
+#[tokio::test]
+async fn method_gate_status_returns_enforcement_posture() {
+    let state = make_state();
+    let gate = MethodGate::new(EnforcementMode::Enforced);
+    let caller = make_caller();
+    let resp = dispatch(&state, &gate, &caller, make_request("method_gate.status")).await;
+    assert!(resp.error.is_none(), "method_gate.status must succeed");
+    let result = resp.result.unwrap();
+    assert_eq!(result["mode"], "enforced");
+    assert_eq!(result["origin_trust"]["unix"], "bypass");
+    assert_eq!(result["origin_trust"]["loopback"], "bypass");
+    assert_eq!(result["origin_trust"]["remote"], "token_required");
+    assert!(result["public_methods"].is_array());
+    assert!(result["public_prefixes"].is_array());
+    assert_eq!(result["btsp_elevation"], true);
+    assert_eq!(result["token_extraction"], "_auth.token");
+}
+
+#[tokio::test]
+async fn method_gate_status_is_public() {
+    let state = make_state();
+    let gate = MethodGate::new(EnforcementMode::Enforced);
+    let caller = CallerContext::remote();
+    let resp = dispatch(&state, &gate, &caller, make_request("method_gate.status")).await;
+    assert!(
+        resp.error.is_none(),
+        "method_gate.status must be public (accessible without token from remote)"
+    );
+}
+
+#[tokio::test]
+async fn method_gate_status_permissive_mode() {
+    let state = make_state();
+    let gate = make_gate();
+    let caller = make_caller();
+    let resp = dispatch(&state, &gate, &caller, make_request("method_gate.status")).await;
+    let result = resp.result.unwrap();
+    assert_eq!(result["mode"], "permissive");
+}
+
+#[tokio::test]
+async fn threat_report_returns_structured_report() {
+    let state = make_state();
+    let gate = make_gate();
+    let caller = make_caller();
+    let resp = dispatch(&state, &gate, &caller, make_request("threat.report")).await;
+    assert!(resp.error.is_none(), "threat.report must succeed");
+    let result = resp.result.unwrap();
+    assert!(result["threat_count"].is_number());
+    assert!(result["threats"].is_array());
+    assert!(result["metrics"].is_object());
+    assert!(result["defense"].is_object());
+    assert!(result["metrics"]["scans_performed"].is_number());
+    assert!(result["metrics"]["threats_detected"].is_number());
+    assert!(result["defense"]["enabled"].is_boolean());
+}
+
+#[tokio::test]
+async fn threat_report_is_protected() {
+    let state = make_state();
+    let gate = MethodGate::new(EnforcementMode::Enforced);
+    let caller = CallerContext::remote();
+    let resp = dispatch(&state, &gate, &caller, make_request("threat.report")).await;
+    assert_eq!(
+        resp.error.as_ref().unwrap().code,
+        -32001,
+        "threat.report must be protected under enforcement"
+    );
+}
+
+#[tokio::test]
+async fn threat_report_allowed_from_local() {
+    let state = make_state();
+    let gate = MethodGate::new(EnforcementMode::Enforced);
+    let caller = CallerContext::unix();
+    let resp = dispatch(&state, &gate, &caller, make_request("threat.report")).await;
+    assert!(
+        resp.error.is_none(),
+        "threat.report must be allowed from local UDS origin"
+    );
+}

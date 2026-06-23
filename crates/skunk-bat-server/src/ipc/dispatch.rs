@@ -28,6 +28,8 @@ const METHODS: &[&str] = &[
     "security.audit_log",
     "baseline.observe",
     "defense.status",
+    "method_gate.status",
+    "threat.report",
     "lifecycle.state",
     "lifecycle.status",
     "lifecycle.capabilities",
@@ -157,6 +159,8 @@ pub(super) async fn dispatch(
         "auth.check" | "auth.mode" | "auth.peer_info" => {
             dispatch_auth(id, gate, &caller, &request.method)
         }
+        "method_gate.status" => dispatch_method_gate_status(id, gate),
+        "threat.report" => dispatch_threat_report(state, id).await,
         "btsp.capabilities" => dispatch_btsp_capabilities(id),
         _ => Response::error(
             id,
@@ -373,6 +377,70 @@ fn dispatch_auth(
             }),
         ),
         _ => unreachable!(),
+    }
+}
+
+/// `MethodGate` introspection — reports enforcement posture for cross-gate probes.
+fn dispatch_method_gate_status(id: serde_json::Value, gate: &MethodGate) -> Response {
+    use super::method_gate::{PUBLIC_METHOD_PREFIXES, PUBLIC_METHODS};
+    Response::success(
+        id,
+        serde_json::json!({
+            "mode": gate.mode().as_str(),
+            "origin_trust": {
+                "unix": "bypass",
+                "loopback": "bypass",
+                "remote": "token_required"
+            },
+            "public_methods": PUBLIC_METHODS,
+            "public_prefixes": PUBLIC_METHOD_PREFIXES,
+            "token_extraction": "_auth.token",
+            "btsp_elevation": true,
+        }),
+    )
+}
+
+/// Structured threat report — detection results + defense posture in one call.
+async fn dispatch_threat_report(state: &Arc<RwLock<SkunkBat>>, id: serde_json::Value) -> Response {
+    let sb = state.read().await;
+    let threats_result = sb.detect_threats().await;
+    let metrics = sb.get_security_metrics();
+    let defense = sb.defense_status();
+    drop(sb);
+
+    match threats_result {
+        Ok(threats) => {
+            let threat_count = threats.len();
+            let threat_summaries: Vec<serde_json::Value> = threats
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "id": t.id,
+                        "type": format!("{:?}", t.threat_type),
+                        "severity": format!("{:?}", t.severity),
+                        "source": t.source,
+                        "confidence": t.confidence,
+                        "description": t.description,
+                    })
+                })
+                .collect();
+            Response::success(
+                id,
+                serde_json::json!({
+                    "threat_count": threat_count,
+                    "threats": threat_summaries,
+                    "metrics": {
+                        "scans_performed": metrics.scans_performed,
+                        "threats_detected": metrics.threats_detected,
+                        "threats_mitigated": metrics.threats_mitigated,
+                        "connections_quarantined": metrics.connections_quarantined,
+                        "alerts_sent": metrics.alerts_sent,
+                    },
+                    "defense": defense,
+                }),
+            )
+        }
+        Err(e) => Response::error(id, -32000, format!("threat detection failed: {e}")),
     }
 }
 
