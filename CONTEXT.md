@@ -97,7 +97,7 @@ mode semantics for local, loopback, and remote callers.
 
 ## Status
 
-v0.2.15 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.16 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
 **518 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
@@ -146,32 +146,41 @@ enforced/permissive modes + quarantine enforcement.
 
 ## Stadial Composition Readiness
 
-### Method Stability Tiers
+### Method Status (Wave 128 Audit)
 
-| Method | Tier | Notes |
-|--------|------|-------|
-| `health.liveness` | Stable | Always returns `{"status":"alive"}` |
-| `health.readiness` | Stable | Returns primal state |
-| `health.check` | Stable | Full health report with dependency status |
-| `security.scan` | Stable | Network topology reconnaissance |
-| `security.detect` | Stable | Threat detection pipeline |
-| `security.respond` | Stable | Graduated defense response |
-| `security.metrics` | Stable | Observability counters |
-| `security.audit_log` | Stable | Cursor-based event polling (JH-5) |
-| `capabilities.list` | Stable | Wire Standard L3 compliant |
-| `identity.get` | Stable | Wire Standard L3 compliant |
-| `lifecycle.status` | Stable | Deployment convergence health endpoint |
-| `lifecycle.state` | Stable | Current primal state |
-| `lifecycle.capabilities` | Stable | All registered methods |
-| `auth.check` | Stable | Token presence + gate mode |
-| `auth.mode` | Stable | Current enforcement mode |
-| `auth.peer_info` | Stable | Connection origin + token status |
-| `baseline.observe` | Stable | Feed live observation into threat profiler |
-| `defense.status` | Stable | Defense engine status + quarantine snapshot |
-| `method_gate.status` | Stable | Enforcement posture, origin trust policy, public method list |
-| `threat.report` | Stable | Structured threat report + metrics + defense posture |
-| `btsp.negotiate` | Stable | Phase 3 cipher negotiation + encrypted framing |
-| `btsp.capabilities` | Stable | Protocol version, ciphers, key derivation |
+| Method | Tier | Impl | Notes |
+|--------|------|------|-------|
+| `health.liveness` | Stable | Complete | Always `{"status":"alive"}` |
+| `health.readiness` | Stable | Complete | Returns primal state |
+| `health.check` | Stable | Complete | Full health report with dependency status |
+| `security.scan` | Stable | Partial | Self-only discovery; empty topology (needs ToadStool wiring) |
+| `security.detect` | Stable | Partial | 6 categories; genetic/topology need runtime providers |
+| `security.respond` | Stable | Partial | Real policy engine; quarantine in-memory only |
+| `security.metrics` | Stable | Partial | Flat counters; not spec's nested observability model |
+| `security.audit_log` | Stable | Complete | JH-5 ring buffer with cursor-based polling |
+| `baseline.observe` | Stable | Partial | Works when called; no transport auto-feed |
+| `defense.status` | Stable | Complete | Enabled, auto-response, quarantine snapshot |
+| `method_gate.status` | Stable | Complete | Enforcement posture for cross-gate probes |
+| `threat.report` | Stable | Partial | Aggregates detect+metrics+defense; inherits detect limits |
+| `capabilities.list` | Stable | Complete | Wire Standard L2/L3 |
+| `identity.get` | Stable | Complete | Wire Standard L2 |
+| `lifecycle.*` (3) | Stable | Complete | State, status, capabilities |
+| `auth.*` (3) | Stable | Complete | Token presence + gate mode + peer info |
+| `btsp.negotiate` | Stable | Complete | Phase 3 handshake + session registry |
+| `btsp.capabilities` | Stable | Complete | Cipher advertisement |
+
+**14 Complete, 8 Partial** (all functional, partial = scope limits documented above).
+
+### Composable Primitive Gaps
+
+`COMPOSABLE_PRIMITIVES_SPEC.md` describes ~17 methods across 5 domains that are not yet
+shipped as IPC. These are design-phase targets, not missing implementations:
+
+- `baseline.{query, anomaly, reset}` — profiler exists, IPC wrappers not shipped
+- `metadata.{classify, fingerprint}` — no IPC surface
+- `response.{evaluate, escalate, deescalate, status}` — defense engine is internal
+- `lineage.{challenge, verify}` — consumes BearDog, does not re-expose
+- `health.{system, network, resource}` — load sensing internal only
 
 ### Degradation Behavior
 

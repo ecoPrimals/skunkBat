@@ -1,9 +1,9 @@
 # skunkBat — Handoff Blurb
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
-**Version**: 0.2.15
-**Date**: Jun 23, 2026
-**Wave**: 124
+**Version**: 0.2.16
+**Date**: Jun 28, 2026
+**Wave**: 128
 
 ---
 
@@ -78,14 +78,64 @@ These modules exist as complete library APIs but are not wired into the server b
 | `UniversalAdapter` | Experimental | Capability-based adapter pattern |
 | `MeshRelay` transport | Stub | Returns error; transport path not implemented |
 
-## Known Gaps (for upstream teams)
+## Method Gap Audit (Wave 128)
 
-1. **RuntimeVerifier injection**: server probes for BearDog at startup but can't inject it into `ThreatDetector` without making `SkunkBat` generic (structural refactor, blocked on BearDog BTSP).
-2. **Defense actions in-memory only**: Quarantine/block update a `HashMap`, reject at dispatch gate, and emit traces — no OS firewall/nftables integration yet.
-3. **riboCipher Tiers 2/3**: Mito (`0xED`) and Nuclear (`0xEE`) signals logged and rejected — not implemented (needs upstream crypto spec).
-4. **MeshRelay transport**: `TransportEndpoint::MeshRelay` returns error stub — needs Songbird mesh API for relay protocol.
-5. **Auth gate token signature validation**: bearer token extraction and BTSP elevation wired (Wave 123); signature/HMAC verification pending (blocked on BearDog ionic token spec).
-6. **ToadStool discovery**: library-ready but `ReconnaissanceEngine` still uses `LocalDiscovery` at runtime.
+### IPC Methods — 22 dispatched (23 with alias), all tested
+
+| Method | Status | Notes |
+|--------|--------|-------|
+| `health.*` (3) | **Complete** | Full health triad |
+| `security.scan` | **Partial** | Self-only discovery; `LocalDiscovery` returns one node, empty topology |
+| `security.detect` | **Partial** | 6 categories run; genetic/topology need runtime providers |
+| `security.respond` | **Partial** | Real policy engine; quarantine in-memory only |
+| `security.metrics` | **Partial** | Flat 5 counters; not spec's nested observability model |
+| `security.audit_log` | **Complete** | JH-5 ring buffer with cursor-based polling |
+| `baseline.observe` | **Partial** | Works when called; no transport auto-feed |
+| `defense.status` | **Complete** | |
+| `method_gate.status` | **Complete** | Cross-gate posture introspection |
+| `threat.report` | **Partial** | Aggregates detect+metrics+defense; inherits detect limits |
+| `lifecycle.*` (3) | **Complete** | |
+| `capabilities.list` | **Complete** | Wire Standard L2/L3 |
+| `identity.get` | **Complete** | Wire Standard L2 |
+| `auth.*` (3) | **Complete** | Token presence + gate mode |
+| `btsp.*` (2) | **Complete** | Phase 3 handshake + cipher negotiation |
+
+### Composable Primitive Domains — spec'd but not shipped
+
+From `COMPOSABLE_PRIMITIVES_SPEC.md` (~17 additional methods described):
+
+| Domain | Spec methods | Status |
+|--------|-------------|--------|
+| `baseline` | `query`, `anomaly`, `reset` | Not shipped (only `observe` live) |
+| `metadata` | `classify`, `fingerprint` | Not shipped |
+| `response` | `evaluate`, `escalate`, `deescalate`, `status` | Not shipped |
+| `lineage` | `challenge`, `verify` | Not shipped (consumes BearDog, does not expose) |
+| `health` | `system`, `network`, `resource` | Not shipped (load sensing internal only) |
+
+### Integration Wiring Gaps
+
+| Module | Status | Impact |
+|--------|--------|--------|
+| `RuntimeVerifier` → `ThreatDetector` | Probed only | Genetic detection degraded without BearDog injection |
+| `ToadStool` → `ReconnaissanceEngine` | Library-ready | `security.scan` cannot discover mesh primals |
+| `NestGate` content protection | Library-ready | No `content.*` IPC |
+| `MeshRelay` transport | Stub | Returns error; needs Songbird mesh API |
+
+### Blocked on Upstream
+
+| Gap | Blocker |
+|-----|---------|
+| Token signature/HMAC validation | BearDog ionic token spec |
+| RuntimeVerifier injection | SkunkBat generic refactor (structural) |
+| riboCipher Tiers 2/3 (Mito/Nuclear) | Upstream crypto spec |
+| Thymic selection (entire spec) | BearDog + runtime verifier prerequisite |
+| OS firewall integration | nftables binding (design phase) |
+
+### Fixed in Wave 128
+
+- **Registration honesty**: narrowed from 6 capabilities (including `metadata`, `response`, `lineage` with no IPC) to 9 actually-served domains
+- **`capabilities.list` completeness**: `provided_capabilities` now lists all 9 domains (was 3)
+- **`announce_payload` method list**: now uses dispatch table directly (was stale 18-method hardcoded list)
 
 ## Cascade Status
 
@@ -100,11 +150,10 @@ Key deps: `tokio`, `chacha20poly1305`, `hkdf`, `sha2`, `serde`/`serde_json`, `tr
 
 ## For Upstream Overwatch
 
+- Registration honest — only advertises domains with live IPC methods
+- `capabilities.list` self-consistent with dispatch table
 - All 6 original known gaps resolved (profiler, topology, sessions, probe, defense, auto-response)
-- Zero known P0 debt remaining
+- Zero known P0 debt remaining (Wave 128 registration honesty was the last)
 - All detection constants configurable
 - All production error paths surfaced (no silent drops)
 - No hardcoded primal names in routing
-- Registration uses `env_keys` constants
-- Federation cursor stops on failure (retry semantics)
-- Forwarding cursor stops on failure (retry semantics)

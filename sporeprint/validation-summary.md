@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 518 tests, 22 IPC methods."
-date = 2026-06-23
+description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 518 tests, 22 IPC methods. Method gap audit complete (Wave 128)."
+date = 2026-06-28
 
 [taxonomies]
 primals = ["skunkbat"]

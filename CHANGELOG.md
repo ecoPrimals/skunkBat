@@ -6,6 +6,30 @@ All notable changes to skunkBat are documented here.
 
 ---
 
+## [0.2.16] — Wave 128: Method Gap Audit & Registration Honesty
+
+### Fixed
+
+- **Registration honesty**: narrowed advertised capabilities from 6 (including
+  `metadata`, `response`, `lineage` with no IPC methods) to 9 actually-served domains
+- **`capabilities.list` completeness**: `provided_capabilities` now lists all 9
+  shipped domains with their methods (was only 3: security, health, btsp)
+- **`announce_payload` stale method list**: replaced hardcoded 18-method list with
+  `all_methods()` sourced from dispatch table (now 23 methods)
+- **Clippy `needless_collect`**: replaced `collect()` + `.len()` / `.is_empty()` with
+  `.count()` / `!.any()` in threat tests
+- **Unfulfilled `#[expect]`**: removed stale `too_many_lines` on `defense_actions` example
+
+### Changed
+
+- CONTEXT.md method table now shows implementation completeness per method
+  (14 Complete, 8 Partial with documented scope limits)
+- CONTEXT.md documents all composable primitive gaps from `COMPOSABLE_PRIMITIVES_SPEC.md`
+- Handoff blurb restructured with full method gap audit, integration wiring gaps,
+  and upstream blockers
+
+---
+
 ## [0.2.15] — Wave 124: Method Wiring
 
 ### Added

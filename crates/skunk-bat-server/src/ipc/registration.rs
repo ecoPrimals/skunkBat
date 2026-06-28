@@ -12,10 +12,20 @@
 
 use std::time::Duration;
 
-/// Capabilities registered for discovery — maps to the five composable domains
-/// from `COMPOSABLE_PRIMITIVES_SPEC.md` plus the aggregate `security` tag.
+/// Capabilities registered for discovery — only advertise domains with live IPC.
+///
+/// `metadata`, `response`, `lineage` are spec-designed composable primitives
+/// but have no IPC methods yet. They will be added here when shipped.
 const CAPABILITIES: &[&str] = &[
-    "security", "baseline", "metadata", "response", "lineage", "health",
+    "security",
+    "health",
+    "defense",
+    "baseline",
+    "threat",
+    "auth",
+    "lifecycle",
+    "method_gate",
+    "btsp",
 ];
 
 const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(3);
@@ -113,7 +123,10 @@ pub async fn neural_announce(socket_path: &str) {
     .await
     {
         Ok(_) => {
-            tracing::info!("announced to Neural API (tower tier, 3 capabilities)");
+            tracing::info!(
+                "announced to Neural API (tower tier, {} capabilities)",
+                CAPABILITIES.len()
+            );
         }
         Err(e) => {
             tracing::debug!("Neural API announce unavailable: {e} — routing passive");
@@ -129,27 +142,8 @@ pub(super) fn announce_payload(socket_path: &str) -> serde_json::Value {
         "primal": skunk_bat_core::PRIMAL_ID,
         "version": env!("CARGO_PKG_VERSION"),
         "pid": std::process::id(),
-        "capabilities": ["defense", "threat_detection", "baseline"],
-        "methods": [
-            "health.liveness",
-            "health.readiness",
-            "health.check",
-            "security.scan",
-            "security.detect",
-            "security.respond",
-            "security.metrics",
-            "security.audit_log",
-            "capabilities.list",
-            "identity.get",
-            "lifecycle.state",
-            "lifecycle.status",
-            "lifecycle.capabilities",
-            "auth.check",
-            "auth.mode",
-            "auth.peer_info",
-            "btsp.negotiate",
-            "btsp.capabilities"
-        ],
+        "capabilities": CAPABILITIES,
+        "methods": super::dispatch::all_methods(),
         "socket": socket_path,
         "signal_tiers": ["tower"],
         "cost_hints": {
@@ -233,11 +227,19 @@ mod tests {
     fn announce_payload_methods_complete() {
         let payload = announce_payload("/tmp/test.sock");
         let methods = payload["methods"].as_array().expect("methods array");
-        assert_eq!(methods.len(), 18, "all 18 registered methods");
+        assert!(
+            methods.len() >= 22,
+            "must advertise all shipped methods, got {}",
+            methods.len()
+        );
         let strs: Vec<&str> = methods.iter().filter_map(|m| m.as_str()).collect();
         assert!(strs.contains(&"btsp.capabilities"));
         assert!(strs.contains(&"security.audit_log"));
         assert!(strs.contains(&"health.liveness"));
+        assert!(strs.contains(&"method_gate.status"));
+        assert!(strs.contains(&"threat.report"));
+        assert!(strs.contains(&"baseline.observe"));
+        assert!(strs.contains(&"defense.status"));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 Defensive network security primal for sovereign computing environments.
 
-**Version**: 0.2.15
+**Version**: 0.2.16
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 ---

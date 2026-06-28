@@ -40,13 +40,12 @@ async fn test_threat_detection_with_local_verifier() {
     let config = test_config();
     let detector = ThreatDetector::new(&config);
     let threats = detector.detect().await.expect("detection should succeed");
-    let genetic: Vec<_> = threats
+    let genetic_count = threats
         .iter()
         .filter(|t| t.id.starts_with("genetic-degraded-"))
-        .collect();
+        .count();
     assert_eq!(
-        genetic.len(),
-        1,
+        genetic_count, 1,
         "LocalLineageVerifier errors → exactly one degraded genetic threat"
     );
 }
@@ -59,11 +58,10 @@ async fn test_threat_detection_no_lineage_id() {
     };
     let detector = ThreatDetector::new(&config);
     let threats = detector.detect().await.expect("detection should succeed");
-    let genetic: Vec<_> = threats
-        .iter()
-        .filter(|t| t.id.starts_with("genetic-"))
-        .collect();
-    assert!(genetic.is_empty(), "no lineage_id → no genetic detection");
+    assert!(
+        !threats.iter().any(|t| t.id.starts_with("genetic-")),
+        "no lineage_id → no genetic detection"
+    );
 }
 
 #[tokio::test]

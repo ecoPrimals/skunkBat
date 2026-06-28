@@ -77,6 +77,11 @@ fn serialize<T: Serialize>(id: serde_json::Value, value: T) -> Response {
     }
 }
 
+/// All advertised methods (application + transport) for registration payloads.
+pub(super) fn all_methods() -> Vec<&'static str> {
+    METHODS.iter().chain(TRANSPORT_METHODS).copied().collect()
+}
+
 /// Build the Capability Wire Standard L2/L3 response body.
 fn capabilities_response() -> serde_json::Value {
     let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
@@ -88,24 +93,15 @@ fn capabilities_response() -> serde_json::Value {
         "count": count,
         "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
         "provided_capabilities": [
-            {
-                "type": "security",
-                "methods": ["scan", "detect", "respond", "metrics", "audit_log"],
-                "version": PRIMAL_VERSION,
-                "description": "Network reconnaissance, threat detection, and automated defense"
-            },
-            {
-                "type": "health",
-                "methods": ["liveness", "readiness", "check"],
-                "version": PRIMAL_VERSION,
-                "description": "Health monitoring endpoints"
-            },
-            {
-                "type": "btsp",
-                "methods": ["negotiate", "capabilities"],
-                "version": PRIMAL_VERSION,
-                "description": "BTSP Phase 3 transport encryption"
-            }
+            { "type": "security", "methods": ["scan", "detect", "respond", "metrics", "audit_log"] },
+            { "type": "health", "methods": ["liveness", "readiness", "check"] },
+            { "type": "defense", "methods": ["status"] },
+            { "type": "baseline", "methods": ["observe"] },
+            { "type": "threat", "methods": ["report"] },
+            { "type": "method_gate", "methods": ["status"] },
+            { "type": "auth", "methods": ["check", "mode", "peer_info"] },
+            { "type": "lifecycle", "methods": ["state", "status", "capabilities"] },
+            { "type": "btsp", "methods": ["negotiate", "capabilities"] },
         ],
         "consumed_capabilities": CONSUMED_CAPABILITIES,
         "protocol": "jsonrpc-2.0",
