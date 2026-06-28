@@ -63,7 +63,11 @@ impl ThreatDetector {
     /// observations so anomaly detection is active from first `detect()` call.
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
-        let mut profiler = StatisticalProfiler::new(config.thresholds.sigma_threshold);
+        let mut profiler = StatisticalProfiler::with_config(
+            config.thresholds.sigma_threshold,
+            config.thresholds.behavioral_rolling_window,
+            config.thresholds.behavioral_min_observations,
+        );
         profiler.seed_baseline(&baseline::normal_baseline_with_port(
             config.common.listen_port,
         ));
@@ -222,6 +226,40 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
                 }
             })
             .collect()
+    }
+
+    /// Query the baseline profiler's current statistics.
+    ///
+    /// Returns `None` if the baseline is not established (< 10 observations).
+    pub async fn baseline_stats(&self) -> Option<types::BaselineStats> {
+        self.baseline_profiler.read().await.query_stats()
+    }
+
+    /// Check an observation against the baseline and return any anomalies.
+    ///
+    /// This is the composable read-only anomaly primitive — callers can inspect
+    /// deviations without feeding the observation into the rolling window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if anomaly detection fails.
+    pub async fn check_anomalies(
+        &self,
+        observation: &types::Observation,
+    ) -> Result<Vec<types::Anomaly>, SkunkBatError> {
+        self.baseline_profiler
+            .read()
+            .await
+            .detect_anomalies(observation)
+            .await
+    }
+
+    /// Reset the baseline profiler, discarding learned observations.
+    ///
+    /// If `reseed` is true, re-seeds with default baseline data so anomaly
+    /// detection remains active immediately after reset.
+    pub async fn reset_baseline(&self, reseed: bool) {
+        self.baseline_profiler.write().await.reset(reseed);
     }
 
     /// Access the lineage identifier (if configured).

@@ -70,6 +70,7 @@ impl DefenseEngine {
     /// # Errors
     ///
     /// Returns an error if the threat response fails.
+    #[must_use = "defense action should be logged or inspected"]
     pub fn respond(&self, threat: &Threat) -> Result<ActionType, SkunkBatError> {
         if !self.enabled {
             tracing::debug!("Defense engine disabled, threat logged only");
@@ -218,7 +219,7 @@ impl DefenseEngine {
         );
     }
 
-    /// Manually quarantine a source address (operator or test use).
+    /// Manually quarantine a source address (operator, IPC, or test use).
     pub fn quarantine(&self, source: &str, reason: &str, threat_id: &str) {
         if let Ok(mut map) = self.quarantine_map.lock() {
             map.insert(
@@ -231,6 +232,32 @@ impl DefenseEngine {
                 },
             );
         }
+    }
+
+    /// Release a source address from quarantine. Returns `true` if the source
+    /// was quarantined and has been released, `false` if it wasn't quarantined.
+    pub fn release(&self, source: &str) -> bool {
+        self.quarantine_map
+            .lock()
+            .map(|mut map| map.remove(source).is_some())
+            .unwrap_or(false)
+    }
+
+    /// Evaluate a threat and return the recommended action without executing it.
+    ///
+    /// This is the composable read-only primitive — callers can inspect the
+    /// recommendation before deciding whether to execute via `respond()`.
+    #[must_use]
+    pub fn evaluate(&self, threat: &Threat) -> DefenseAction {
+        if !self.enabled {
+            return DefenseAction {
+                action_type: ActionType::MonitorAndAlert,
+                target: threat.source.clone(),
+                requires_approval: true,
+                reason: "defense engine disabled — advisory only".to_owned(),
+            };
+        }
+        self.determine_action(threat)
     }
 
     /// Check whether a source address is currently quarantined.

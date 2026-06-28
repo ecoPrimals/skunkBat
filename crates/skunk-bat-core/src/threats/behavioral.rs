@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 
 use super::traits::BaselineProfiler;
-use super::types::{Anomaly, Observation};
+use super::types::{Anomaly, BaselineStats, DimensionStats, Observation};
 use crate::error::SkunkBatError;
 
 /// Statistical baseline profiler using moving averages and standard deviations.
@@ -16,6 +16,8 @@ use crate::error::SkunkBatError;
 pub struct StatisticalProfiler {
     observations: VecDeque<Observation>,
     threshold: f64,
+    rolling_window: usize,
+    min_observations: usize,
 }
 
 impl StatisticalProfiler {
@@ -27,6 +29,23 @@ impl StatisticalProfiler {
         Self {
             observations: VecDeque::new(),
             threshold,
+            rolling_window: 100,
+            min_observations: 10,
+        }
+    }
+
+    /// Create a profiler with configurable window and minimum observation count.
+    #[must_use]
+    pub const fn with_config(
+        threshold: f64,
+        rolling_window: usize,
+        min_observations: usize,
+    ) -> Self {
+        Self {
+            observations: VecDeque::new(),
+            threshold,
+            rolling_window,
+            min_observations,
         }
     }
 
@@ -37,11 +56,10 @@ impl StatisticalProfiler {
     /// with representative "normal" traffic to teach skunkBat what benign looks like,
     /// then anomalous traffic (fuzz, enumeration) will trigger detection.
     pub fn seed_baseline(&mut self, observations: &[Observation]) {
-        const ROLLING_WINDOW: usize = 100;
         for obs in observations {
             self.observations.push_back(obs.clone());
         }
-        while self.observations.len() > ROLLING_WINDOW {
+        while self.observations.len() > self.rolling_window {
             self.observations.pop_front();
         }
         if self.is_established() {
@@ -50,6 +68,52 @@ impl StatisticalProfiler {
                 self.observations.len()
             );
         }
+    }
+
+    /// Reset the profiler, discarding all learned observations.
+    ///
+    /// Optionally re-seeds with baseline data so anomaly detection remains active.
+    pub fn reset(&mut self, reseed: bool) {
+        self.observations.clear();
+        if reseed {
+            self.seed_baseline(&super::baseline::normal_baseline());
+        }
+    }
+
+    /// Query current profiler statistics for each observed dimension.
+    ///
+    /// Returns `None` if the baseline is not established (< 10 observations).
+    #[must_use]
+    pub fn query_stats(&self) -> Option<BaselineStats> {
+        if !self.is_established() {
+            return None;
+        }
+        let connection_rate = Self::stats_over(self.observations.iter().map(|o| o.connection_rate));
+        #[expect(clippy::cast_precision_loss, reason = "traffic volumes fit in f64")]
+        let traffic_volume =
+            Self::stats_over(self.observations.iter().map(|o| o.traffic_volume as f64));
+        #[expect(clippy::cast_precision_loss, reason = "port counts fit in f64")]
+        let port_diversity = Self::stats_over(
+            self.observations
+                .iter()
+                .map(|o| o.ports_accessed.len() as f64),
+        );
+        Some(BaselineStats {
+            observation_count: self.observations.len(),
+            threshold: self.threshold,
+            connection_rate: connection_rate.map(|(m, s)| DimensionStats {
+                mean: m,
+                std_dev: s,
+            }),
+            traffic_volume: traffic_volume.map(|(m, s)| DimensionStats {
+                mean: m,
+                std_dev: s,
+            }),
+            port_diversity: port_diversity.map(|(m, s)| DimensionStats {
+                mean: m,
+                std_dev: s,
+            }),
+        })
     }
 
     /// Single-pass mean and standard deviation over an iterator (Welford-like two-pass
@@ -77,7 +141,7 @@ impl StatisticalProfiler {
 
 impl BaselineProfiler for StatisticalProfiler {
     fn is_established(&self) -> bool {
-        self.observations.len() >= 10
+        self.observations.len() >= self.min_observations
     }
 
     fn latest_observation(&self) -> Option<&Observation> {
@@ -85,10 +149,8 @@ impl BaselineProfiler for StatisticalProfiler {
     }
 
     async fn update(&mut self, observation: &Observation) -> Result<(), SkunkBatError> {
-        const ROLLING_WINDOW: usize = 100;
-
         self.observations.push_back(observation.clone());
-        if self.observations.len() > ROLLING_WINDOW {
+        if self.observations.len() > self.rolling_window {
             self.observations.pop_front();
         }
 
@@ -162,6 +224,14 @@ impl BaselineProfiler for StatisticalProfiler {
         }
 
         Ok(anomalies)
+    }
+
+    fn query_stats(&self) -> Option<BaselineStats> {
+        self.query_stats()
+    }
+
+    fn reset(&mut self, reseed: bool) {
+        self.reset(reseed);
     }
 }
 

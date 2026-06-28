@@ -120,7 +120,7 @@ impl SkunkBat {
             threat_detector: ThreatDetector::new(&config),
             defense: DefenseEngine::new(&config),
             observer: SecurityObserver::new(&config),
-            audit_log: AuditLog::new(),
+            audit_log: AuditLog::with_capacity(config.thresholds.audit_log_capacity),
             config,
             state: PrimalState::Created,
         }
@@ -199,6 +199,39 @@ impl SkunkBat {
     /// Manually quarantine a source address.
     pub fn quarantine(&self, source: &str, reason: &str, threat_id: &str) {
         self.defense.quarantine(source, reason, threat_id);
+    }
+
+    /// Release a source address from quarantine. Returns `true` if it was quarantined.
+    pub fn release_quarantine(&self, source: &str) -> bool {
+        self.defense.release(source)
+    }
+
+    /// Evaluate a threat and return the recommended action without executing it.
+    #[must_use]
+    pub fn evaluate_threat(&self, threat: &threats::Threat) -> defense::DefenseAction {
+        self.defense.evaluate(threat)
+    }
+
+    /// Query the baseline profiler's current statistics.
+    pub async fn baseline_stats(&self) -> Option<threats::types::BaselineStats> {
+        self.threat_detector.baseline_stats().await
+    }
+
+    /// Check an observation against the baseline for anomalies (read-only).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if anomaly detection fails.
+    pub async fn check_anomalies(
+        &self,
+        observation: &threats::types::Observation,
+    ) -> Result<Vec<threats::types::Anomaly>, SkunkBatError> {
+        self.threat_detector.check_anomalies(observation).await
+    }
+
+    /// Reset the baseline profiler. If `reseed` is true, re-seeds with defaults.
+    pub async fn reset_baseline(&self, reseed: bool) {
+        self.threat_detector.reset_baseline(reseed).await;
     }
 
     /// Check if a source address is currently quarantined.

@@ -27,7 +27,13 @@ const METHODS: &[&str] = &[
     "security.metrics",
     "security.audit_log",
     "baseline.observe",
+    "baseline.query",
+    "baseline.anomaly",
+    "baseline.reset",
     "defense.status",
+    "defense.quarantine",
+    "defense.release",
+    "response.evaluate",
     "method_gate.status",
     "threat.report",
     "lifecycle.state",
@@ -95,8 +101,9 @@ fn capabilities_response() -> serde_json::Value {
         "provided_capabilities": [
             { "type": "security", "methods": ["scan", "detect", "respond", "metrics", "audit_log"] },
             { "type": "health", "methods": ["liveness", "readiness", "check"] },
-            { "type": "defense", "methods": ["status"] },
-            { "type": "baseline", "methods": ["observe"] },
+            { "type": "defense", "methods": ["status", "quarantine", "release"] },
+            { "type": "baseline", "methods": ["observe", "query", "anomaly", "reset"] },
+            { "type": "response", "methods": ["evaluate"] },
             { "type": "threat", "methods": ["report"] },
             { "type": "method_gate", "methods": ["status"] },
             { "type": "auth", "methods": ["check", "mode", "peer_info"] },
@@ -141,11 +148,27 @@ pub(super) async fn dispatch(
         }
         "security.respond" => dispatch_respond(state, id, request.params).await,
         "baseline.observe" => dispatch_baseline_observe(state, id, request.params).await,
+        "baseline.query" => super::dispatch_composable::dispatch_baseline_query(state, id).await,
+        "baseline.anomaly" => {
+            super::dispatch_composable::dispatch_baseline_anomaly(state, id, request.params).await
+        }
+        "baseline.reset" => {
+            super::dispatch_composable::dispatch_baseline_reset(state, id, request.params).await
+        }
         "defense.status" => {
             let sb = state.read().await;
             let status = sb.defense_status();
             drop(sb);
             Response::success(id, status)
+        }
+        "defense.quarantine" => {
+            super::dispatch_composable::dispatch_defense_quarantine(state, id, request.params).await
+        }
+        "defense.release" => {
+            super::dispatch_composable::dispatch_defense_release(state, id, request.params).await
+        }
+        "response.evaluate" => {
+            super::dispatch_composable::dispatch_response_evaluate(state, id, request.params).await
         }
         "lifecycle.state" | "lifecycle.status" | "lifecycle.capabilities" => {
             dispatch_lifecycle(state, id, &request.method).await

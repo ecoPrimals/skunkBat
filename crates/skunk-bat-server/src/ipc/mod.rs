@@ -13,6 +13,7 @@
 //! - Standalone startup (degrades gracefully without ecosystem)
 
 mod dispatch;
+mod dispatch_composable;
 mod jsonrpc;
 mod method_gate;
 mod registration;

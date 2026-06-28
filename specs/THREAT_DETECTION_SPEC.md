@@ -1,6 +1,6 @@
 # skunkBat Threat Detection Specification
 
-**Version:** 0.2.16  
+**Version:** 0.2.17  
 **Status:** 6-category detection implemented; thymic selection and bond-type classification in design  
 **Author:** ecoPrimals Project  
 **Date:** April 2026 (evolved from December 2025 draft)  

@@ -1,6 +1,6 @@
 # skunkBat Automated Defense Specification
 
-**Version:** 0.2.16  
+**Version:** 0.2.17  
 **Status:** Implemented  
 **Author:** ecoPrimals Project  
 **Date:** December 27, 2025  
@@ -16,7 +16,7 @@ skunkBat automated defense provides **defensive responses to detected threats** 
 
 ---
 
-> **Implementation Note (v0.2.16):** The core defense engine is implemented with
+> **Implementation Note (v0.2.17):** The core defense engine is implemented with
 > four action types: `MonitorAndAlert`, `Quarantine`, `QuarantineAndAlert`, `Block`.
 > Quarantine thresholds are configurable via `ThreatThresholds`. Auto-response
 > gating, quarantine tracking, and dispatch-level enforcement are live.

@@ -7,7 +7,7 @@
 
 [primal]
 name = "skunkbat"
-version = "0.2.16"
+version = "0.2.17"
 description = "Defensive network security — metadata-only threat detection, graduated response, security observability"
 license = "AGPL-3.0-or-later"
 protocol = "jsonrpc-2.0"
@@ -18,8 +18,8 @@ description = "Health, liveness, and readiness probes"
 methods = ["liveness", "readiness", "check"]
 
 [domains.defense]
-description = "Defense subsystem health probe for gate deployment"
-methods = ["status"]
+description = "Defense subsystem: status, quarantine, release"
+methods = ["status", "quarantine", "release"]
 
 [domains.security]
 description = "Threat detection, response, metrics, and audit trail"
@@ -46,8 +46,12 @@ description = "Authorization and method gate status"
 methods = ["check", "mode", "peer_info"]
 
 [domains.baseline]
-description = "Live observation feed for threat profiler"
-methods = ["observe"]
+description = "Behavioral baseline: observe, query, anomaly, reset"
+methods = ["observe", "query", "anomaly", "reset"]
+
+[domains.response]
+description = "Composable threat evaluation primitive"
+methods = ["evaluate"]
 
 [domains.method_gate]
 description = "MethodGate enforcement posture introspection"
@@ -180,6 +184,36 @@ stability = "beta"
 [operations."baseline.observe"]
 depends_on = []
 cost = "low"
+stability = "stable"
+
+[operations."baseline.query"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."baseline.anomaly"]
+depends_on = ["baseline.observe"]
+cost = "medium"
+stability = "stable"
+
+[operations."baseline.reset"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."defense.quarantine"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."defense.release"]
+depends_on = []
+cost = "low"
+stability = "stable"
+
+[operations."response.evaluate"]
+depends_on = ["security.detect"]
+cost = "medium"
 stability = "stable"
 
 [operations."btsp.negotiate"]

@@ -14,13 +14,14 @@ use std::time::Duration;
 
 /// Capabilities registered for discovery — only advertise domains with live IPC.
 ///
-/// `metadata`, `response`, `lineage` are spec-designed composable primitives
+/// `metadata` and `lineage` are spec-designed composable primitives
 /// but have no IPC methods yet. They will be added here when shipped.
 const CAPABILITIES: &[&str] = &[
     "security",
     "health",
     "defense",
     "baseline",
+    "response",
     "threat",
     "auth",
     "lifecycle",

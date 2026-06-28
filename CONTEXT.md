@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-518 tests passing (core + integrations + server + transport + chaos), all workspace.
+532 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
@@ -97,10 +97,10 @@ mode semantics for local, loopback, and remote callers.
 
 ## Status
 
-v0.2.16 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.17 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**518 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
+**532 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
 the 800-line cap. All thresholds configurable via `ThreatThresholds` — zero magic numbers.
 Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkdf, sha2).
 `async-trait` eliminated and banned — native RPITIT throughout.
@@ -108,7 +108,8 @@ Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkd
 **IPC**: JSON-RPC 2.0 over TCP + UDS with BTSP Phase 1/2/3. BearDog-delegated handshake,
 `btsp.negotiate` with session registry, `ChaCha20-Poly1305` AEAD encrypted framing.
 riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compliance.
-22 stable IPC methods (incl. `baseline.observe`, `defense.status`, `method_gate.status`, `threat.report`). `hmac-plain` cipher recognized but
+28 stable IPC methods — 6 composable primitives shipped in v0.2.17 (`baseline.{query,anomaly,reset}`,
+`defense.{quarantine,release}`, `response.evaluate`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
 
 **MethodGate**: Pre-dispatch authorization gate with `Permissive`/`Enforced` modes
@@ -159,7 +160,13 @@ enforced/permissive modes + quarantine enforcement.
 | `security.metrics` | Stable | Partial | Flat counters; not spec's nested observability model |
 | `security.audit_log` | Stable | Complete | JH-5 ring buffer with cursor-based polling |
 | `baseline.observe` | Stable | Partial | Works when called; no transport auto-feed |
+| `baseline.query` | Stable | Complete | Profiler statistics across all dimensions |
+| `baseline.anomaly` | Stable | Complete | Read-only anomaly check against baseline |
+| `baseline.reset` | Stable | Complete | Reset profiler with optional re-seed |
 | `defense.status` | Stable | Complete | Enabled, auto-response, quarantine snapshot |
+| `defense.quarantine` | Stable | Complete | Manual quarantine + audit log |
+| `defense.release` | Stable | Complete | Release from quarantine + audit log |
+| `response.evaluate` | Stable | Complete | Read-only action recommendation |
 | `method_gate.status` | Stable | Complete | Enforcement posture for cross-gate probes |
 | `threat.report` | Stable | Partial | Aggregates detect+metrics+defense; inherits detect limits |
 | `capabilities.list` | Stable | Complete | Wire Standard L2/L3 |
@@ -169,16 +176,14 @@ enforced/permissive modes + quarantine enforcement.
 | `btsp.negotiate` | Stable | Complete | Phase 3 handshake + session registry |
 | `btsp.capabilities` | Stable | Complete | Cipher advertisement |
 
-**14 Complete, 8 Partial** (all functional, partial = scope limits documented above).
+**21 Complete, 7 Partial** (all functional, partial = scope limits documented above).
 
 ### Composable Primitive Gaps
 
-`COMPOSABLE_PRIMITIVES_SPEC.md` describes ~17 methods across 5 domains that are not yet
-shipped as IPC. These are design-phase targets, not missing implementations:
+`COMPOSABLE_PRIMITIVES_SPEC.md` describes additional methods that are not yet shipped:
 
-- `baseline.{query, anomaly, reset}` — profiler exists, IPC wrappers not shipped
 - `metadata.{classify, fingerprint}` — no IPC surface
-- `response.{evaluate, escalate, deescalate, status}` — defense engine is internal
+- `response.{escalate, deescalate, status}` — `evaluate` shipped, workflow primitives pending
 - `lineage.{challenge, verify}` — consumes BearDog, does not re-expose
 - `health.{system, network, resource}` — load sensing internal only
 

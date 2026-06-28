@@ -1,6 +1,6 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 518 tests, 22 IPC methods. Method gap audit complete (Wave 128)."
+description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives. 532 tests, 28 IPC methods."
 date = 2026-06-28
 
 [taxonomies]
@@ -13,7 +13,7 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 518 passing
+- **Tests**: 532 passing
 - **Source**: max 728 lines (no file exceeds 800L)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
@@ -34,11 +34,13 @@ springs = []
 | `audit` | JH-5 structured security event trail + cross-primal forwarding |
 | `btsp` | Phase 3 cipher negotiation + encrypted framing |
 
-## Methods (22 — all Stable tier)
+## Methods (28 — all Stable tier)
 
 - `health.liveness`, `health.readiness`, `health.check`
 - `security.scan`, `security.detect`, `security.respond`, `security.metrics`, `security.audit_log`
-- `baseline.observe`, `defense.status`
+- `baseline.observe`, `baseline.query`, `baseline.anomaly`, `baseline.reset`
+- `defense.status`, `defense.quarantine`, `defense.release`
+- `response.evaluate`
 - `method_gate.status`, `threat.report`
 - `capabilities.list`, `identity.get`
 - `lifecycle.status`, `lifecycle.state`, `lifecycle.capabilities`

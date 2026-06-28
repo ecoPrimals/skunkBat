@@ -72,6 +72,12 @@ pub struct ThreatThresholds {
     pub quarantine_critical_confidence: f64,
     /// Minimum confidence for automatic quarantine of high-severity threats.
     pub quarantine_high_confidence: f64,
+    /// Rolling window size for behavioral profiler observations.
+    pub behavioral_rolling_window: usize,
+    /// Minimum observations before baseline is considered established.
+    pub behavioral_min_observations: usize,
+    /// Audit log ring buffer capacity (max events retained).
+    pub audit_log_capacity: usize,
 }
 
 impl Default for ThreatThresholds {
@@ -93,6 +99,9 @@ impl Default for ThreatThresholds {
             drift_confidence: 0.85,
             quarantine_critical_confidence: 0.9,
             quarantine_high_confidence: 0.7,
+            behavioral_rolling_window: 100,
+            behavioral_min_observations: 10,
+            audit_log_capacity: 1024,
         }
     }
 }

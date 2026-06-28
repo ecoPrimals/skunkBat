@@ -1,7 +1,7 @@
 # skunkBat — Handoff Blurb
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
-**Version**: 0.2.16
+**Version**: 0.2.17
 **Date**: Jun 28, 2026
 **Wave**: 128
 
@@ -11,10 +11,10 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 518 passing (0 failed) |
+| Tests | 532 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
 | Max file | 728 lines (all under 800L cap) |
-| IPC methods | 22 (all Stable tier, incl. `method_gate.status`, `threat.report`) |
+| IPC methods | 28 (all Stable tier, 6 composable primitives shipped in v0.2.17) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
 | License | AGPL-3.0-or-later (scyBorg triple-copyleft) |
@@ -100,15 +100,15 @@ These modules exist as complete library APIs but are not wired into the server b
 | `auth.*` (3) | **Complete** | Token presence + gate mode |
 | `btsp.*` (2) | **Complete** | Phase 3 handshake + cipher negotiation |
 
-### Composable Primitive Domains — spec'd but not shipped
-
-From `COMPOSABLE_PRIMITIVES_SPEC.md` (~17 additional methods described):
+### Composable Primitive Domains
 
 | Domain | Spec methods | Status |
 |--------|-------------|--------|
-| `baseline` | `query`, `anomaly`, `reset` | Not shipped (only `observe` live) |
+| `baseline` | `query`, `anomaly`, `reset` | **Shipped (v0.2.17)** |
+| `defense` | `quarantine`, `release` | **Shipped (v0.2.17)** |
+| `response` | `evaluate` | **Shipped (v0.2.17)** |
+| `response` | `escalate`, `deescalate`, `status` | Not shipped (workflow primitives) |
 | `metadata` | `classify`, `fingerprint` | Not shipped |
-| `response` | `evaluate`, `escalate`, `deescalate`, `status` | Not shipped |
 | `lineage` | `challenge`, `verify` | Not shipped (consumes BearDog, does not expose) |
 | `health` | `system`, `network`, `resource` | Not shipped (load sensing internal only) |
 

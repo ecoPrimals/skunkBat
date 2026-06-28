@@ -6,6 +6,42 @@ All notable changes to skunkBat are documented here.
 
 ---
 
+## [0.2.17] — Wave 128: Composable Primitives & Config Evolution
+
+### Added
+
+- **6 composable primitive IPC methods** from `COMPOSABLE_PRIMITIVES_SPEC.md`:
+  - `baseline.query` (public) — profiler statistics across all dimensions
+  - `baseline.anomaly` (public) — read-only anomaly check against baseline
+  - `baseline.reset` (protected) — reset profiler with optional re-seed
+  - `defense.quarantine` (protected) — manual quarantine with audit trail
+  - `defense.release` (protected) — release from quarantine with audit trail
+  - `response.evaluate` (protected) — read-only action recommendation
+- **`dispatch_composable.rs`** — smart split: composable handlers in dedicated module
+- **`DefenseEngine::release()`** — remove source from quarantine map
+- **`DefenseEngine::evaluate()`** — read-only action recommendation without execution
+- **`StatisticalProfiler::query_stats()`** — dimension-level baseline statistics
+- **`StatisticalProfiler::reset()`** — clear observations with optional re-seed
+- **`StatisticalProfiler::with_config()`** — configurable rolling window and min observations
+- **`BaselineStats` / `DimensionStats`** types for structured profiler statistics
+- **`BaselineProfiler` trait extensions** — `query_stats()` and `reset()` with default impls
+- **3 new `ThreatThresholds` fields** — `behavioral_rolling_window`, `behavioral_min_observations`,
+  `audit_log_capacity` externalize previously hardcoded constants
+- **14 new tests** for composable IPC methods (quarantine/release lifecycle, evaluate,
+  query/anomaly/reset, protection classification, established-state verification)
+- **`#[must_use]` on `DefenseEngine::respond()`**
+
+### Changed
+
+- `StatisticalProfiler` now uses configurable `rolling_window` and `min_observations`
+  instead of hardcoded `ROLLING_WINDOW = 100` and `>= 10`
+- `AuditLog` capacity wired from `ThreatThresholds::audit_log_capacity` (was hardcoded 1024)
+- `capabilities.list` `provided_capabilities` now includes `response`, `defense.{quarantine,release}`,
+  `baseline.{query,anomaly,reset}` domains
+- Registration `CAPABILITIES` includes `response` domain
+
+---
+
 ## [0.2.16] — Wave 128: Method Gap Audit & Registration Honesty
 
 ### Fixed

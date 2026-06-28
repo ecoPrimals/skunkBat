@@ -115,6 +115,30 @@ pub struct Anomaly {
     pub confidence: f64,
 }
 
+/// Baseline profiler statistics for a single dimension.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DimensionStats {
+    /// Mean value over the rolling window.
+    pub mean: f64,
+    /// Standard deviation over the rolling window.
+    pub std_dev: f64,
+}
+
+/// Baseline profiler statistics across all observed dimensions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BaselineStats {
+    /// Number of observations in the rolling window.
+    pub observation_count: usize,
+    /// Sigma threshold for anomaly detection.
+    pub threshold: f64,
+    /// Connection rate statistics (if available).
+    pub connection_rate: Option<DimensionStats>,
+    /// Traffic volume statistics (if available).
+    pub traffic_volume: Option<DimensionStats>,
+    /// Port diversity statistics (if available).
+    pub port_diversity: Option<DimensionStats>,
+}
+
 /// Path validation result.
 #[derive(Debug, Clone)]
 pub struct PathValidation {

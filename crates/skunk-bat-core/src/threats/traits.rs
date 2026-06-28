@@ -13,7 +13,7 @@
 
 use std::future::Future;
 
-use super::types::{Anomaly, Observation, PathValidation};
+use super::types::{Anomaly, BaselineStats, Observation, PathValidation};
 use crate::error::SkunkBatError;
 
 /// Trait for lineage verification.
@@ -54,6 +54,14 @@ pub trait BaselineProfiler: Send + Sync {
         &self,
         observation: &Observation,
     ) -> impl Future<Output = Result<Vec<Anomaly>, SkunkBatError>> + Send;
+
+    /// Query current profiler statistics. Returns `None` if not established.
+    fn query_stats(&self) -> Option<BaselineStats> {
+        None
+    }
+
+    /// Reset the profiler. If `reseed` is true, re-seed with default data.
+    fn reset(&mut self, _reseed: bool) {}
 }
 
 /// Trait for topology path validation.
