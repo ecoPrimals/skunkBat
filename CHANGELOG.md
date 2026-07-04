@@ -15,6 +15,13 @@ All notable changes to skunkBat are documented here.
 - **`#[inline]` hot-path annotations**: `DefenseEngine::{is_quarantined, is_healthy,
   auto_response_enabled}`, `MethodGate::{check, mode}`, `classify_method`,
   `EnforcementMode::as_str`.
+- **Externalized server timeouts**: `SESSION_TTL`, `SESSION_SWEEP_INTERVAL`,
+  `REGISTRATION_TIMEOUT`, `FORWARD_TIMEOUT`, `FORWARD_INTERVAL`,
+  `FORWARD_MIN_SEVERITY` — all now read from env with sensible defaults.
+  New `ForwardingConfig::from_env()` constructor.
+- **6 new `env_keys`**: `SKUNKBAT_SESSION_TTL`, `SKUNKBAT_SESSION_SWEEP`,
+  `SKUNKBAT_FORWARD_INTERVAL`, `SKUNKBAT_FORWARD_TIMEOUT`,
+  `SKUNKBAT_FORWARD_MIN_SEVERITY`, `SKUNKBAT_REGISTRATION_TIMEOUT`.
 
 ---
 

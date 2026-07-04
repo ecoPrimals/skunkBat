@@ -102,3 +102,23 @@ pub const DISCOVERY_SOCKET: &str = "DISCOVERY_SOCKET";
 
 /// Explicit path to the `SongBird` discovery/federation socket.
 pub const SONGBIRD_SOCKET: &str = "SONGBIRD_SOCKET";
+
+// ── Server Operational Tuning ──────────────────────────────────
+
+/// Session TTL in seconds (default: 3600).
+pub const SKUNKBAT_SESSION_TTL: &str = "SKUNKBAT_SESSION_TTL";
+
+/// Session sweep interval in seconds (default: 300).
+pub const SKUNKBAT_SESSION_SWEEP: &str = "SKUNKBAT_SESSION_SWEEP";
+
+/// Audit forwarding poll interval in seconds (default: 10).
+pub const SKUNKBAT_FORWARD_INTERVAL: &str = "SKUNKBAT_FORWARD_INTERVAL";
+
+/// Audit forwarding RPC timeout in seconds (default: 5).
+pub const SKUNKBAT_FORWARD_TIMEOUT: &str = "SKUNKBAT_FORWARD_TIMEOUT";
+
+/// Minimum severity for audit forwarding: `info`, `warn`, `error` (default: `warn`).
+pub const SKUNKBAT_FORWARD_MIN_SEVERITY: &str = "SKUNKBAT_FORWARD_MIN_SEVERITY";
+
+/// Registration RPC timeout in seconds (default: 3).
+pub const SKUNKBAT_REGISTRATION_TIMEOUT: &str = "SKUNKBAT_REGISTRATION_TIMEOUT";

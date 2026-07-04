@@ -62,6 +62,43 @@ impl Default for ForwardingConfig {
     }
 }
 
+impl ForwardingConfig {
+    /// Build from environment variables, falling back to defaults.
+    ///
+    /// Reads: `SKUNKBAT_FORWARD_INTERVAL`, `SKUNKBAT_FORWARD_TIMEOUT`,
+    /// `SKUNKBAT_FORWARD_MIN_SEVERITY`.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let poll_interval = std::env::var(env_keys::SKUNKBAT_FORWARD_INTERVAL)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map_or(POLL_INTERVAL, Duration::from_secs);
+
+        let timeout = std::env::var(env_keys::SKUNKBAT_FORWARD_TIMEOUT)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map_or(FORWARD_TIMEOUT, Duration::from_secs);
+
+        let min_severity = std::env::var(env_keys::SKUNKBAT_FORWARD_MIN_SEVERITY)
+            .ok()
+            .map_or(MIN_FORWARD_SEVERITY, |v| {
+                match v.to_ascii_lowercase().as_str() {
+                    "info" => EventSeverity::Info,
+                    "error" | "critical" => EventSeverity::Error,
+                    _ => MIN_FORWARD_SEVERITY,
+                }
+            });
+
+        Self {
+            poll_interval,
+            timeout,
+            min_severity,
+            dag_enabled: true,
+            braid_enabled: true,
+        }
+    }
+}
+
 /// Resolve the rhizoCrypt endpoint.
 ///
 /// Resolution order:
@@ -523,5 +560,13 @@ mod tests {
         )
         .await;
         assert_eq!(log.latest_seq().await, 2);
+    }
+
+    #[test]
+    fn from_env_defaults_when_unset() {
+        let config = ForwardingConfig::from_env();
+        assert_eq!(config.poll_interval, POLL_INTERVAL);
+        assert_eq!(config.timeout, FORWARD_TIMEOUT);
+        assert_eq!(config.min_severity, MIN_FORWARD_SEVERITY);
     }
 }

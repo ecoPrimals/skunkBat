@@ -29,7 +29,12 @@ const CAPABILITIES: &[&str] = &[
     "btsp",
 ];
 
-const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(3);
+fn registration_timeout() -> Duration {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_REGISTRATION_TIMEOUT)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(Duration::from_secs(3), Duration::from_secs)
+}
 
 /// Attempt to self-register with the ecosystem discovery service.
 ///
@@ -55,7 +60,7 @@ pub async fn self_register(endpoint: String) {
         &discovery_socket,
         "ipc.register",
         Some(params),
-        REGISTRATION_TIMEOUT,
+        registration_timeout(),
     )
     .await
     {
@@ -119,7 +124,7 @@ pub async fn neural_announce(socket_path: &str) {
         &neural_socket,
         "primal.announce",
         Some(params),
-        REGISTRATION_TIMEOUT,
+        registration_timeout(),
     )
     .await
     {

@@ -48,10 +48,28 @@ impl BackgroundTasks {
 }
 
 /// Session TTL — connections older than this are evicted by the sweep task.
-const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+/// Configurable via `SKUNKBAT_SESSION_TTL` (seconds).
+fn session_ttl() -> std::time::Duration {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_SESSION_TTL)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(
+            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_secs,
+        )
+}
 
 /// Interval between session TTL sweeps.
-const SESSION_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+/// Configurable via `SKUNKBAT_SESSION_SWEEP` (seconds).
+fn session_sweep_interval() -> std::time::Duration {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_SESSION_SWEEP)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(
+            std::time::Duration::from_secs(300),
+            std::time::Duration::from_secs,
+        )
+}
 
 /// Spawn all background services (registration, announcement, forwarding, federation, session sweep).
 async fn spawn_background(
@@ -76,7 +94,7 @@ async fn spawn_background(
     let audit_log = state.read().await.audit_log().clone();
     let forwarding = tokio::spawn(forwarding::run_forwarding_loop(
         audit_log.clone(),
-        ForwardingConfig::default(),
+        ForwardingConfig::from_env(),
     ));
 
     let federation_client = skunk_bat_integrations::songbird::FederationClient::from_env();
@@ -86,10 +104,12 @@ async fn spawn_background(
     ));
 
     let sweep_sessions = Arc::clone(sessions);
+    let ttl = session_ttl();
+    let sweep_interval = session_sweep_interval();
     let session_sweep = tokio::spawn(async move {
         loop {
-            tokio::time::sleep(SESSION_SWEEP_INTERVAL).await;
-            sweep_sessions.sweep_expired(SESSION_TTL).await;
+            tokio::time::sleep(sweep_interval).await;
+            sweep_sessions.sweep_expired(ttl).await;
         }
     });
 
