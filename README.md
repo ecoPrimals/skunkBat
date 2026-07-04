@@ -151,6 +151,14 @@ export FEDERATION_ENDPOINT=127.0.0.1:8080
 # Audit forwarding targets
 export RHIZOCRYPT_ENDPOINT=127.0.0.1:9400
 export SWEETGRASS_ENDPOINT=127.0.0.1:9500
+
+# Server operational tuning (all have sensible defaults)
+export SKUNKBAT_SESSION_TTL=3600              # Session eviction after N seconds
+export SKUNKBAT_SESSION_SWEEP=300             # Sweep interval (seconds)
+export SKUNKBAT_FORWARD_INTERVAL=10           # Audit forwarding poll interval
+export SKUNKBAT_FORWARD_TIMEOUT=5             # Forwarding RPC timeout
+export SKUNKBAT_FORWARD_MIN_SEVERITY=warn     # info|warn|error
+export SKUNKBAT_REGISTRATION_TIMEOUT=3        # Discovery registration timeout
 ```
 
 ### Threat Thresholds
@@ -198,7 +206,7 @@ No primal names are hardcoded in production code.
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 532+ tests passing (lib + integration + chaos), full workspace
+- 533+ tests passing (lib + integration + chaos), full workspace
 - All 28 IPC methods stability-tiered (Stable; `auth.*` beta)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout

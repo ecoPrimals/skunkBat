@@ -100,9 +100,10 @@ mode semantics for local, loopback, and remote callers.
 v0.2.17 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**532 tests** passing across all workspace crates. Max production file 728 lines — no
+**533 tests** passing across all workspace crates. Max production file 728 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
-via `ThreatThresholds` — zero magic numbers.
+via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
+to env vars with defaults (session TTL, sweep, forwarding, registration).
 Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkdf, sha2).
 `async-trait` eliminated and banned — native RPITIT throughout.
 
