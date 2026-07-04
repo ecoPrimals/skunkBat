@@ -2,9 +2,9 @@
 
 # skunkBat Composable Primitives Specification
 
-**Version:** 0.2.17 (Design Phase — only `baseline.observe` shipped)
-**Status:** Design — method surface not yet exposed over IPC
-**Date:** April 2026
+**Version:** 0.2.17 (Partial Implementation — 7 of 17+ methods shipped)
+**Status:** Partial — `baseline.{observe,query,anomaly,reset}`, `defense.{quarantine,release}`, `response.evaluate` live
+**Date:** July 2026
 **License:** AGPL-3.0-or-later
 
 ---
@@ -48,7 +48,7 @@ and scheduling hints are centralized:
 |---------------------|-------|
 | `PRIMAL_ID` | `"skunkbat"` |
 | `CAPABILITIES` | All exposed methods (see IPC table below) |
-| `CONSUMED_CAPABILITIES` | `btsp.session.verify`, `lineage.verify`, `lineage.list`, `capabilities.list`, `discovery.find_by_capability`, `federation.broadcast` |
+| `CONSUMED_CAPABILITIES` | `btsp.server.verify`, `lineage.verify`, `lineage.list`, `capabilities.list`, `discovery.find_by_capability`, `federation.broadcast` |
 
 ---
 
@@ -290,8 +290,8 @@ content. It is the immune system watching vital signs without reading mail.
 
 ---
 
-**Status:** Design phase. The primitive decomposition reflects both
-implemented capabilities (baseline profiling, health sensing, graduated
-response) and planned IPC surface (method table). Implementation of the
-full IPC method surface depends on biomeOS capability registration and
-the Neural API routing layer.
+**Status:** Partial implementation (v0.2.17). Seven IPC methods are live:
+`baseline.{observe,query,anomaly,reset}`, `defense.{quarantine,release}`,
+`response.evaluate`. Remaining methods (topology, lineage, mesh, orchestration
+domains) depend on upstream transport providers and biomeOS capability
+registration.

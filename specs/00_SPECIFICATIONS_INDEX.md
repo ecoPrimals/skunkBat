@@ -42,9 +42,9 @@
    - Continuous training loop as network evolves
    - Autoimmune prevention strategies
 
-6. **[COMPOSABLE_PRIMITIVES_SPEC.md](./COMPOSABLE_PRIMITIVES_SPEC.md)** — DESIGN
-   - Primitive decomposition: baseline, metadata, response, lineage, health
-   - IPC method table (`{domain}.{operation}` semantic naming)
+6. **[COMPOSABLE_PRIMITIVES_SPEC.md](./COMPOSABLE_PRIMITIVES_SPEC.md)** — PARTIAL
+   - Primitive decomposition: baseline, defense, response, metadata, lineage, health
+   - IPC method table (`{domain}.{operation}` semantic naming) — 7/17+ shipped
    - Standalone usage patterns
    - Cross-primal composition patterns
    - Spring integration recipes
@@ -72,4 +72,4 @@ All skunkBat specifications follow:
 | AUTO_DEFENSE_SPEC.md | Complete | Yes |
 | OBSERVABILITY_SPEC.md | Complete | Yes |
 | THYMIC_SELECTION_SPEC.md | Design | No — future evolution |
-| COMPOSABLE_PRIMITIVES_SPEC.md | Design | No — future evolution |
+| COMPOSABLE_PRIMITIVES_SPEC.md | Partial | Yes — 7/17+ methods shipped (v0.2.17) |

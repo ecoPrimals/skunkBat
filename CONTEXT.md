@@ -100,8 +100,9 @@ mode semantics for local, loopback, and remote callers.
 v0.2.17 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**532 tests** passing across all workspace crates. Max file 728 lines — no file exceeds
-the 800-line cap. All thresholds configurable via `ThreatThresholds` — zero magic numbers.
+**532 tests** passing across all workspace crates. Max production file 728 lines — no
+production source exceeds the 800-line cap (test files exempt). All thresholds configurable
+via `ThreatThresholds` — zero magic numbers.
 Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkdf, sha2).
 `async-trait` eliminated and banned — native RPITIT throughout.
 
@@ -172,7 +173,7 @@ enforced/permissive modes + quarantine enforcement.
 | `capabilities.list` | Stable | Complete | Wire Standard L2/L3 |
 | `identity.get` | Stable | Complete | Wire Standard L2 |
 | `lifecycle.*` (3) | Stable | Complete | State, status, capabilities |
-| `auth.*` (3) | Stable | Complete | Token presence + gate mode + peer info |
+| `auth.*` (3) | Beta | Complete | Token presence + gate mode + peer info |
 | `btsp.negotiate` | Stable | Complete | Phase 3 handshake + session registry |
 | `btsp.capabilities` | Stable | Complete | Cipher advertisement |
 

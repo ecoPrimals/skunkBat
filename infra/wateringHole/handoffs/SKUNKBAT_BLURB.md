@@ -2,7 +2,7 @@
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
 **Version**: 0.2.17
-**Date**: Jun 28, 2026
+**Date**: Jul 4, 2026
 **Wave**: 128
 
 ---
@@ -13,8 +13,8 @@
 |--------|-------|
 | Tests | 532 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
-| Max file | 728 lines (all under 800L cap) |
-| IPC methods | 28 (all Stable tier, 6 composable primitives shipped in v0.2.17) |
+| Max file | 728 lines production (test files exempt from 800L cap) |
+| IPC methods | 28 (6 composable primitives shipped in v0.2.17) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
 | License | AGPL-3.0-or-later (scyBorg triple-copyleft) |
@@ -80,7 +80,7 @@ These modules exist as complete library APIs but are not wired into the server b
 
 ## Method Gap Audit (Wave 128)
 
-### IPC Methods — 22 dispatched (23 with alias), all tested
+### IPC Methods — 28 dispatched (+ `capability.list` alias), all tested
 
 | Method | Status | Notes |
 |--------|--------|-------|
@@ -91,7 +91,13 @@ These modules exist as complete library APIs but are not wired into the server b
 | `security.metrics` | **Partial** | Flat 5 counters; not spec's nested observability model |
 | `security.audit_log` | **Complete** | JH-5 ring buffer with cursor-based polling |
 | `baseline.observe` | **Partial** | Works when called; no transport auto-feed |
+| `baseline.query` | **Complete** | Profiler stats across all dimensions |
+| `baseline.anomaly` | **Complete** | Read-only anomaly check |
+| `baseline.reset` | **Complete** | Reset with optional re-seed |
 | `defense.status` | **Complete** | |
+| `defense.quarantine` | **Complete** | Manual quarantine via IPC + audit |
+| `defense.release` | **Complete** | Release from quarantine via IPC + audit |
+| `response.evaluate` | **Complete** | Read-only action recommendation |
 | `method_gate.status` | **Complete** | Cross-gate posture introspection |
 | `threat.report` | **Partial** | Aggregates detect+metrics+defense; inherits detect limits |
 | `lifecycle.*` (3) | **Complete** | |
@@ -133,9 +139,10 @@ These modules exist as complete library APIs but are not wired into the server b
 
 ### Fixed in Wave 128
 
-- **Registration honesty**: narrowed from 6 capabilities (including `metadata`, `response`, `lineage` with no IPC) to 9 actually-served domains
-- **`capabilities.list` completeness**: `provided_capabilities` now lists all 9 domains (was 3)
+- **Registration honesty**: narrowed from 6 capabilities (including `metadata`, `response`, `lineage` with no IPC) to 10 actually-served domains
+- **`capabilities.list` completeness**: `provided_capabilities` now lists all 10 domains (was 3)
 - **`announce_payload` method list**: now uses dispatch table directly (was stale 18-method hardcoded list)
+- **Composable primitives shipped (v0.2.17)**: `baseline.{query,anomaly,reset}`, `defense.{quarantine,release}`, `response.evaluate` — 6 new IPC methods with full test coverage
 
 ## Cascade Status
 
