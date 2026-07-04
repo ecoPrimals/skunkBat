@@ -100,7 +100,7 @@ mode semantics for local, loopback, and remote callers.
 v0.2.18 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**539 tests** passing across all workspace crates. Max production file 728 lines — no
+**540 tests** passing across all workspace crates. Max production file 728 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
 via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
 to env vars with defaults (session TTL, sweep, forwarding, registration).

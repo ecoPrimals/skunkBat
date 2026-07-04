@@ -17,7 +17,12 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
 /// Default RPC timeout for federation calls (ms).
-const DEFAULT_TIMEOUT_MS: u64 = 5000;
+fn default_timeout_ms() -> u64 {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5000)
+}
 
 /// Federation client for threat intelligence broadcasting.
 ///
@@ -64,7 +69,7 @@ impl FederationClient {
             uds_path: None,
             node_id,
             connected: Arc::new(RwLock::new(false)),
-            timeout_ms: DEFAULT_TIMEOUT_MS,
+            timeout_ms: default_timeout_ms(),
         }
     }
 
@@ -92,7 +97,7 @@ impl FederationClient {
             uds_path,
             node_id,
             connected: Arc::new(RwLock::new(false)),
-            timeout_ms: DEFAULT_TIMEOUT_MS,
+            timeout_ms: default_timeout_ms(),
         }
     }
 

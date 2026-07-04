@@ -3,7 +3,7 @@
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
 **Version**: 0.2.18
 **Date**: Jul 4, 2026
-**Wave**: 132c
+**Wave**: 132d
 
 ---
 
@@ -11,7 +11,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 539 passing (0 failed) |
+| Tests | 540 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
 | Max file | 728 lines production (test files exempt from 800L cap) |
 | IPC methods | 29 (Tower HTTP advisory + 6 composable primitives) |

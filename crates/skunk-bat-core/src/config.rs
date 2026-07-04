@@ -145,6 +145,35 @@ impl Default for SkunkBatConfig {
     }
 }
 
+impl SkunkBatConfig {
+    /// Hydrate config from environment variables, falling back to defaults.
+    ///
+    /// Reads `SKUNKBAT_LINEAGE_ID` and `SKUNKBAT_TOPOLOGY_PATH` to configure
+    /// runtime-discovered integrations. All other fields use `Default`.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+
+        if let Ok(id) = std::env::var(crate::env_keys::SKUNKBAT_LINEAGE_ID)
+            && !id.is_empty()
+        {
+            config.lineage_id = Some(id);
+        }
+
+        if let Ok(path) = std::env::var(crate::env_keys::SKUNKBAT_TOPOLOGY_PATH) {
+            let bytes: Vec<u8> = path
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            if !bytes.is_empty() {
+                config.expected_topology_path = Some(bytes);
+            }
+        }
+
+        config
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +235,13 @@ mod tests {
         let parsed: FeatureFlags = serde_json::from_str(&json).unwrap();
         assert!(!parsed.reconnaissance);
         assert!(parsed.threat_detection);
+    }
+
+    #[test]
+    fn from_env_defaults_when_unset() {
+        let config = SkunkBatConfig::from_env();
+        assert_eq!(config.common.name, crate::PRIMAL_NAME);
+        assert!(config.lineage_id.is_none());
+        assert!(config.expected_topology_path.is_none());
     }
 }

@@ -122,3 +122,14 @@ pub const SKUNKBAT_FORWARD_MIN_SEVERITY: &str = "SKUNKBAT_FORWARD_MIN_SEVERITY";
 
 /// Registration RPC timeout in seconds (default: 3).
 pub const SKUNKBAT_REGISTRATION_TIMEOUT: &str = "SKUNKBAT_REGISTRATION_TIMEOUT";
+
+// ── Config Hydration ──────────────────────────────────────────
+
+/// Lineage ID for genetic verification (enables `BearDog` integration).
+pub const SKUNKBAT_LINEAGE_ID: &str = "SKUNKBAT_LINEAGE_ID";
+
+/// Expected topology path as comma-separated layer bytes (e.g. `1,2,3`).
+pub const SKUNKBAT_TOPOLOGY_PATH: &str = "SKUNKBAT_TOPOLOGY_PATH";
+
+/// Integration RPC timeout in milliseconds (default: 3000).
+pub const SKUNKBAT_INTEGRATION_TIMEOUT_MS: &str = "SKUNKBAT_INTEGRATION_TIMEOUT_MS";

@@ -330,27 +330,8 @@ pub struct QuarantineRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FeatureFlags, SkunkBatConfig};
-    use crate::primal_foundation::config::CommonConfig;
+    use crate::test_support::test_config;
     use crate::threats::{Severity, Threat, ThreatType};
-
-    fn test_config() -> SkunkBatConfig {
-        SkunkBatConfig {
-            common: CommonConfig {
-                name: "skunkBat-test".to_string(),
-                ..CommonConfig::default()
-            },
-            features: FeatureFlags {
-                reconnaissance: true,
-                threat_detection: true,
-                auto_defense: true,
-                observability: true,
-            },
-            lineage_id: None,
-            thresholds: crate::config::ThreatThresholds::default(),
-            expected_topology_path: None,
-        }
-    }
 
     fn test_threat(severity: Severity, confidence: f64) -> Threat {
         Threat {

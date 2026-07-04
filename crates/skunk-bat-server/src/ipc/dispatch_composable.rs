@@ -111,15 +111,9 @@ pub(super) async fn dispatch_response_evaluate(
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {
-    let Some(params) = params else {
-        return Response::error(id, jsonrpc::INVALID_PARAMS, "params required");
-    };
-
-    let threat: skunk_bat_core::threats::Threat = match serde_json::from_value(params) {
+    let threat = match super::dispatch_security::parse_threat(&id, params) {
         Ok(t) => t,
-        Err(e) => {
-            return Response::error(id, jsonrpc::INVALID_PARAMS, format!("invalid threat: {e}"));
-        }
+        Err(resp) => return resp,
     };
 
     let sb = state.read().await;

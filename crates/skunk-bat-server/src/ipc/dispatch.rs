@@ -66,7 +66,7 @@ const CONSUMED_CAPABILITIES: &[&str] = &[
 ];
 
 /// Serialize a fallible operation result into a JSON-RPC response.
-fn try_serialize<T: Serialize, E: std::fmt::Display>(
+pub(super) fn try_serialize<T: Serialize, E: std::fmt::Display>(
     id: serde_json::Value,
     result: Result<T, E>,
 ) -> Response {
@@ -77,7 +77,7 @@ fn try_serialize<T: Serialize, E: std::fmt::Display>(
 }
 
 /// Serialize an infallible value into a JSON-RPC response.
-fn serialize<T: Serialize>(id: serde_json::Value, value: T) -> Response {
+pub(super) fn serialize<T: Serialize>(id: serde_json::Value, value: T) -> Response {
     match serde_json::to_value(value) {
         Ok(v) => Response::success(id, v),
         Err(e) => Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string()),
@@ -145,11 +145,18 @@ pub(super) async fn dispatch(
             dispatch_health(state, id, &request.method).await
         }
         "security.scan" | "security.detect" | "security.metrics" | "security.audit_log" => {
-            dispatch_security(state, id, &request.method, request.params).await
+            super::dispatch_security::dispatch_security(state, id, &request.method, request.params)
+                .await
         }
-        "security.advisory" => dispatch_advisory(state, id, request.params).await,
-        "security.respond" => dispatch_respond(state, id, request.params).await,
-        "baseline.observe" => dispatch_baseline_observe(state, id, request.params).await,
+        "security.advisory" => {
+            super::dispatch_security::dispatch_advisory(state, id, request.params).await
+        }
+        "security.respond" => {
+            super::dispatch_security::dispatch_respond(state, id, request.params).await
+        }
+        "baseline.observe" => {
+            super::dispatch_security::dispatch_baseline_observe(state, id, request.params).await
+        }
         "baseline.query" => super::dispatch_composable::dispatch_baseline_query(state, id).await,
         "baseline.anomaly" => {
             super::dispatch_composable::dispatch_baseline_anomaly(state, id, request.params).await
@@ -181,7 +188,7 @@ pub(super) async fn dispatch(
             dispatch_auth(id, gate, &caller, &request.method)
         }
         "method_gate.status" => dispatch_method_gate_status(id, gate),
-        "threat.report" => dispatch_threat_report(state, id).await,
+        "threat.report" => super::dispatch_security::dispatch_threat_report(state, id).await,
         "btsp.capabilities" => dispatch_btsp_capabilities(id),
         _ => Response::error(
             id,
@@ -292,43 +299,6 @@ async fn dispatch_health(
     }
 }
 
-/// Security domain: `security.scan`, `security.detect`, `security.metrics`, `security.audit_log`.
-async fn dispatch_security(
-    state: &Arc<RwLock<SkunkBat>>,
-    id: serde_json::Value,
-    method: &str,
-    params: Option<serde_json::Value>,
-) -> Response {
-    match method {
-        "security.scan" => try_serialize(id, state.read().await.scan_network().await),
-        "security.detect" => {
-            let sb = state.read().await;
-            let result = sb.detect_threats().await;
-            if let Ok(ref threats) = result {
-                for t in threats {
-                    sb.audit_log()
-                        .record(
-                            EventSource::ThreatDetection,
-                            EventSeverity::Warn,
-                            EventKind::ThreatDetected {
-                                threat_id: t.id.clone(),
-                                threat_type: format!("{:?}", t.threat_type),
-                                severity: format!("{:?}", t.severity),
-                                source: t.source.clone(),
-                            },
-                        )
-                        .await;
-                }
-            }
-            drop(sb);
-            try_serialize(id, result)
-        }
-        "security.metrics" => serialize(id, state.read().await.get_security_metrics()),
-        "security.audit_log" => dispatch_audit_log(state, id, params).await,
-        _ => unreachable!(),
-    }
-}
-
 /// Lifecycle domain: `lifecycle.state`, `lifecycle.status`, `lifecycle.capabilities`.
 async fn dispatch_lifecycle(
     state: &Arc<RwLock<SkunkBat>>,
@@ -421,50 +391,6 @@ fn dispatch_method_gate_status(id: serde_json::Value, gate: &MethodGate) -> Resp
     )
 }
 
-/// Structured threat report — detection results + defense posture in one call.
-async fn dispatch_threat_report(state: &Arc<RwLock<SkunkBat>>, id: serde_json::Value) -> Response {
-    let sb = state.read().await;
-    let threats_result = sb.detect_threats().await;
-    let metrics = sb.get_security_metrics();
-    let defense = sb.defense_status();
-    drop(sb);
-
-    match threats_result {
-        Ok(threats) => {
-            let threat_count = threats.len();
-            let threat_summaries: Vec<serde_json::Value> = threats
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "id": t.id,
-                        "type": format!("{:?}", t.threat_type),
-                        "severity": format!("{:?}", t.severity),
-                        "source": t.source,
-                        "confidence": t.confidence,
-                        "description": t.description,
-                    })
-                })
-                .collect();
-            Response::success(
-                id,
-                serde_json::json!({
-                    "threat_count": threat_count,
-                    "threats": threat_summaries,
-                    "metrics": {
-                        "scans_performed": metrics.scans_performed,
-                        "threats_detected": metrics.threats_detected,
-                        "threats_mitigated": metrics.threats_mitigated,
-                        "connections_quarantined": metrics.connections_quarantined,
-                        "alerts_sent": metrics.alerts_sent,
-                    },
-                    "defense": defense,
-                }),
-            )
-        }
-        Err(e) => Response::error(id, -32000, format!("threat detection failed: {e}")),
-    }
-}
-
 /// BTSP transport capabilities.
 fn dispatch_btsp_capabilities(id: serde_json::Value) -> Response {
     Response::success(
@@ -476,171 +402,6 @@ fn dispatch_btsp_capabilities(id: serde_json::Value) -> Response {
             "preferred": "chacha20-poly1305",
             "key_derivation": "hkdf-sha256",
             "handshake": "btsp.negotiate"
-        }),
-    )
-}
-
-/// Handle `security.respond` — requires params with a threat payload.
-async fn dispatch_respond(
-    state: &Arc<RwLock<SkunkBat>>,
-    id: serde_json::Value,
-    params: Option<serde_json::Value>,
-) -> Response {
-    let Some(params) = params else {
-        return Response::error(id, jsonrpc::INVALID_PARAMS, "params required");
-    };
-
-    let threat: skunk_bat_core::threats::Threat = match serde_json::from_value(params) {
-        Ok(t) => t,
-        Err(e) => {
-            return Response::error(id, jsonrpc::INVALID_PARAMS, format!("invalid threat: {e}"));
-        }
-    };
-
-    let sb = state.read().await;
-    match sb.respond_to_threat(&threat) {
-        Ok(action) => {
-            let severity = match action {
-                skunk_bat_core::defense::ActionType::Block
-                | skunk_bat_core::defense::ActionType::Quarantine
-                | skunk_bat_core::defense::ActionType::QuarantineAndAlert
-                | skunk_bat_core::defense::ActionType::MonitorAndAlert => EventSeverity::Warn,
-            };
-            sb.audit_log()
-                .record(
-                    EventSource::DefenseEngine,
-                    severity,
-                    EventKind::DefenseAction {
-                        threat_id: threat.id.clone(),
-                        action: format!("{action:?}"),
-                    },
-                )
-                .await;
-            drop(sb);
-            Response::success(
-                id,
-                serde_json::json!({"status": "ok", "action": format!("{action:?}")}),
-            )
-        }
-        Err(e) => {
-            drop(sb);
-            Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string())
-        }
-    }
-}
-
-/// Handle `security.advisory` — advisory check for Tower HTTP Gateway.
-///
-/// Accepts `{"source": "<ip>"}`. Returns an `AdvisoryVerdict` with verdict,
-/// reason, and any associated threat IDs. The gateway uses this to decide
-/// whether to route, warn-log, or reject an inbound request.
-async fn dispatch_advisory(
-    state: &Arc<RwLock<SkunkBat>>,
-    id: serde_json::Value,
-    params: Option<serde_json::Value>,
-) -> Response {
-    let source = params
-        .as_ref()
-        .and_then(|p| p.get("source"))
-        .and_then(|v| v.as_str());
-
-    let Some(source) = source else {
-        return Response::error(
-            id,
-            jsonrpc::INVALID_PARAMS,
-            "missing required field: source",
-        );
-    };
-
-    let sb = state.read().await;
-    let verdict = sb.advisory_check(source);
-    drop(sb);
-
-    Response::success(id, serde_json::to_value(&verdict).unwrap_or_default())
-}
-
-/// Handle `baseline.observe` — feed a live observation into the threat profiler.
-///
-/// Accepts an `Observation` JSON payload. Returns `{"status":"ok"}` on success.
-async fn dispatch_baseline_observe(
-    state: &Arc<RwLock<SkunkBat>>,
-    id: serde_json::Value,
-    params: Option<serde_json::Value>,
-) -> Response {
-    let Some(params) = params else {
-        return Response::error(id, jsonrpc::INVALID_PARAMS, "params required");
-    };
-
-    let observation: skunk_bat_core::threats::types::Observation =
-        match serde_json::from_value(params) {
-            Ok(o) => o,
-            Err(e) => {
-                return Response::error(
-                    id,
-                    jsonrpc::INVALID_PARAMS,
-                    format!("invalid observation: {e}"),
-                );
-            }
-        };
-
-    let sb = state.read().await;
-    let result = sb.observe(&observation).await;
-    let rate = observation.connection_rate;
-    match result {
-        Ok(()) => {
-            sb.audit_log()
-                .record(
-                    EventSource::ThreatDetection,
-                    EventSeverity::Info,
-                    EventKind::BaselineObservation {
-                        connection_rate: rate,
-                    },
-                )
-                .await;
-            drop(sb);
-            Response::success(id, serde_json::json!({"status": "ok"}))
-        }
-        Err(e) => {
-            drop(sb);
-            Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string())
-        }
-    }
-}
-
-/// Handle `security.audit_log` — query the audit event trail.
-///
-/// Params (all optional):
-/// - `since_seq`: sequence cursor (default 0, returns events after this seq)
-/// - `limit`: max events to return (default 100, max 1000)
-async fn dispatch_audit_log(
-    state: &Arc<RwLock<SkunkBat>>,
-    id: serde_json::Value,
-    params: Option<serde_json::Value>,
-) -> Response {
-    let since_seq = params
-        .as_ref()
-        .and_then(|p| p.get("since_seq"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0);
-
-    let limit = params
-        .as_ref()
-        .and_then(|p| p.get("limit"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(100)
-        .min(1000) as usize;
-
-    let sb = state.read().await;
-    let events = sb.audit_log().query(since_seq, limit).await;
-    let latest_seq = sb.audit_log().latest_seq().await;
-    drop(sb);
-
-    serialize(
-        id,
-        serde_json::json!({
-            "events": events,
-            "latest_seq": latest_seq,
-            "count": events.len()
         }),
     )
 }

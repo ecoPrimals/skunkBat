@@ -203,7 +203,7 @@ async fn main() -> Result<(), ServerError> {
 
 /// Create and start a `SkunkBat` instance for one-shot commands.
 async fn started_instance() -> Result<SkunkBat, ServerError> {
-    let config = SkunkBatConfig::default();
+    let config = SkunkBatConfig::from_env();
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await?;
     Ok(skunkbat)
@@ -246,7 +246,7 @@ async fn run_server(
     let no_tcp = bind_mode == BindMode::UdsOnly;
     let no_uds = bind_mode == BindMode::TcpOnly;
 
-    let config = SkunkBatConfig::default();
+    let config = SkunkBatConfig::from_env();
     let mut skunkbat = SkunkBat::new(config);
 
     log_verifier_availability();

@@ -1,24 +1,7 @@
 use super::*;
 use crate::config::{FeatureFlags, SkunkBatConfig};
-use crate::primal_foundation::config::CommonConfig;
-
-fn test_config() -> SkunkBatConfig {
-    SkunkBatConfig {
-        common: CommonConfig {
-            name: "skunkBat-test".to_string(),
-            ..CommonConfig::default()
-        },
-        features: FeatureFlags {
-            reconnaissance: true,
-            threat_detection: true,
-            auto_defense: true,
-            observability: true,
-        },
-        lineage_id: Some("test-lineage".to_string()),
-        thresholds: crate::config::ThreatThresholds::default(),
-        expected_topology_path: None,
-    }
-}
+use crate::primal_foundation::CommonConfig;
+use crate::test_support::test_config_with_lineage as test_config;
 
 #[test]
 fn test_threat_detector_creation() {

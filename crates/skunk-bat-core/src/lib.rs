@@ -51,6 +51,9 @@ pub mod reconnaissance;
 pub mod threats;
 pub mod universal_adapter;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use primal_foundation::{
     CommonConfig, DependencyHealth, HealthReport, HealthStatus, PrimalError, PrimalHealth,
     PrimalLifecycle, PrimalResult, PrimalState, Timestamp,

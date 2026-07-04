@@ -16,7 +16,12 @@ use skunk_bat_core::threats::traits::LineageVerifier;
 use std::time::Duration;
 
 /// Default RPC timeout for lineage calls (ms).
-const DEFAULT_TIMEOUT_MS: u64 = 3000;
+fn default_timeout_ms() -> u64 {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3000)
+}
 
 /// Remote lineage verifier backed by a runtime-discovered capability provider.
 ///
@@ -40,7 +45,7 @@ impl RemoteLineageVerifier {
         Self {
             endpoint,
             uds_path: None,
-            timeout_ms: DEFAULT_TIMEOUT_MS,
+            timeout_ms: default_timeout_ms(),
         }
     }
 
@@ -64,7 +69,7 @@ impl RemoteLineageVerifier {
         Self {
             endpoint,
             uds_path,
-            timeout_ms: DEFAULT_TIMEOUT_MS,
+            timeout_ms: default_timeout_ms(),
         }
     }
 

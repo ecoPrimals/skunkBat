@@ -4,6 +4,20 @@ All notable changes to skunkBat are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dispatch security split**: Moved security-domain handlers (`security.*`,
+  `threat.report`, `baseline.observe`, `security.advisory`) from `dispatch.rs`
+  (659L → 421L) to `dispatch_security.rs` (290L). Shared `parse_threat_params`
+  helper eliminates duplicated threat deserialization.
+- **`SkunkBatConfig::from_env()`**: Production config hydration from environment.
+  Reads `SKUNKBAT_LINEAGE_ID` and `SKUNKBAT_TOPOLOGY_PATH`. Server startup
+  uses `from_env()` instead of `default()`.
+- **Integration timeout externalization**: `SKUNKBAT_INTEGRATION_TIMEOUT_MS`
+  env var controls bearDog, songBird, and toadStool RPC timeouts (default 3–5s).
+- **Test fixture consolidation**: Extracted 4 duplicated `test_config()` functions
+  into `test_support` module with `test_config()` and `test_config_with_lineage()`.
+
 ## [0.2.18] — 2026-07-04 (Wave 132c: Tower HTTP Gateway advisory)
 
 ### Added

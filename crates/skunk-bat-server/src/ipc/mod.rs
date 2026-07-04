@@ -14,6 +14,7 @@
 
 mod dispatch;
 mod dispatch_composable;
+mod dispatch_security;
 mod jsonrpc;
 mod method_gate;
 mod registration;
