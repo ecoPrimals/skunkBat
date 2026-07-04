@@ -234,12 +234,13 @@ mod tests {
         let payload = announce_payload("/tmp/test.sock");
         let methods = payload["methods"].as_array().expect("methods array");
         assert!(
-            methods.len() >= 22,
+            methods.len() >= 29,
             "must advertise all shipped methods, got {}",
             methods.len()
         );
         let strs: Vec<&str> = methods.iter().filter_map(|m| m.as_str()).collect();
         assert!(strs.contains(&"btsp.capabilities"));
+        assert!(strs.contains(&"security.advisory"));
         assert!(strs.contains(&"security.audit_log"));
         assert!(strs.contains(&"health.liveness"));
         assert!(strs.contains(&"method_gate.status"));

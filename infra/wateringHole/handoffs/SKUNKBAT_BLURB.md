@@ -1,9 +1,9 @@
 # skunkBat — Handoff Blurb
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
-**Version**: 0.2.17
+**Version**: 0.2.18
 **Date**: Jul 4, 2026
-**Wave**: 131
+**Wave**: 132c
 
 ---
 
@@ -11,10 +11,10 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 533 passing (0 failed) |
+| Tests | 539 passing (0 failed) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
 | Max file | 728 lines production (test files exempt from 800L cap) |
-| IPC methods | 28 (6 composable primitives shipped in v0.2.17) |
+| IPC methods | 29 (Tower HTTP advisory + 6 composable primitives) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
 | License | AGPL-3.0-or-later (scyBorg triple-copyleft) |
@@ -87,6 +87,7 @@ These modules exist as complete library APIs but are not wired into the server b
 | `health.*` (3) | **Complete** | Full health triad |
 | `security.scan` | **Partial** | Self-only discovery; `LocalDiscovery` returns one node, empty topology |
 | `security.detect` | **Partial** | 6 categories run; genetic/topology need runtime providers |
+| `security.advisory` | **Complete** | Tower HTTP Gateway verdict (quarantine + defense engine check) |
 | `security.respond` | **Partial** | Real policy engine; quarantine in-memory only |
 | `security.metrics` | **Partial** | Flat 5 counters; not spec's nested observability model |
 | `security.audit_log` | **Complete** | JH-5 ring buffer with cursor-based polling |

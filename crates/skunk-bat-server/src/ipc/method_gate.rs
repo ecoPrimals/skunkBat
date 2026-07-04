@@ -50,6 +50,7 @@ pub(super) const PUBLIC_METHODS: &[&str] = &[
     "method_gate.status",
     "baseline.query",
     "baseline.anomaly",
+    "security.advisory",
 ];
 
 /// Classify a method string into its access level.

@@ -380,3 +380,85 @@ async fn baseline_reset_then_query_shows_reseeded() {
         "reseeded baseline should be established"
     );
 }
+
+// --- Tower HTTP Gateway Advisory Tests (Wave 132) ---
+
+#[tokio::test]
+async fn security_advisory_clean_source() {
+    let state = make_state();
+    let gate = make_gate();
+    let caller = make_caller();
+    let req = Request {
+        jsonrpc: "2.0".to_string(),
+        method: "security.advisory".to_string(),
+        params: Some(serde_json::json!({"source": "192.168.1.50"})),
+        id: Some(serde_json::json!(1)),
+    };
+    let resp = dispatch(&state, &gate, &caller, req).await;
+    assert!(resp.error.is_none(), "advisory must succeed");
+    let result = resp.result.unwrap();
+    assert_eq!(result["verdict"], "allow");
+    assert_eq!(result["source"], "192.168.1.50");
+    assert!(result["threat_ids"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn security_advisory_quarantined_source() {
+    let state = make_state();
+    let gate = make_gate();
+    let caller = make_caller();
+
+    state
+        .read()
+        .await
+        .quarantine("10.0.0.99", "malicious scan", "threat-xyz");
+
+    let req = Request {
+        jsonrpc: "2.0".to_string(),
+        method: "security.advisory".to_string(),
+        params: Some(serde_json::json!({"source": "10.0.0.99"})),
+        id: Some(serde_json::json!(1)),
+    };
+    let resp = dispatch(&state, &gate, &caller, req).await;
+    assert!(
+        resp.error.is_none(),
+        "advisory must succeed even for blocked"
+    );
+    let result = resp.result.unwrap();
+    assert_eq!(result["verdict"], "block");
+    assert!(result["reason"].as_str().unwrap().contains("quarantined"));
+    assert!(!result["threat_ids"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn security_advisory_requires_source() {
+    let state = make_state();
+    let gate = make_gate();
+    let caller = make_caller();
+    let req = Request {
+        jsonrpc: "2.0".to_string(),
+        method: "security.advisory".to_string(),
+        params: None,
+        id: Some(serde_json::json!(1)),
+    };
+    let resp = dispatch(&state, &gate, &caller, req).await;
+    assert!(resp.error.is_some(), "must fail without source param");
+}
+
+#[tokio::test]
+async fn security_advisory_is_public() {
+    let state = make_state();
+    let gate = MethodGate::new(EnforcementMode::Enforced);
+    let caller = CallerContext::remote();
+    let req = Request {
+        jsonrpc: "2.0".to_string(),
+        method: "security.advisory".to_string(),
+        params: Some(serde_json::json!({"source": "1.2.3.4"})),
+        id: Some(serde_json::json!(1)),
+    };
+    let resp = dispatch(&state, &gate, &caller, req).await;
+    assert!(
+        resp.error.is_none(),
+        "security.advisory must be public (mesh peers call it without token)"
+    );
+}

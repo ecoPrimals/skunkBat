@@ -2,7 +2,7 @@
 
 Defensive network security primal for sovereign computing environments.
 
-**Version**: 0.2.17
+**Version**: 0.2.18
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 ---
@@ -206,8 +206,8 @@ No primal names are hardcoded in production code.
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 533+ tests passing (lib + integration + chaos), full workspace
-- All 28 IPC methods stability-tiered (Stable; `auth.*` beta)
+- 539+ tests passing (lib + integration + chaos), full workspace
+- All 29 IPC methods stability-tiered (Stable; `auth.*` beta)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 - Self-registration with discovery (`ipc.register`) + Neural API `primal.announce`

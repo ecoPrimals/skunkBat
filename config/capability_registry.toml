@@ -7,7 +7,7 @@
 
 [primal]
 name = "skunkbat"
-version = "0.2.17"
+version = "0.2.18"
 description = "Defensive network security — metadata-only threat detection, graduated response, security observability"
 license = "AGPL-3.0-or-later"
 protocol = "jsonrpc-2.0"
@@ -22,8 +22,8 @@ description = "Defense subsystem: status, quarantine, release"
 methods = ["status", "quarantine", "release"]
 
 [domains.security]
-description = "Threat detection, response, metrics, and audit trail"
-methods = ["scan", "detect", "respond", "metrics", "audit_log"]
+description = "Threat detection, response, metrics, advisory, and audit trail"
+methods = ["scan", "detect", "respond", "metrics", "audit_log", "advisory"]
 
 [domains.lifecycle]
 description = "Runtime lifecycle state and capability listing"
@@ -135,6 +135,12 @@ stability = "stable"
 depends_on = []
 cost = "low"
 stability = "stable"
+
+[operations."security.advisory"]
+depends_on = []
+cost = "low"
+stability = "stable"
+description = "Advisory verdict for inbound request (Tower HTTP Gateway integration)"
 
 [operations."lifecycle.state"]
 depends_on = []

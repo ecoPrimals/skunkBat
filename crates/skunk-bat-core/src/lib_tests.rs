@@ -288,3 +288,21 @@ fn test_primal_constants() {
 fn test_default_port_constant() {
     assert_eq!(DEFAULT_PORT, 9750);
 }
+
+#[test]
+fn advisory_check_clean_source() {
+    let sb = SkunkBat::new(SkunkBatConfig::default());
+    let v = sb.advisory_check("10.0.0.1");
+    assert_eq!(v.verdict, Verdict::Allow);
+    assert!(v.threat_ids.is_empty());
+}
+
+#[test]
+fn advisory_check_quarantined_source() {
+    let sb = SkunkBat::new(SkunkBatConfig::default());
+    sb.quarantine("10.0.0.1", "hostile probe", "t-001");
+    let v = sb.advisory_check("10.0.0.1");
+    assert_eq!(v.verdict, Verdict::Block);
+    assert!(v.reason.contains("quarantined"));
+    assert!(v.threat_ids.contains(&"t-001".to_string()));
+}

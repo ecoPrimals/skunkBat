@@ -62,6 +62,31 @@ pub use config::SkunkBatConfig;
 /// skunkBat errors.
 pub use error::SkunkBatError;
 
+/// Advisory verdict for the Tower HTTP Gateway integration.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AdvisoryVerdict {
+    /// Security verdict: allow, warn, or block.
+    pub verdict: Verdict,
+    /// Human-readable reason for the verdict.
+    pub reason: String,
+    /// Source address that was checked.
+    pub source: String,
+    /// Associated threat IDs (if any).
+    pub threat_ids: Vec<String>,
+}
+
+/// Security advisory verdict level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Verdict {
+    /// No security concern — route normally.
+    Allow,
+    /// Suspicious but not blocked — log and proceed with caution.
+    Warn,
+    /// Quarantined or actively hostile — recommend rejection.
+    Block,
+}
+
 /// Primal self-knowledge — the single source of truth for identity and capabilities.
 ///
 /// These are used by local discovery, capability-based integration clients,
@@ -238,6 +263,44 @@ impl SkunkBat {
     #[must_use]
     pub fn is_quarantined(&self, source: &str) -> bool {
         self.defense.is_quarantined(source)
+    }
+
+    /// Advisory security check for inbound connection metadata.
+    ///
+    /// Used by the Tower HTTP Gateway to get a security verdict before
+    /// routing a request. Returns a structured advisory with verdict and
+    /// reasoning. Does NOT enforce — the gateway decides what to do.
+    #[must_use]
+    pub fn advisory_check(&self, source: &str) -> AdvisoryVerdict {
+        if self.defense.is_quarantined(source) {
+            return AdvisoryVerdict {
+                verdict: Verdict::Block,
+                reason: "source is quarantined".to_owned(),
+                source: source.to_owned(),
+                threat_ids: self
+                    .defense
+                    .quarantine_snapshot()
+                    .get(source)
+                    .map(|r| vec![r.threat_id.clone()])
+                    .unwrap_or_default(),
+            };
+        }
+
+        if !self.defense.is_healthy() {
+            return AdvisoryVerdict {
+                verdict: Verdict::Allow,
+                reason: "defense engine disabled — no advisory".to_owned(),
+                source: source.to_owned(),
+                threat_ids: Vec::new(),
+            };
+        }
+
+        AdvisoryVerdict {
+            verdict: Verdict::Allow,
+            reason: "no threats detected for source".to_owned(),
+            source: source.to_owned(),
+            threat_ids: Vec::new(),
+        }
     }
 
     /// Defense engine status snapshot for IPC.

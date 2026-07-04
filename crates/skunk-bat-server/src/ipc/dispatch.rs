@@ -23,6 +23,7 @@ const METHODS: &[&str] = &[
     "health.check",
     "security.scan",
     "security.detect",
+    "security.advisory",
     "security.respond",
     "security.metrics",
     "security.audit_log",
@@ -99,7 +100,7 @@ fn capabilities_response() -> serde_json::Value {
         "count": count,
         "methods": METHODS.iter().chain(TRANSPORT_METHODS).copied().collect::<Vec<&str>>(),
         "provided_capabilities": [
-            { "type": "security", "methods": ["scan", "detect", "respond", "metrics", "audit_log"] },
+            { "type": "security", "methods": ["scan", "detect", "respond", "metrics", "audit_log", "advisory"] },
             { "type": "health", "methods": ["liveness", "readiness", "check"] },
             { "type": "defense", "methods": ["status", "quarantine", "release"] },
             { "type": "baseline", "methods": ["observe", "query", "anomaly", "reset"] },
@@ -146,6 +147,7 @@ pub(super) async fn dispatch(
         "security.scan" | "security.detect" | "security.metrics" | "security.audit_log" => {
             dispatch_security(state, id, &request.method, request.params).await
         }
+        "security.advisory" => dispatch_advisory(state, id, request.params).await,
         "security.respond" => dispatch_respond(state, id, request.params).await,
         "baseline.observe" => dispatch_baseline_observe(state, id, request.params).await,
         "baseline.query" => super::dispatch_composable::dispatch_baseline_query(state, id).await,
@@ -525,6 +527,36 @@ async fn dispatch_respond(
             Response::error(id, jsonrpc::INTERNAL_ERROR, e.to_string())
         }
     }
+}
+
+/// Handle `security.advisory` — advisory check for Tower HTTP Gateway.
+///
+/// Accepts `{"source": "<ip>"}`. Returns an `AdvisoryVerdict` with verdict,
+/// reason, and any associated threat IDs. The gateway uses this to decide
+/// whether to route, warn-log, or reject an inbound request.
+async fn dispatch_advisory(
+    state: &Arc<RwLock<SkunkBat>>,
+    id: serde_json::Value,
+    params: Option<serde_json::Value>,
+) -> Response {
+    let source = params
+        .as_ref()
+        .and_then(|p| p.get("source"))
+        .and_then(|v| v.as_str());
+
+    let Some(source) = source else {
+        return Response::error(
+            id,
+            jsonrpc::INVALID_PARAMS,
+            "missing required field: source",
+        );
+    };
+
+    let sb = state.read().await;
+    let verdict = sb.advisory_check(source);
+    drop(sb);
+
+    Response::success(id, serde_json::to_value(&verdict).unwrap_or_default())
 }
 
 /// Handle `baseline.observe` — feed a live observation into the threat profiler.

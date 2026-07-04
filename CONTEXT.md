@@ -97,10 +97,10 @@ mode semantics for local, loopback, and remote callers.
 
 ## Status
 
-v0.2.17 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
+v0.2.18 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**533 tests** passing across all workspace crates. Max production file 728 lines — no
+**539 tests** passing across all workspace crates. Max production file 728 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
 via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
 to env vars with defaults (session TTL, sweep, forwarding, registration).
@@ -110,7 +110,8 @@ Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkd
 **IPC**: JSON-RPC 2.0 over TCP + UDS with BTSP Phase 1/2/3. BearDog-delegated handshake,
 `btsp.negotiate` with session registry, `ChaCha20-Poly1305` AEAD encrypted framing.
 riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compliance.
-28 stable IPC methods — 6 composable primitives shipped in v0.2.17 (`baseline.{query,anomaly,reset}`,
+29 stable IPC methods — `security.advisory` for Tower HTTP Gateway (Wave 132c),
+6 composable primitives shipped in v0.2.17 (`baseline.{query,anomaly,reset}`,
 `defense.{quarantine,release}`, `response.evaluate`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
 
@@ -149,7 +150,7 @@ enforced/permissive modes + quarantine enforcement.
 
 ## Stadial Composition Readiness
 
-### Method Status (Wave 128 Audit)
+### Method Status (Wave 132c Update)
 
 | Method | Tier | Impl | Notes |
 |--------|------|------|-------|
@@ -158,6 +159,7 @@ enforced/permissive modes + quarantine enforcement.
 | `health.check` | Stable | Complete | Full health report with dependency status |
 | `security.scan` | Stable | Partial | Self-only discovery; empty topology (needs ToadStool wiring) |
 | `security.detect` | Stable | Partial | 6 categories; genetic/topology need runtime providers |
+| `security.advisory` | Stable | Complete | Tower HTTP Gateway verdict (quarantine + defense check) |
 | `security.respond` | Stable | Partial | Real policy engine; quarantine in-memory only |
 | `security.metrics` | Stable | Partial | Flat counters; not spec's nested observability model |
 | `security.audit_log` | Stable | Complete | JH-5 ring buffer with cursor-based polling |
@@ -178,7 +180,7 @@ enforced/permissive modes + quarantine enforcement.
 | `btsp.negotiate` | Stable | Complete | Phase 3 handshake + session registry |
 | `btsp.capabilities` | Stable | Complete | Cipher advertisement |
 
-**21 Complete, 7 Partial** (all functional, partial = scope limits documented above).
+**22 Complete, 7 Partial** (all functional, partial = scope limits documented above).
 
 ### Composable Primitive Gaps
 

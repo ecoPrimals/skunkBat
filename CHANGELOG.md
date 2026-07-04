@@ -4,6 +4,28 @@ All notable changes to skunkBat are documented here.
 
 ## [Unreleased]
 
+## [0.2.18] — 2026-07-04 (Wave 132c: Tower HTTP Gateway advisory)
+
+### Added
+
+- **`security.advisory` IPC method**: Advisory verdict for inbound requests from
+  the Tower HTTP Gateway. Checks quarantine list + defense engine state. Returns
+  structured `AdvisoryVerdict` with `verdict` (allow/warn/block), `reason`, `source`,
+  and `threat_ids`. Public (no auth required — mesh peers call it).
+- **`AdvisoryVerdict` + `Verdict` types** in `skunk-bat-core` — serializable structured
+  response for gateway integration.
+- **6 new tests**: 2 core-level advisory tests + 4 dispatch-level integration tests
+  (clean source, quarantined source, missing param, public access enforcement).
+
+### Changed
+
+- **Method count**: 28 → 29 IPC methods (27 application + 2 transport).
+- **`security.advisory` in `PUBLIC_METHODS`**: accessible without auth token (mesh
+  peers call this during request routing).
+- **Registration threshold**: `announce_payload_methods_complete` now asserts ≥29.
+
+## [0.2.17] — 2026-07-04
+
 ### Changed
 
 - **Typed transport errors**: `serve_tcp`, `serve_uds`, and `serve` return
