@@ -54,6 +54,7 @@ pub(super) const PUBLIC_METHODS: &[&str] = &[
 
 /// Classify a method string into its access level.
 #[must_use]
+#[inline]
 pub(super) fn classify_method(method: &str) -> MethodAccessLevel {
     if PUBLIC_METHODS.contains(&method) {
         return MethodAccessLevel::Public;
@@ -181,6 +182,7 @@ impl EnforcementMode {
 
     /// Human-readable label for diagnostics and `auth.mode` responses.
     #[must_use]
+    #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Permissive => "permissive",
@@ -210,6 +212,7 @@ impl MethodGate {
 
     /// Current enforcement mode.
     #[must_use]
+    #[inline]
     pub const fn mode(&self) -> EnforcementMode {
         self.mode
     }
@@ -222,6 +225,7 @@ impl MethodGate {
         clippy::result_large_err,
         reason = "Response is the natural error for pre-dispatch rejection"
     )]
+    #[inline]
     pub fn check(
         &self,
         method: &str,

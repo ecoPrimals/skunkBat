@@ -61,6 +61,7 @@ impl DefenseEngine {
 
     /// Check if defense engine is healthy.
     #[must_use]
+    #[inline]
     pub const fn is_healthy(&self) -> bool {
         self.enabled
     }
@@ -262,6 +263,7 @@ impl DefenseEngine {
 
     /// Check whether a source address is currently quarantined.
     #[must_use]
+    #[inline]
     pub fn is_quarantined(&self, source: &str) -> bool {
         self.quarantine_map
             .lock()
@@ -280,6 +282,7 @@ impl DefenseEngine {
 
     /// Check whether auto-response is enabled.
     #[must_use]
+    #[inline]
     pub const fn auto_response_enabled(&self) -> bool {
         self.auto_response_enabled
     }

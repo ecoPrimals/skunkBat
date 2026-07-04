@@ -37,15 +37,6 @@ enum ServerError {
 
     #[error("{0}")]
     Transport(#[from] ipc::transport::TransportError),
-
-    #[error("{0}")]
-    Ipc(Box<dyn std::error::Error + Send + Sync>),
-}
-
-impl From<Box<dyn std::error::Error + Send + Sync>> for ServerError {
-    fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
-        Self::Ipc(e)
-    }
 }
 
 fn default_port() -> u16 {

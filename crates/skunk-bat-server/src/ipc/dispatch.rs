@@ -616,3 +616,11 @@ async fn dispatch_audit_log(
 #[cfg(test)]
 #[path = "dispatch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "dispatch_tests_gate.rs"]
+mod tests_gate;
+
+#[cfg(test)]
+#[path = "dispatch_tests_composable.rs"]
+mod tests_composable;

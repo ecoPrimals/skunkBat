@@ -135,7 +135,7 @@ pub async fn serve_tcp(
     sessions: Arc<BtspSessionRegistry>,
     addr: String,
     port: u16,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+) -> Result<(), TransportError> {
     let listener = TcpListener::bind((&*addr, port)).await?;
     tracing::info!("TCP JSON-RPC listening on {addr}:{port}");
 
@@ -245,10 +245,8 @@ pub async fn serve_tcp(
 
 /// Set up the UDS listener: create directory, clean stale socket, bind, create symlink.
 #[cfg(unix)]
-async fn setup_uds_listener() -> Result<
-    (tokio::net::UnixListener, Option<Arc<BtspHandshakeConfig>>),
-    Box<dyn std::error::Error + Send + Sync + 'static>,
-> {
+async fn setup_uds_listener()
+-> Result<(tokio::net::UnixListener, Option<Arc<BtspHandshakeConfig>>), TransportError> {
     let btsp = BtspConfig::from_env()?;
     btsp.log_mode();
 
@@ -290,7 +288,7 @@ async fn setup_uds_listener() -> Result<
 pub async fn serve_uds(
     state: Arc<RwLock<SkunkBat>>,
     sessions: Arc<BtspSessionRegistry>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+) -> Result<(), TransportError> {
     let (listener, btsp_config) = setup_uds_listener().await?;
 
     loop {
@@ -388,7 +386,7 @@ pub async fn serve_uds(
 pub async fn serve_uds(
     _state: Arc<RwLock<SkunkBat>>,
     _sessions: Arc<BtspSessionRegistry>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+) -> Result<(), TransportError> {
     tracing::warn!("Unix domain sockets not available on this platform");
     std::future::pending().await
 }

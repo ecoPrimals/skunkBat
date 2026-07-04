@@ -4,6 +4,18 @@ All notable changes to skunkBat are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Typed transport errors**: `serve_tcp`, `serve_uds`, and `serve` return
+  `Result<_, TransportError>` instead of `Box<dyn Error>`. Removed dead `Ipc` variant
+  from `ServerError`.
+- **Test module split**: `dispatch_tests.rs` (1011L) → 3 domain-focused modules:
+  `dispatch_tests.rs` (393L), `dispatch_tests_gate.rs` (301L),
+  `dispatch_tests_composable.rs` (382L).
+- **`#[inline]` hot-path annotations**: `DefenseEngine::{is_quarantined, is_healthy,
+  auto_response_enabled}`, `MethodGate::{check, mode}`, `classify_method`,
+  `EnforcementMode::as_str`.
+
 ---
 
 ## [0.2.17] — Wave 128: Composable Primitives & Config Evolution

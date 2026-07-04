@@ -112,7 +112,7 @@ pub async fn serve(
     socket_override: Option<&str>,
     no_uds: bool,
     no_tcp: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), transport::TransportError> {
     let state = Arc::new(RwLock::new(skunkbat));
     let sessions = Arc::new(SessionRegistry::new());
 
