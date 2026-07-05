@@ -20,18 +20,35 @@ pub struct DefenseEngine {
     quarantine_map: Mutex<HashMap<String, QuarantineRecord>>,
     critical_confidence: f64,
     high_confidence: f64,
+    persist_path: Option<std::path::PathBuf>,
 }
 
 impl DefenseEngine {
     /// Create a new defense engine.
+    ///
+    /// If `data_dir` from the config is non-empty, loads any persisted
+    /// quarantine state from `{data_dir}/quarantine.json`.
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
+        let persist_path = if config.common.data_dir.is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(&config.common.data_dir).join("quarantine.json"))
+        };
+
+        let quarantine_map = persist_path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+
         Self {
             enabled: config.features.auto_defense,
             auto_response_enabled: config.features.auto_defense,
-            quarantine_map: Mutex::new(HashMap::new()),
+            quarantine_map: Mutex::new(quarantine_map),
             critical_confidence: config.thresholds.quarantine_critical_confidence,
             high_confidence: config.thresholds.quarantine_high_confidence,
+            persist_path,
         }
     }
 
@@ -185,6 +202,8 @@ impl DefenseEngine {
                         threat_id: threat.id.clone(),
                     },
                 );
+                drop(map);
+                self.persist();
                 tracing::debug!("Quarantining connection from {source}");
             }
             Err(e) => {
@@ -232,16 +251,23 @@ impl DefenseEngine {
                     threat_id: threat_id.to_owned(),
                 },
             );
+            drop(map);
+            self.persist();
         }
     }
 
     /// Release a source address from quarantine. Returns `true` if the source
     /// was quarantined and has been released, `false` if it wasn't quarantined.
     pub fn release(&self, source: &str) -> bool {
-        self.quarantine_map
+        let released = self
+            .quarantine_map
             .lock()
             .map(|mut map| map.remove(source).is_some())
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if released {
+            self.persist();
+        }
+        released
     }
 
     /// Evaluate a threat and return the recommended action without executing it.
@@ -285,6 +311,30 @@ impl DefenseEngine {
     #[inline]
     pub const fn auto_response_enabled(&self) -> bool {
         self.auto_response_enabled
+    }
+
+    /// Persist the quarantine map to disk (best-effort).
+    ///
+    /// Writes atomically to `{data_dir}/quarantine.json`. Failures are
+    /// logged but do not affect in-memory state.
+    fn persist(&self) {
+        let Some(ref path) = self.persist_path else {
+            return;
+        };
+        let Ok(map) = self.quarantine_map.lock() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_string_pretty(&*map) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(path, json) {
+                    tracing::debug!("Quarantine persist failed: {e}");
+                }
+            }
+            Err(e) => tracing::debug!("Quarantine serialize failed: {e}"),
+        }
     }
 }
 
@@ -580,5 +630,34 @@ mod tests {
             };
             engine.execute_action(&action, &threat);
         }
+    }
+
+    #[test]
+    fn quarantine_persistence_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.common.data_dir = dir.path().to_string_lossy().into_owned();
+
+        let engine = DefenseEngine::new(&config);
+        engine.quarantine("10.0.0.1", "test threat", "threat-001");
+        engine.quarantine("10.0.0.2", "second threat", "threat-002");
+
+        assert!(engine.is_quarantined("10.0.0.1"));
+        assert!(engine.is_quarantined("10.0.0.2"));
+
+        let persist_file = dir.path().join("quarantine.json");
+        assert!(persist_file.exists());
+
+        let engine2 = DefenseEngine::new(&config);
+        assert!(engine2.is_quarantined("10.0.0.1"));
+        assert!(engine2.is_quarantined("10.0.0.2"));
+
+        engine2.release("10.0.0.1");
+        assert!(!engine2.is_quarantined("10.0.0.1"));
+        assert!(engine2.is_quarantined("10.0.0.2"));
+
+        let engine3 = DefenseEngine::new(&config);
+        assert!(!engine3.is_quarantined("10.0.0.1"));
+        assert!(engine3.is_quarantined("10.0.0.2"));
     }
 }

@@ -20,4 +20,5 @@ tracing = { workspace = true }
 [dev-dependencies]
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "test-util"] }
 tracing-subscriber = { workspace = true }
+tempfile = "3"
 

@@ -80,14 +80,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 3. Report metrics
         let metrics = skunkbat.get_security_metrics();
         println!("📊 Security Metrics:");
-        println!("  • Threats detected: {}", metrics.threats_detected);
-        println!("  • Threats mitigated: {}", metrics.threats_mitigated);
-        println!("  • Scans performed: {}", metrics.scans_performed);
+        println!("  • Threats detected: {}", metrics.threats.detected);
+        println!("  • Threats mitigated: {}", metrics.threats.mitigated);
+        println!("  • Scans performed: {}", metrics.scanning.performed);
         println!(
             "  • Quarantines active: {}",
-            metrics.connections_quarantined
+            metrics.defense.connections_quarantined
         );
-        println!("  • Alerts sent: {}", metrics.alerts_sent);
+        println!("  • Alerts sent: {}", metrics.defense.alerts_sent);
 
         // 4. Health check
         match skunkbat.health_check().await {

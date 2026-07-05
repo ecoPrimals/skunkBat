@@ -21,5 +21,9 @@ lcov.info
 .DS_Store
 Thumbs.db
 
+# Runtime data (quarantine persistence)
+/data/
+/crates/*/data/
+
 # Archives (moved to ../archive)
 archive/

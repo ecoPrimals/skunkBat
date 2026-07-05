@@ -85,8 +85,8 @@ async fn threat_report_returns_structured_report() {
     assert!(result["threats"].is_array());
     assert!(result["metrics"].is_object());
     assert!(result["defense"].is_object());
-    assert!(result["metrics"]["scans_performed"].is_number());
-    assert!(result["metrics"]["threats_detected"].is_number());
+    assert!(result["metrics"]["scanning"]["performed"].is_number());
+    assert!(result["metrics"]["threats"]["detected"].is_number());
     assert!(result["defense"]["enabled"].is_boolean());
 }
 

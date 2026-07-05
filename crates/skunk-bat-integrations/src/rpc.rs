@@ -126,6 +126,106 @@ pub fn capability_socket(capability: &str) -> String {
     format!("{dir}/{capability}.sock")
 }
 
+/// Shared transport configuration for capability-based integration clients.
+///
+/// Encapsulates the common pattern of UDS-first, TCP-fallback transport
+/// resolution that all integration clients share.
+#[derive(Clone, Debug)]
+pub struct CapabilityClient {
+    endpoint: String,
+    uds_path: Option<String>,
+    timeout_ms: u64,
+}
+
+impl CapabilityClient {
+    /// Create with an explicit TCP endpoint and no UDS.
+    #[must_use]
+    pub const fn new(endpoint: String, timeout_ms: u64) -> Self {
+        Self {
+            endpoint,
+            uds_path: None,
+            timeout_ms,
+        }
+    }
+
+    /// Create from environment: reads `endpoint_env` for TCP, probes
+    /// `$BIOMEOS_SOCKET_DIR/{capability}.sock` for UDS.
+    #[must_use]
+    pub fn from_env(endpoint_env: &str, capability: &str, default_timeout_ms: u64) -> Self {
+        let endpoint = std::env::var(endpoint_env).unwrap_or_default();
+        let uds_path = {
+            let path = capability_socket(capability);
+            std::path::Path::new(&path).exists().then_some(path)
+        };
+        let timeout_ms = std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default_timeout_ms);
+
+        Self {
+            endpoint,
+            uds_path,
+            timeout_ms,
+        }
+    }
+
+    /// Override the request timeout.
+    #[must_use]
+    pub const fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.timeout_ms = timeout_ms;
+        self
+    }
+
+    /// The TCP endpoint (if any).
+    #[must_use]
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// Returns `Some` only if a non-empty TCP endpoint is configured.
+    #[must_use]
+    pub fn tcp_endpoint(&self) -> Option<&str> {
+        if self.endpoint.is_empty() {
+            None
+        } else {
+            Some(&self.endpoint)
+        }
+    }
+
+    /// The UDS path (if discovered and exists).
+    #[must_use]
+    pub fn uds_path(&self) -> Option<&str> {
+        self.uds_path.as_deref()
+    }
+
+    /// The configured timeout as a `Duration`.
+    #[must_use]
+    pub const fn timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms)
+    }
+
+    /// Make a JSON-RPC call using UDS-first, TCP-fallback transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RpcError`] if no endpoint is available or the call fails.
+    pub async fn call(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, RpcError> {
+        let timeout = Duration::from_millis(self.timeout_ms);
+        crate::rpc::call(
+            self.uds_path.as_deref(),
+            self.tcp_endpoint(),
+            method,
+            params,
+            timeout,
+        )
+        .await
+    }
+}
+
 /// High-level JSON-RPC call with UDS-first, TCP-fallback transport.
 ///
 /// Tries UDS (if path provided and platform supports it), then TCP.

@@ -14,6 +14,7 @@ pub fn test_config() -> SkunkBatConfig {
     SkunkBatConfig {
         common: CommonConfig {
             name: "skunkBat-test".to_string(),
+            data_dir: String::new(),
             ..CommonConfig::default()
         },
         features: FeatureFlags {

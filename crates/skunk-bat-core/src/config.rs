@@ -154,6 +154,9 @@ impl SkunkBatConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
+        config.common.data_dir = std::env::var(crate::env_keys::SKUNKBAT_DATA_DIR)
+            .unwrap_or_else(|_| "./data".to_owned());
+
         if let Ok(id) = std::env::var(crate::env_keys::SKUNKBAT_LINEAGE_ID)
             && !id.is_empty()
         {

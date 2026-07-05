@@ -233,13 +233,7 @@ pub(super) async fn dispatch_threat_report(
                 serde_json::json!({
                     "threat_count": threat_count,
                     "threats": threat_summaries,
-                    "metrics": {
-                        "scans_performed": metrics.scans_performed,
-                        "threats_detected": metrics.threats_detected,
-                        "threats_mitigated": metrics.threats_mitigated,
-                        "connections_quarantined": metrics.connections_quarantined,
-                        "alerts_sent": metrics.alerts_sent,
-                    },
+                    "metrics": metrics,
                     "defense": defense,
                 }),
             )

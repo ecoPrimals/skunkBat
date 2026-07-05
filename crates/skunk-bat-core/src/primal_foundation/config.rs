@@ -32,7 +32,7 @@ impl Default for CommonConfig {
             name: "primal".to_owned(),
             instance_id: new_instance_id(),
             log_level: "info".to_owned(),
-            data_dir: "./data".to_owned(),
+            data_dir: String::new(),
             listen_addr: std::env::var(crate::env_keys::SKUNKBAT_LISTEN_ADDR)
                 .unwrap_or_else(|_| "127.0.0.1".to_owned()),
             listen_port: 0,

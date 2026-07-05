@@ -55,8 +55,8 @@ fn test_get_security_metrics() {
     let skunkbat = SkunkBat::new(config);
 
     let metrics = skunkbat.get_security_metrics();
-    assert_eq!(metrics.threats_detected, 0);
-    assert_eq!(metrics.threats_mitigated, 0);
+    assert_eq!(metrics.threats.detected, 0);
+    assert_eq!(metrics.threats.mitigated, 0);
 }
 
 #[test]

@@ -133,3 +133,6 @@ pub const SKUNKBAT_TOPOLOGY_PATH: &str = "SKUNKBAT_TOPOLOGY_PATH";
 
 /// Integration RPC timeout in milliseconds (default: 3000).
 pub const SKUNKBAT_INTEGRATION_TIMEOUT_MS: &str = "SKUNKBAT_INTEGRATION_TIMEOUT_MS";
+
+/// Persistent data directory for quarantine state, cache, etc.
+pub const SKUNKBAT_DATA_DIR: &str = "SKUNKBAT_DATA_DIR";

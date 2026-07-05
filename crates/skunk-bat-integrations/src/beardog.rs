@@ -13,7 +13,6 @@
 
 use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::threats::traits::LineageVerifier;
-use std::time::Duration;
 
 /// Default RPC timeout for lineage calls (ms).
 fn default_timeout_ms() -> u64 {
@@ -32,9 +31,7 @@ fn default_timeout_ms() -> u64 {
 /// Falls back to conservative deny when the provider is unreachable.
 #[derive(Clone, Debug)]
 pub struct RemoteLineageVerifier {
-    endpoint: String,
-    uds_path: Option<String>,
-    timeout_ms: u64,
+    transport: crate::rpc::CapabilityClient,
 }
 
 impl RemoteLineageVerifier {
@@ -43,9 +40,7 @@ impl RemoteLineageVerifier {
     pub fn new(endpoint: String) -> Self {
         tracing::info!("Initializing remote lineage verifier");
         Self {
-            endpoint,
-            uds_path: None,
-            timeout_ms: default_timeout_ms(),
+            transport: crate::rpc::CapabilityClient::new(endpoint, default_timeout_ms()),
         }
     }
 
@@ -55,37 +50,27 @@ impl RemoteLineageVerifier {
     /// `$BIOMEOS_SOCKET_DIR/lineage-verification.sock` for UDS.
     #[must_use]
     pub fn from_env() -> Self {
-        let endpoint =
-            std::env::var(skunk_bat_core::env_keys::LINEAGE_ENDPOINT).unwrap_or_default();
-        let uds_path = {
-            let path = crate::rpc::capability_socket("lineage-verification");
-            std::path::Path::new(&path).exists().then_some(path)
-        };
-        tracing::info!(
-            endpoint = %endpoint,
-            uds = ?uds_path,
-            "Initializing remote lineage verifier"
-        );
+        tracing::info!("Initializing remote lineage verifier from env");
         Self {
-            endpoint,
-            uds_path,
-            timeout_ms: default_timeout_ms(),
+            transport: crate::rpc::CapabilityClient::from_env(
+                skunk_bat_core::env_keys::LINEAGE_ENDPOINT,
+                "lineage-verification",
+                default_timeout_ms(),
+            ),
         }
     }
 
     /// Set request timeout.
     #[must_use]
-    pub const fn with_timeout(mut self, timeout_ms: u64) -> Self {
-        self.timeout_ms = timeout_ms;
+    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.transport = self.transport.with_timeout(timeout_ms);
         self
     }
 
-    fn tcp_endpoint(&self) -> Option<&str> {
-        if self.endpoint.is_empty() {
-            None
-        } else {
-            Some(&self.endpoint)
-        }
+    /// Returns `Some` only if a non-empty TCP endpoint is configured.
+    #[must_use]
+    pub fn tcp_endpoint(&self) -> Option<&str> {
+        self.transport.tcp_endpoint()
     }
 
     async fn rpc_call(
@@ -93,15 +78,7 @@ impl RemoteLineageVerifier {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, crate::rpc::RpcError> {
-        let timeout = Duration::from_millis(self.timeout_ms);
-        crate::rpc::call(
-            self.uds_path.as_deref(),
-            self.tcp_endpoint(),
-            method,
-            params,
-            timeout,
-        )
-        .await
+        self.transport.call(method, params).await
     }
 }
 

@@ -66,11 +66,20 @@ impl SecurityObserver {
     #[must_use]
     pub fn get_metrics(&self) -> SecurityMetrics {
         SecurityMetrics {
-            threats_detected: self.metrics.threats_detected.load(Ordering::Relaxed),
-            threats_mitigated: self.metrics.threats_mitigated.load(Ordering::Relaxed),
-            scans_performed: self.metrics.scans_performed.load(Ordering::Relaxed),
-            connections_quarantined: self.metrics.connections_quarantined.load(Ordering::Relaxed),
-            alerts_sent: self.metrics.alerts_sent.load(Ordering::Relaxed),
+            threats: ThreatMetrics {
+                detected: self.metrics.threats_detected.load(Ordering::Relaxed),
+                mitigated: self.metrics.threats_mitigated.load(Ordering::Relaxed),
+            },
+            scanning: ScanMetrics {
+                performed: self.metrics.scans_performed.load(Ordering::Relaxed),
+            },
+            defense: DefenseMetrics {
+                connections_quarantined: self
+                    .metrics
+                    .connections_quarantined
+                    .load(Ordering::Relaxed),
+                alerts_sent: self.metrics.alerts_sent.load(Ordering::Relaxed),
+            },
             last_updated: Some(SystemTime::now()),
         }
     }
@@ -123,20 +132,76 @@ struct SecurityMetricsInternal {
 }
 
 /// Security metrics (public snapshot).
+///
+/// Organized by domain for structured observability. The flat counters
+/// are still accessible for backwards-compatibility via `total_*` methods.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SecurityMetrics {
-    /// Number of threats detected
-    pub threats_detected: u64,
-    /// Number of threats mitigated
-    pub threats_mitigated: u64,
-    /// Network scan count
-    pub scans_performed: u64,
-    /// Connections quarantined
-    pub connections_quarantined: u64,
-    /// Alerts sent to operator
-    pub alerts_sent: u64,
-    /// Last update timestamp
+    /// Threat detection metrics.
+    pub threats: ThreatMetrics,
+    /// Scanning / reconnaissance metrics.
+    pub scanning: ScanMetrics,
+    /// Defense response metrics.
+    pub defense: DefenseMetrics,
+    /// Last update timestamp.
     pub last_updated: Option<SystemTime>,
+}
+
+/// Threat detection counters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThreatMetrics {
+    /// Total threats detected.
+    pub detected: u64,
+    /// Threats successfully mitigated.
+    pub mitigated: u64,
+}
+
+/// Network scanning counters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScanMetrics {
+    /// Total scans performed.
+    pub performed: u64,
+}
+
+/// Active defense counters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DefenseMetrics {
+    /// Connections currently/historically quarantined.
+    pub connections_quarantined: u64,
+    /// Alerts sent to operator.
+    pub alerts_sent: u64,
+}
+
+impl SecurityMetrics {
+    /// Total threats detected (flat accessor).
+    #[must_use]
+    pub const fn threats_detected(&self) -> u64 {
+        self.threats.detected
+    }
+
+    /// Total threats mitigated (flat accessor).
+    #[must_use]
+    pub const fn threats_mitigated(&self) -> u64 {
+        self.threats.mitigated
+    }
+
+    /// Total scans performed (flat accessor).
+    #[must_use]
+    pub const fn scans_performed(&self) -> u64 {
+        self.scanning.performed
+    }
+
+    /// Connections quarantined (flat accessor).
+    #[must_use]
+    pub const fn connections_quarantined(&self) -> u64 {
+        self.defense.connections_quarantined
+    }
+
+    /// Alerts sent (flat accessor).
+    #[must_use]
+    pub const fn alerts_sent(&self) -> u64 {
+        self.defense.alerts_sent
+    }
 }
 
 #[cfg(test)]
@@ -166,9 +231,9 @@ mod tests {
         let observer = SecurityObserver::new(&config);
 
         let metrics = observer.get_metrics();
-        assert_eq!(metrics.threats_detected, 0);
-        assert_eq!(metrics.threats_mitigated, 0);
-        assert_eq!(metrics.scans_performed, 0);
+        assert_eq!(metrics.threats.detected, 0);
+        assert_eq!(metrics.threats.mitigated, 0);
+        assert_eq!(metrics.scanning.performed, 0);
     }
 
     #[test]
@@ -180,7 +245,7 @@ mod tests {
         observer.record_threat_detected();
 
         let metrics = observer.get_metrics();
-        assert_eq!(metrics.threats_detected, 2);
+        assert_eq!(metrics.threats.detected, 2);
     }
 
     #[test]
@@ -191,7 +256,7 @@ mod tests {
         observer.record_threat_mitigated();
 
         let metrics = observer.get_metrics();
-        assert_eq!(metrics.threats_mitigated, 1);
+        assert_eq!(metrics.threats.mitigated, 1);
     }
 
     #[test]
@@ -204,7 +269,7 @@ mod tests {
         observer.record_scan_performed();
 
         let metrics = observer.get_metrics();
-        assert_eq!(metrics.scans_performed, 3);
+        assert_eq!(metrics.scanning.performed, 3);
     }
 
     #[test]
@@ -215,7 +280,7 @@ mod tests {
         observer.record_quarantine();
 
         let metrics = observer.get_metrics();
-        assert_eq!(metrics.connections_quarantined, 1);
+        assert_eq!(metrics.defense.connections_quarantined, 1);
     }
 
     #[test]
@@ -227,7 +292,7 @@ mod tests {
         observer.record_alert();
 
         let metrics = observer.get_metrics();
-        assert_eq!(metrics.alerts_sent, 2);
+        assert_eq!(metrics.defense.alerts_sent, 2);
     }
 
     #[test]
@@ -243,11 +308,11 @@ mod tests {
         observer.record_alert();
 
         let metrics = observer.get_metrics();
-        assert_eq!(metrics.threats_detected, 2);
-        assert_eq!(metrics.threats_mitigated, 1);
-        assert_eq!(metrics.scans_performed, 1);
-        assert_eq!(metrics.connections_quarantined, 1);
-        assert_eq!(metrics.alerts_sent, 1);
+        assert_eq!(metrics.threats.detected, 2);
+        assert_eq!(metrics.threats.mitigated, 1);
+        assert_eq!(metrics.scanning.performed, 1);
+        assert_eq!(metrics.defense.connections_quarantined, 1);
+        assert_eq!(metrics.defense.alerts_sent, 1);
     }
 
     #[test]
@@ -258,9 +323,8 @@ mod tests {
         let observer = SecurityObserver::new(&config);
         assert!(!observer.is_healthy());
 
-        // Should still work, just not enabled
         let metrics = observer.get_metrics();
-        assert_eq!(metrics.threats_detected, 0);
+        assert_eq!(metrics.threats.detected, 0);
     }
 
     #[test]

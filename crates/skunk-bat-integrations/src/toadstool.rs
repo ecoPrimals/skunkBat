@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::reconnaissance::{Node, NodeStatus, PrimalDiscovery};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 /// Default RPC timeout for discovery calls (ms).
 fn default_timeout_ms() -> u64 {
@@ -29,9 +29,7 @@ fn default_timeout_ms() -> u64 {
 /// capability symlink (UDS), falls back to `DISCOVERY_ENDPOINT` (TCP).
 #[derive(Clone, Debug)]
 pub struct DiscoveryClient {
-    endpoint: String,
-    uds_path: Option<String>,
-    timeout_ms: u64,
+    transport: crate::rpc::CapabilityClient,
 }
 
 /// Discovered primal from the capability registry.
@@ -56,9 +54,7 @@ impl DiscoveryClient {
     pub fn new(endpoint: String) -> Self {
         tracing::info!("Initializing discovery client");
         Self {
-            endpoint,
-            uds_path: None,
-            timeout_ms: default_timeout_ms(),
+            transport: crate::rpc::CapabilityClient::new(endpoint, default_timeout_ms()),
         }
     }
 
@@ -68,43 +64,33 @@ impl DiscoveryClient {
     /// `$BIOMEOS_SOCKET_DIR/discovery.sock` for UDS.
     #[must_use]
     pub fn from_env() -> Self {
-        let endpoint =
-            std::env::var(skunk_bat_core::env_keys::DISCOVERY_ENDPOINT).unwrap_or_default();
-        let uds_path = {
-            let path = crate::rpc::capability_socket("discovery");
-            std::path::Path::new(&path).exists().then_some(path)
-        };
-        tracing::info!(
-            endpoint = %endpoint,
-            uds = ?uds_path,
-            "Initializing discovery client"
-        );
+        tracing::info!("Initializing discovery client from env");
         Self {
-            endpoint,
-            uds_path,
-            timeout_ms: default_timeout_ms(),
+            transport: crate::rpc::CapabilityClient::from_env(
+                skunk_bat_core::env_keys::DISCOVERY_ENDPOINT,
+                "discovery",
+                default_timeout_ms(),
+            ),
         }
     }
 
     /// Set request timeout.
     #[must_use]
-    pub const fn with_timeout(mut self, timeout_ms: u64) -> Self {
-        self.timeout_ms = timeout_ms;
+    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.transport = self.transport.with_timeout(timeout_ms);
         self
     }
 
     /// The TCP endpoint this client targets (if any).
     #[must_use]
     pub fn endpoint(&self) -> &str {
-        &self.endpoint
+        self.transport.endpoint()
     }
 
-    fn tcp_endpoint(&self) -> Option<&str> {
-        if self.endpoint.is_empty() {
-            None
-        } else {
-            Some(&self.endpoint)
-        }
+    /// Returns `Some` only if a non-empty TCP endpoint is configured.
+    #[must_use]
+    pub fn tcp_endpoint(&self) -> Option<&str> {
+        self.transport.tcp_endpoint()
     }
 
     async fn rpc_call(
@@ -112,16 +98,10 @@ impl DiscoveryClient {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, SkunkBatError> {
-        let timeout = Duration::from_millis(self.timeout_ms);
-        crate::rpc::call(
-            self.uds_path.as_deref(),
-            self.tcp_endpoint(),
-            method,
-            params,
-            timeout,
-        )
-        .await
-        .map_err(|e| SkunkBatError::Integration(e.to_string()))
+        self.transport
+            .call(method, params)
+            .await
+            .map_err(|e| SkunkBatError::Integration(e.to_string()))
     }
 
     /// Discover all primals in the network.
@@ -186,7 +166,7 @@ impl DiscoveryClient {
             return Ok(Vec::new());
         };
 
-        let timeout = Duration::from_millis(self.timeout_ms);
+        let timeout = self.transport.timeout();
         let mut discovered = Vec::new();
 
         for entry in entries.flatten() {

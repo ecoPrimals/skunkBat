@@ -162,6 +162,7 @@ export SKUNKBAT_REGISTRATION_TIMEOUT=3        # Discovery registration timeout
 export SKUNKBAT_LINEAGE_ID=my-family          # Genetic verification (enables BearDog)
 export SKUNKBAT_TOPOLOGY_PATH=1,2,3           # Expected layer traversal path
 export SKUNKBAT_INTEGRATION_TIMEOUT_MS=3000   # Integration RPC timeout (ms)
+export SKUNKBAT_DATA_DIR=./data                # Quarantine persistence directory
 ```
 
 ### Threat Thresholds
@@ -209,7 +210,7 @@ No primal names are hardcoded in production code.
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 540+ tests passing (lib + integration + chaos), full workspace
+- 541+ tests passing (lib + integration + chaos), full workspace
 - All 29 IPC methods stability-tiered (Stable; `auth.*` beta)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout

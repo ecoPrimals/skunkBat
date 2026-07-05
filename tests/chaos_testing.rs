@@ -169,7 +169,7 @@ mod chaos_tests {
             assert!(metrics.last_updated.is_some(), "Metrics should be updated");
 
             // Metrics should be internally consistent
-            assert!(metrics.scans_performed >= metrics.threats_detected);
+            assert!(metrics.scanning.performed >= metrics.threats.detected);
         }
 
         skunkbat.stop().await.expect("Stop should succeed");

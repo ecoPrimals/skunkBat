@@ -30,11 +30,9 @@ fn default_timeout_ms() -> u64 {
 /// capability symlink (UDS), falls back to `FEDERATION_ENDPOINT` (TCP).
 #[derive(Clone)]
 pub struct FederationClient {
-    endpoint: String,
-    uds_path: Option<String>,
+    transport: crate::rpc::CapabilityClient,
     node_id: String,
     connected: Arc<RwLock<bool>>,
-    timeout_ms: u64,
 }
 
 /// Threat intelligence message for federation broadcast.
@@ -65,11 +63,9 @@ impl FederationClient {
     pub fn new(endpoint: String, node_id: String) -> Self {
         tracing::info!("Initializing federation client for node {node_id}");
         Self {
-            endpoint,
-            uds_path: None,
+            transport: crate::rpc::CapabilityClient::new(endpoint, default_timeout_ms()),
             node_id,
             connected: Arc::new(RwLock::new(false)),
-            timeout_ms: default_timeout_ms(),
         }
     }
 
@@ -79,40 +75,30 @@ impl FederationClient {
     /// and probes `$BIOMEOS_SOCKET_DIR/federation.sock` for UDS.
     #[must_use]
     pub fn from_env() -> Self {
-        let endpoint =
-            std::env::var(skunk_bat_core::env_keys::FEDERATION_ENDPOINT).unwrap_or_default();
         let node_id = std::env::var(skunk_bat_core::env_keys::SKUNKBAT_ID)
             .unwrap_or_else(|_| skunk_bat_core::PRIMAL_ID.to_owned());
-        let uds_path = {
-            let path = crate::rpc::capability_socket("federation");
-            std::path::Path::new(&path).exists().then_some(path)
-        };
-        tracing::info!(
-            endpoint = %endpoint,
-            uds = ?uds_path,
-            "Initializing federation client for node {node_id}"
-        );
+        tracing::info!("Initializing federation client for node {node_id} from env");
         Self {
-            endpoint,
-            uds_path,
+            transport: crate::rpc::CapabilityClient::from_env(
+                skunk_bat_core::env_keys::FEDERATION_ENDPOINT,
+                "federation",
+                default_timeout_ms(),
+            ),
             node_id,
             connected: Arc::new(RwLock::new(false)),
-            timeout_ms: default_timeout_ms(),
         }
     }
 
     /// The TCP endpoint this client targets (if any).
     #[must_use]
     pub fn endpoint(&self) -> &str {
-        &self.endpoint
+        self.transport.endpoint()
     }
 
-    fn tcp_endpoint(&self) -> Option<&str> {
-        if self.endpoint.is_empty() {
-            None
-        } else {
-            Some(&self.endpoint)
-        }
+    /// Returns `Some` only if a non-empty TCP endpoint is configured.
+    #[must_use]
+    pub fn tcp_endpoint(&self) -> Option<&str> {
+        self.transport.tcp_endpoint()
     }
 
     async fn rpc_call(
@@ -120,15 +106,7 @@ impl FederationClient {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, crate::rpc::RpcError> {
-        let timeout = Duration::from_millis(self.timeout_ms);
-        crate::rpc::call(
-            self.uds_path.as_deref(),
-            self.tcp_endpoint(),
-            method,
-            params,
-            timeout,
-        )
-        .await
+        self.transport.call(method, params).await
     }
 
     /// Connect to the federation provider.

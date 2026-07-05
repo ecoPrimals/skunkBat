@@ -6,6 +6,17 @@ All notable changes to skunkBat are documented here.
 
 ### Changed
 
+- **`CapabilityClient` consolidation**: Extracted shared transport logic (endpoint,
+  UDS, timeout, RPC dispatch) into `rpc::CapabilityClient`. All three integration
+  clients (`RemoteLineageVerifier`, `DiscoveryClient`, `FederationClient`) now
+  delegate transport to this shared struct, eliminating ~120 lines of duplication.
+- **Quarantine persistence**: `DefenseEngine` now persists quarantine state to
+  `{data_dir}/quarantine.json` on mutation and loads on startup. Round-trip tested.
+  `SKUNKBAT_DATA_DIR` env var controls the persist path.
+- **Nested security metrics**: `SecurityMetrics` evolved from flat counters to
+  structured `{ threats, scanning, defense }` sub-domains. IPC responses
+  (`security.metrics`, `security.scan`, `threat.report`) emit the nested model.
+  Flat accessors retained for backwards-compatible reads.
 - **Dispatch security split**: Moved security-domain handlers (`security.*`,
   `threat.report`, `baseline.observe`, `security.advisory`) from `dispatch.rs`
   (659L → 421L) to `dispatch_security.rs` (290L). Shared `parse_threat_params`
