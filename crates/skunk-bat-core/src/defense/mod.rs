@@ -262,8 +262,8 @@ impl DefenseEngine {
         let released = self
             .quarantine_map
             .lock()
-            .map(|mut map| map.remove(source).is_some())
-            .unwrap_or(false);
+            .ok()
+            .is_some_and(|mut map| map.remove(source).is_some());
         if released {
             self.persist();
         }
@@ -293,8 +293,8 @@ impl DefenseEngine {
     pub fn is_quarantined(&self, source: &str) -> bool {
         self.quarantine_map
             .lock()
-            .map(|map| map.contains_key(source))
-            .unwrap_or(false)
+            .ok()
+            .is_some_and(|map| map.contains_key(source))
     }
 
     /// Get a snapshot of the current quarantine map.

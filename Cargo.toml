@@ -5,6 +5,9 @@ members = [
     "crates/skunk-bat-integrations",
     "crates/skunk-bat-server",
 ]
+default-members = [
+    "crates/skunk-bat-server",
+]
 
 [workspace.package]
 version = "0.2.18"

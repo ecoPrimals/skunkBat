@@ -53,8 +53,8 @@ fn new_instance_id() -> String {
 
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .ok()
+        .map_or(0, |d| d.as_nanos());
 
     let mut hasher = DefaultHasher::new();
     nanos.hash(&mut hasher);

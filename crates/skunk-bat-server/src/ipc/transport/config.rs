@@ -41,8 +41,8 @@ impl BtspConfig {
             .filter(|v| !v.is_empty() && v != "default");
 
         let insecure = std::env::var(skunk_bat_core::env_keys::BIOMEOS_INSECURE)
-            .map(|v| v == "1")
-            .unwrap_or(false);
+            .ok()
+            .is_some_and(|v| v == "1");
 
         if family_id.is_some() && insecure {
             return Err(TransportError::Config(

@@ -55,7 +55,7 @@ fn session_ttl() -> std::time::Duration {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .map_or(
-            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_hours(1),
             std::time::Duration::from_secs,
         )
 }
@@ -67,7 +67,7 @@ fn session_sweep_interval() -> std::time::Duration {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .map_or(
-            std::time::Duration::from_secs(300),
+            std::time::Duration::from_mins(5),
             std::time::Duration::from_secs,
         )
 }

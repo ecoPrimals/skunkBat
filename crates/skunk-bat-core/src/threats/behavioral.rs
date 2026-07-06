@@ -125,7 +125,7 @@ impl StatisticalProfiler {
         for v in iter {
             count += 1;
             sum += v;
-            sum_sq += v * v;
+            sum_sq = v.mul_add(v, sum_sq);
         }
         if count == 0 {
             return None;

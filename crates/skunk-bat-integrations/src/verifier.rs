@@ -36,8 +36,8 @@ impl RuntimeVerifier {
     #[must_use]
     pub fn from_env() -> Self {
         let has_tcp = std::env::var(skunk_bat_core::env_keys::LINEAGE_ENDPOINT)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
+            .ok()
+            .is_some_and(|v| !v.is_empty());
 
         let has_uds = {
             let path = crate::rpc::capability_socket("lineage-verification");

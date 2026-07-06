@@ -174,11 +174,7 @@ impl DiscoveryClient {
             if path.extension().and_then(|e| e.to_str()) != Some("sock") {
                 continue;
             }
-            if path
-                .symlink_metadata()
-                .map(|m| m.is_symlink())
-                .unwrap_or(false)
-            {
+            if path.symlink_metadata().ok().is_some_and(|m| m.is_symlink()) {
                 continue;
             }
 

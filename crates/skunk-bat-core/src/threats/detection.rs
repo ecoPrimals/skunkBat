@@ -260,8 +260,8 @@ fn check_system_load() -> f64 {
 
         #[expect(clippy::cast_precision_loss, reason = "CPU count fits in f64")]
         let cpus = std::thread::available_parallelism()
-            .map(|n| n.get() as f64)
-            .unwrap_or(1.0);
+            .ok()
+            .map_or(1.0, |n| n.get() as f64);
 
         (raw / cpus).min(1.0)
     }
