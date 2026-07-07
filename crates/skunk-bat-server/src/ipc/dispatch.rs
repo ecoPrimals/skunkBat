@@ -41,6 +41,7 @@ const METHODS: &[&str] = &[
     "lifecycle.status",
     "lifecycle.capabilities",
     "capabilities.list",
+    "capability.list",
     "identity.get",
     "auth.check",
     "auth.mode",

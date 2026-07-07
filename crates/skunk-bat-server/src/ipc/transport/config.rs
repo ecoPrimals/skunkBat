@@ -35,6 +35,7 @@ impl BtspConfig {
     /// # Errors
     ///
     /// Returns `Err` when both `FAMILY_ID` and `BIOMEOS_INSECURE=1` are set.
+    #[must_use = "transport config errors must be handled"]
     pub fn from_env() -> Result<Self, TransportError> {
         let family_id = std::env::var(skunk_bat_core::env_keys::FAMILY_ID)
             .ok()

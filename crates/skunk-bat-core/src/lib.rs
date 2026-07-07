@@ -183,6 +183,7 @@ impl SkunkBat {
     /// # Errors
     ///
     /// Returns an error if the threat response fails.
+    #[must_use = "defense action should be logged or inspected"]
     pub fn respond_to_threat(
         &self,
         threat: &threats::Threat,
@@ -241,6 +242,7 @@ impl SkunkBat {
     }
 
     /// Query the baseline profiler's current statistics.
+    #[must_use]
     pub async fn baseline_stats(&self) -> Option<threats::types::BaselineStats> {
         self.threat_detector.baseline_stats().await
     }

@@ -96,6 +96,7 @@ impl<D: PrimalDiscovery, M: TopologyMapper> ReconnaissanceEngine<D, M> {
     /// # Errors
     ///
     /// Returns an error if the network scan fails.
+    #[must_use = "scan results should be processed"]
     pub async fn scan(&self) -> Result<NetworkScan, SkunkBatError> {
         if !self.enabled {
             return Ok(NetworkScan::default());

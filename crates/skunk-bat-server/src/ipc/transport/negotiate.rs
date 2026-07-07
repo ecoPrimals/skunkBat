@@ -398,6 +398,7 @@ impl std::fmt::Debug for SessionKeys {
 ///
 /// Returns `TransportError::Crypto` if HKDF expansion fails (should not
 /// occur for 32-byte output, but handled without panics).
+#[must_use = "session keys must be stored for encrypted transport"]
 pub fn derive_session_keys(
     handshake_key: &[u8],
     client_nonce: &[u8],
@@ -440,6 +441,7 @@ const MIN_ENCRYPTED_FRAME: usize = NONCE_SIZE + 16;
 /// # Errors
 ///
 /// Returns `TransportError::Crypto` if AEAD encryption fails.
+#[must_use = "encrypted frame must be transmitted"]
 pub fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, super::TransportError> {
     use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
     use chacha20poly1305::{AeadCore, ChaCha20Poly1305};
@@ -465,6 +467,7 @@ pub fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, super:
 ///
 /// Returns `TransportError::Crypto` if the frame is too short or AEAD
 /// authentication fails.
+#[must_use = "decrypted frame must be processed"]
 pub fn decrypt_frame(key: &[u8; 32], frame: &[u8]) -> Result<Vec<u8>, super::TransportError> {
     use chacha20poly1305::aead::{Aead, KeyInit};
     use chacha20poly1305::{ChaCha20Poly1305, Nonce};

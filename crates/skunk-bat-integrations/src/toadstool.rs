@@ -109,6 +109,7 @@ impl DiscoveryClient {
     /// # Errors
     ///
     /// Returns error if the discovery provider is unreachable.
+    #[must_use = "discovered primals should be processed"]
     pub async fn discover_all(&self) -> Result<Vec<DiscoveredPrimal>, SkunkBatError> {
         tracing::debug!("Discovering all primals");
         match self.rpc_call("discovery.find_all", None).await {
@@ -126,6 +127,7 @@ impl DiscoveryClient {
     /// # Errors
     ///
     /// Returns error if the discovery provider is unreachable.
+    #[must_use = "discovered primals should be processed"]
     pub async fn discover_by_capability(
         &self,
         capability: &str,

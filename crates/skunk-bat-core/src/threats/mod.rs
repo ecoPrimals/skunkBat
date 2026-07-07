@@ -135,6 +135,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
     /// # Errors
     ///
     /// Returns an error if any detection category fails.
+    #[must_use = "detected threats must be processed or logged"]
     pub async fn detect(&self) -> Result<Vec<Threat>, SkunkBatError> {
         if !self.enabled {
             return Ok(vec![]);
@@ -231,6 +232,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
     /// Query the baseline profiler's current statistics.
     ///
     /// Returns `None` if the baseline is not established (< 10 observations).
+    #[must_use]
     pub async fn baseline_stats(&self) -> Option<types::BaselineStats> {
         self.baseline_profiler.read().await.query_stats()
     }
@@ -243,6 +245,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
     /// # Errors
     ///
     /// Returns an error if anomaly detection fails.
+    #[must_use = "anomaly results should be inspected"]
     pub async fn check_anomalies(
         &self,
         observation: &types::Observation,
