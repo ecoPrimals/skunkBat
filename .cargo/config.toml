@@ -1,0 +1,46 @@
+# skunkBat — Cargo cross-compilation and build configuration
+# ecoBin v3.0 — Pure Rust, zero C dependencies, static musl targets
+#
+# Prerequisites:
+#   rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+#   sudo apt install musl-tools gcc-aarch64-linux-gnu
+
+# ============================================================================
+# x86_64 Targets
+# ============================================================================
+
+# x86_64 Linux (musl — static, fully portable)
+# relocation-model=static prevents static-PIE segfault on musl ≤1.2.2
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "link-arg=-static",
+    "-C", "relocation-model=static",
+]
+
+# ============================================================================
+# ARM64 Targets
+# ============================================================================
+
+# ARM64 Linux (musl — static, fully portable)
+# Used for: Pixel 8a / grapheneGate, Raspberry Pi, ARM servers
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-gnu-gcc"
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "link-arg=-static",
+    "-C", "relocation-model=static",
+]
+
+# ARM64 Linux (gnu — for development/testing)
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
+# ============================================================================
+# Convenience Aliases
+# ============================================================================
+
+[alias]
+build-x64 = "build --release --target x86_64-unknown-linux-musl"
+build-arm64 = "build --release --target aarch64-unknown-linux-musl"
