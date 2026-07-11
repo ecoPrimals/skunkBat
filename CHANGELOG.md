@@ -49,30 +49,7 @@ All notable changes to skunkBat are documented here.
   peers call this during request routing).
 - **Registration threshold**: `announce_payload_methods_complete` now asserts ≥29.
 
-## [0.2.17] — 2026-07-04
-
-### Changed
-
-- **Typed transport errors**: `serve_tcp`, `serve_uds`, and `serve` return
-  `Result<_, TransportError>` instead of `Box<dyn Error>`. Removed dead `Ipc` variant
-  from `ServerError`.
-- **Test module split**: `dispatch_tests.rs` (1011L) → 3 domain-focused modules:
-  `dispatch_tests.rs` (393L), `dispatch_tests_gate.rs` (301L),
-  `dispatch_tests_composable.rs` (382L).
-- **`#[inline]` hot-path annotations**: `DefenseEngine::{is_quarantined, is_healthy,
-  auto_response_enabled}`, `MethodGate::{check, mode}`, `classify_method`,
-  `EnforcementMode::as_str`.
-- **Externalized server timeouts**: `SESSION_TTL`, `SESSION_SWEEP_INTERVAL`,
-  `REGISTRATION_TIMEOUT`, `FORWARD_TIMEOUT`, `FORWARD_INTERVAL`,
-  `FORWARD_MIN_SEVERITY` — all now read from env with sensible defaults.
-  New `ForwardingConfig::from_env()` constructor.
-- **6 new `env_keys`**: `SKUNKBAT_SESSION_TTL`, `SKUNKBAT_SESSION_SWEEP`,
-  `SKUNKBAT_FORWARD_INTERVAL`, `SKUNKBAT_FORWARD_TIMEOUT`,
-  `SKUNKBAT_FORWARD_MIN_SEVERITY`, `SKUNKBAT_REGISTRATION_TIMEOUT`.
-
----
-
-## [0.2.17] — Wave 128: Composable Primitives & Config Evolution
+## [0.2.17] — 2026-07-04 (Wave 128: Composable Primitives & Config Evolution)
 
 ### Added
 
@@ -105,6 +82,22 @@ All notable changes to skunkBat are documented here.
 - `capabilities.list` `provided_capabilities` now includes `response`, `defense.{quarantine,release}`,
   `baseline.{query,anomaly,reset}` domains
 - Registration `CAPABILITIES` includes `response` domain
+- **Typed transport errors**: `serve_tcp`, `serve_uds`, and `serve` return
+  `Result<_, TransportError>` instead of `Box<dyn Error>`. Removed dead `Ipc` variant
+  from `ServerError`.
+- **Test module split**: `dispatch_tests.rs` (1011L) → 3 domain-focused modules:
+  `dispatch_tests.rs` (393L), `dispatch_tests_gate.rs` (301L),
+  `dispatch_tests_composable.rs` (382L).
+- **`#[inline]` hot-path annotations**: `DefenseEngine::{is_quarantined, is_healthy,
+  auto_response_enabled}`, `MethodGate::{check, mode}`, `classify_method`,
+  `EnforcementMode::as_str`.
+- **Externalized server timeouts**: `SESSION_TTL`, `SESSION_SWEEP_INTERVAL`,
+  `REGISTRATION_TIMEOUT`, `FORWARD_TIMEOUT`, `FORWARD_INTERVAL`,
+  `FORWARD_MIN_SEVERITY` — all now read from env with sensible defaults.
+  New `ForwardingConfig::from_env()` constructor.
+- **6 new `env_keys`**: `SKUNKBAT_SESSION_TTL`, `SKUNKBAT_SESSION_SWEEP`,
+  `SKUNKBAT_FORWARD_INTERVAL`, `SKUNKBAT_FORWARD_TIMEOUT`,
+  `SKUNKBAT_FORWARD_MIN_SEVERITY`, `SKUNKBAT_REGISTRATION_TIMEOUT`.
 
 ---
 

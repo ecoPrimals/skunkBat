@@ -2,8 +2,8 @@
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
 **Version**: 0.2.18
-**Date**: Jul 4, 2026
-**Wave**: 132d
+**Date**: Jul 11, 2026
+**Wave**: 136b
 
 ---
 
@@ -11,10 +11,10 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 540 passing (0 failed) |
+| Tests | 563 passing (0 failed, 4 crates) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
-| Max file | 728 lines production (test files exempt from 800L cap) |
-| IPC methods | 29 (Tower HTTP advisory + 6 composable primitives) |
+| Max file | 690 lines production (test files exempt from 800L cap) |
+| IPC methods | 30 (28 application + 2 transport) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
 | License | AGPL-3.0-or-later (scyBorg triple-copyleft) |
@@ -72,7 +72,7 @@ These modules exist as complete library APIs but are not wired into the server b
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `RuntimeVerifier` injection | Probed at startup | Needs `SkunkBat` generic refactor to inject into `ThreatDetector` |
+| `RuntimeVerifier` injection | **Wired** | `SkunkBat<L: LineageVerifier>` generic; server injects `RuntimeVerifier::from_env()` |
 | `ToadStool` discovery | Library-ready | `CapabilityPrimalDiscovery` for mesh scanning |
 | `NestGate` content protection | Library-ready | `ContentProtector` for content integrity |
 | `UniversalAdapter` | Experimental | Capability-based adapter pattern |
@@ -80,7 +80,7 @@ These modules exist as complete library APIs but are not wired into the server b
 
 ## Method Gap Audit (Wave 128)
 
-### IPC Methods — 28 dispatched (+ `capability.list` alias), all tested
+### IPC Methods — 30 dispatched (28 application + 2 transport), all tested
 
 | Method | Status | Notes |
 |--------|--------|-------|
@@ -88,10 +88,10 @@ These modules exist as complete library APIs but are not wired into the server b
 | `security.scan` | **Partial** | Self-only discovery; `LocalDiscovery` returns one node, empty topology |
 | `security.detect` | **Partial** | 6 categories run; genetic/topology need runtime providers |
 | `security.advisory` | **Complete** | Tower HTTP Gateway verdict (quarantine + defense engine check) |
-| `security.respond` | **Partial** | Real policy engine; quarantine in-memory only |
-| `security.metrics` | **Partial** | Flat 5 counters; not spec's nested observability model |
+| `security.respond` | **Partial** | Real policy engine; quarantine persisted to `{data_dir}/quarantine.json` |
+| `security.metrics` | **Complete** | Nested `{ threats, scanning, defense }` model |
 | `security.audit_log` | **Complete** | JH-5 ring buffer with cursor-based polling |
-| `baseline.observe` | **Partial** | Works when called; no transport auto-feed |
+| `baseline.observe` | **Complete** | Works via IPC; `skunky-ingest` auto-feeds from Caddy logs |
 | `baseline.query` | **Complete** | Profiler stats across all dimensions |
 | `baseline.anomaly` | **Complete** | Read-only anomaly check |
 | `baseline.reset` | **Complete** | Reset with optional re-seed |
@@ -123,7 +123,7 @@ These modules exist as complete library APIs but are not wired into the server b
 
 | Module | Status | Impact |
 |--------|--------|--------|
-| `RuntimeVerifier` → `ThreatDetector` | Probed only | Genetic detection degraded without BearDog injection |
+| `RuntimeVerifier` → `ThreatDetector` | **Wired** | Server injects `RuntimeVerifier::from_env()` via `SkunkBat::with_verifier()` |
 | `ToadStool` → `ReconnaissanceEngine` | Library-ready | `security.scan` cannot discover mesh primals |
 | `NestGate` content protection | Library-ready | No `content.*` IPC |
 | `MeshRelay` transport | Stub | Returns error; needs Songbird mesh API |
@@ -133,7 +133,7 @@ These modules exist as complete library APIs but are not wired into the server b
 | Gap | Blocker |
 |-----|---------|
 | Token signature/HMAC validation | BearDog ionic token spec |
-| RuntimeVerifier injection | SkunkBat generic refactor (structural) |
+| ~~RuntimeVerifier injection~~ | ~~Resolved~~ — `SkunkBat<L>` generic, `RuntimeVerifier` injected |
 | riboCipher Tiers 2/3 (Mito/Nuclear) | Upstream crypto spec |
 | Thymic selection (entire spec) | BearDog + runtime verifier prerequisite |
 | OS firewall integration | nftables binding (design phase) |

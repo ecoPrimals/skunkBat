@@ -84,7 +84,7 @@ Full spec compliance including:
 
 ## Tests
 
-532 tests passing (core + integrations + server + transport + chaos), all workspace.
+563 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
@@ -100,7 +100,7 @@ mode semantics for local, loopback, and remote callers.
 v0.2.18 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**540 tests** passing across all workspace crates. Max production file 728 lines — no
+**563 tests** passing across all workspace crates (4 crates). Max production file 690 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
 via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
 to env vars with defaults (session TTL, sweep, forwarding, registration).
@@ -110,7 +110,7 @@ Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkd
 **IPC**: JSON-RPC 2.0 over TCP + UDS with BTSP Phase 1/2/3. BearDog-delegated handshake,
 `btsp.negotiate` with session registry, `ChaCha20-Poly1305` AEAD encrypted framing.
 riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compliance.
-29 stable IPC methods — `security.advisory` for Tower HTTP Gateway (Wave 132c),
+30 IPC methods (28 application + 2 transport) — `security.advisory` for Tower HTTP Gateway (Wave 132c),
 6 composable primitives shipped in v0.2.17 (`baseline.{query,anomaly,reset}`,
 `defense.{quarantine,release}`, `response.evaluate`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
@@ -139,7 +139,7 @@ Defense attestation with `ActionType`-specific audit events at `Warn` severity.
 `BaselineObservation` audit events for profiler feed tracking.
 
 **Integration**: Capability-based runtime discovery. No primal names hardcoded in routing.
-RuntimeVerifier probed at startup. Self-registration with discovery (`ipc.register`).
+RuntimeVerifier injected at startup — server uses SkunkBat::with_verifier(config, RuntimeVerifier::from_env()). One-shot CLI commands (health, scan, detect) use local default. Self-registration with discovery (`ipc.register`).
 BTSP WAN timeouts (10s provider call, 30s handshake). Graceful shutdown via `BackgroundTasks`.
 riboCipher probes respond with health JSON + close.
 
@@ -160,10 +160,10 @@ enforced/permissive modes + quarantine enforcement.
 | `security.scan` | Stable | Partial | Self-only discovery; empty topology (needs ToadStool wiring) |
 | `security.detect` | Stable | Partial | 6 categories; genetic/topology need runtime providers |
 | `security.advisory` | Stable | Complete | Tower HTTP Gateway verdict (quarantine + defense check) |
-| `security.respond` | Stable | Partial | Real policy engine; quarantine in-memory only |
-| `security.metrics` | Stable | Partial | Flat counters; not spec's nested observability model |
+| `security.respond` | Stable | Partial | Real policy engine; quarantine persisted to {data_dir}/quarantine.json |
+| `security.metrics` | Stable | Complete | Nested { threats, scanning, defense } model |
 | `security.audit_log` | Stable | Complete | JH-5 ring buffer with cursor-based polling |
-| `baseline.observe` | Stable | Partial | Works when called; no transport auto-feed |
+| `baseline.observe` | Stable | Complete | Works via IPC; skunky-ingest crate auto-feeds from Caddy logs |
 | `baseline.query` | Stable | Complete | Profiler statistics across all dimensions |
 | `baseline.anomaly` | Stable | Complete | Read-only anomaly check against baseline |
 | `baseline.reset` | Stable | Complete | Reset profiler with optional re-seed |
@@ -180,7 +180,7 @@ enforced/permissive modes + quarantine enforcement.
 | `btsp.negotiate` | Stable | Complete | Phase 3 handshake + session registry |
 | `btsp.capabilities` | Stable | Complete | Cipher advertisement |
 
-**22 Complete, 7 Partial** (all functional, partial = scope limits documented above).
+**25 Complete, 4 Partial** (all functional, partial = scope limits documented above).
 
 ### Composable Primitive Gaps
 

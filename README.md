@@ -47,7 +47,8 @@ skunkBat/
 ├── crates/
 │   ├── skunk-bat-core/          # Threat detection, defense, observability
 │   ├── skunk-bat-integrations/  # JSON-RPC client, discovery, federation
-│   └── skunk-bat-server/        # UniBin server (TCP + UDS + BTSP)
+│   ├── skunk-bat-server/        # UniBin server (TCP + UDS + BTSP)
+│   └── skunky-ingest/           # Live Caddy log tailer → baseline.observe
 ├── examples/                    # 12 narrative demos
 ├── tests/                       # Integration, e2e, chaos tests
 └── specs/                       # Technical specifications
@@ -58,6 +59,7 @@ skunkBat/
 | `skunk-bat-core` | Threat detection (6 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin CLI with `server`, `health`, `scan`, `detect` subcommands | binary |
+| `skunky-ingest` | Live Caddy log tailer feeding traffic observations into behavioral profiler | binary |
 
 ---
 
@@ -180,6 +182,10 @@ All detection parameters are configurable via `SkunkBatConfig.thresholds`
 | `quarantine_critical_confidence` | 0.9 | Confidence for immediate quarantine |
 | `quarantine_high_confidence` | 0.7 | Confidence for quarantine + alert |
 
+Thresholds can also be set via environment variables: `SKUNKBAT_SIGMA_THRESHOLD`,
+`SKUNKBAT_DOS_LOAD_THRESHOLD`, `SKUNKBAT_GENETIC_CONFIDENCE`, `SKUNKBAT_BEHAVIORAL_WINDOW`,
+`SKUNKBAT_BEHAVIORAL_MIN_OBS`, `SKUNKBAT_AUDIT_LOG_CAPACITY`.
+
 ---
 
 ## Ecosystem Integration
@@ -205,13 +211,13 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - `#[expect(reason)]` lint suppression standard (target-conditional `#[allow]` only)
 - `cargo deny` advisory/ban/license/source checks pass; `ring` explicitly banned
-- All source files under 800 lines (production max: 728; test files exempt)
+- All source files under 800 lines (production max: 690; test files exempt)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 541+ tests passing (lib + integration + chaos), full workspace
-- All 29 IPC methods stability-tiered (Stable; `auth.*` beta)
+- 563 tests passing (lib + integration + chaos), full workspace
+- All 30 IPC methods stability-tiered (28 application + 2 transport; Stable; `auth.*` beta)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 - Self-registration with discovery (`ipc.register`) + Neural API `primal.announce`

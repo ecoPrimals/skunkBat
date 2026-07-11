@@ -1,6 +1,6 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives, Tower HTTP advisory. 540 tests, 29 IPC methods."
+description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion. 563 tests, 30 IPC methods."
 date = 2026-07-04
 
 [taxonomies]
@@ -13,8 +13,8 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 540 passing
-- **Source**: max 728 lines production code (test files exempt from 800L cap)
+- **Tests**: 563 passing (4 crates)
+- **Source**: max 690 lines production code (test files exempt from 800L cap)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)
@@ -34,7 +34,7 @@ springs = []
 | `audit` | JH-5 structured security event trail + cross-primal forwarding |
 | `btsp` | Phase 3 cipher negotiation + encrypted framing |
 
-## Methods (28 — Stable tier; `auth.*` beta)
+## Methods (30 — 28 application + 2 transport; `auth.*` beta)
 
 - `health.liveness`, `health.readiness`, `health.check`
 - `security.scan`, `security.detect`, `security.advisory`, `security.respond`, `security.metrics`, `security.audit_log`
