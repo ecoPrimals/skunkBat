@@ -58,6 +58,7 @@ async fn test_statistical_profiler_learning() {
             traffic_volume: 1000,
             ports_accessed: vec![80, 443],
             timestamp: SystemTime::now(),
+            http: None,
         };
         profiler
             .update(&observation)
@@ -77,6 +78,7 @@ async fn test_statistical_profiler_anomaly_detection() {
             traffic_volume: 1000,
             ports_accessed: vec![80, 443],
             timestamp: SystemTime::now(),
+            http: None,
         };
         profiler
             .update(&observation)
@@ -89,6 +91,7 @@ async fn test_statistical_profiler_anomaly_detection() {
         traffic_volume: 1000,
         ports_accessed: vec![80, 443],
         timestamp: SystemTime::now(),
+        http: None,
     };
     let anomalies = profiler
         .detect_anomalies(&normal_obs)
@@ -101,6 +104,7 @@ async fn test_statistical_profiler_anomaly_detection() {
         traffic_volume: 1000,
         ports_accessed: vec![80, 443],
         timestamp: SystemTime::now(),
+        http: None,
     };
     let anomalies = profiler
         .detect_anomalies(&anomalous_obs)
@@ -201,6 +205,7 @@ async fn test_statistical_profiler_baseline() {
             traffic_volume: 1000,
             ports_accessed: vec![80, 443],
             timestamp: SystemTime::now(),
+            http: None,
         };
         profiler.update(&obs).await.expect("update should succeed");
     }
@@ -218,6 +223,7 @@ async fn test_detector_with_behavioral_anomalies() {
             traffic_volume: 1000,
             ports_accessed: vec![80],
             timestamp: SystemTime::now(),
+            http: None,
         };
         profiler.update(&obs).await.expect("update should succeed");
     }
@@ -243,6 +249,7 @@ fn test_observation_creation() {
         traffic_volume: 2000,
         ports_accessed: vec![80, 443, 8080],
         timestamp: SystemTime::now(),
+        http: None,
     };
     assert_eq!(obs.connection_rate, 10.0);
     assert_eq!(obs.traffic_volume, 2000);
@@ -315,6 +322,7 @@ async fn test_detect_behavioral_anomaly_triggers() {
             traffic_volume: 1000,
             ports_accessed: vec![80],
             timestamp: SystemTime::now(),
+            http: None,
         };
         profiler.update(&obs).await.expect("update");
     }
@@ -324,6 +332,7 @@ async fn test_detect_behavioral_anomaly_triggers() {
         traffic_volume: 1000,
         ports_accessed: vec![80],
         timestamp: SystemTime::now(),
+        http: None,
     };
     profiler.update(&spike).await.expect("update");
 
@@ -404,6 +413,7 @@ async fn test_intrusion_portscan_detected() {
         traffic_volume: 500,
         ports_accessed: vec![22, 445, 80],
         timestamp: SystemTime::now(),
+        http: None,
     };
     profiler.update(&obs).await.expect("update");
 
@@ -426,6 +436,7 @@ async fn test_intrusion_portscan_not_triggered_single_port() {
         traffic_volume: 500,
         ports_accessed: vec![22, 80, 443],
         timestamp: SystemTime::now(),
+        http: None,
     };
     profiler.update(&obs).await.expect("update");
 
@@ -448,6 +459,7 @@ async fn test_intrusion_exfiltration_detected() {
         traffic_volume: 500_000,
         ports_accessed: vec![80],
         timestamp: SystemTime::now(),
+        http: None,
     };
     profiler.update(&obs).await.expect("update");
 
@@ -470,6 +482,7 @@ async fn test_intrusion_exfiltration_not_triggered_low_volume() {
         traffic_volume: 500,
         ports_accessed: vec![80],
         timestamp: SystemTime::now(),
+        http: None,
     };
     profiler.update(&obs).await.expect("update");
 
@@ -495,6 +508,7 @@ async fn test_intrusion_uses_configurable_thresholds() {
         traffic_volume: 500,
         ports_accessed: vec![8080, 9090],
         timestamp: SystemTime::now(),
+        http: None,
     };
     profiler.update(&obs).await.expect("update");
 
@@ -704,6 +718,7 @@ async fn test_observe_updates_profiler() {
         traffic_volume: 9999,
         ports_accessed: vec![80],
         timestamp: SystemTime::now(),
+        http: None,
     };
     detector
         .observe(&obs)

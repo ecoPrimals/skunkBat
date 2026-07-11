@@ -286,6 +286,57 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |d| d.as_micros() as u64)
     }
+
+    /// Obtain a sync handle to the baseline profiler for advisory checks.
+    ///
+    /// The handle uses `try_read()` to avoid blocking; returns `None` from
+    /// `check_anomalies_sync` if the profiler lock is contended.
+    pub(crate) const fn baseline_profiler_handle(&self) -> ProfilerHandle<'_, B> {
+        ProfilerHandle {
+            profiler: &self.baseline_profiler,
+        }
+    }
+}
+
+/// Sync handle to the baseline profiler for non-async advisory paths.
+pub(crate) struct ProfilerHandle<'a, B: BaselineProfiler> {
+    profiler: &'a RwLock<B>,
+}
+
+impl<B: BaselineProfiler> ProfilerHandle<'_, B> {
+    /// Run anomaly detection synchronously.
+    ///
+    /// Returns `None` if the profiler lock is contended (advisory callers
+    /// should treat this as "no anomalies detected" / `Allow`).
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "detect_anomalies future borrows the RwLock guard"
+    )]
+    pub(crate) fn check_anomalies_sync(
+        &self,
+        observation: &types::Observation,
+    ) -> Option<Vec<types::Anomaly>> {
+        let guard = self.profiler.try_read().ok()?;
+        if !guard.is_established() {
+            return Some(Vec::new());
+        }
+        let future = guard.detect_anomalies(observation);
+        futures_lite_block_on(future).ok()
+    }
+}
+
+/// Minimal single-future `block_on` for compute-only futures.
+fn futures_lite_block_on<F: std::future::Future>(f: F) -> F::Output {
+    use std::pin::pin;
+    use std::task::{Context, Poll, Waker};
+
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    let mut f = pin!(f);
+    match f.as_mut().poll(&mut cx) {
+        Poll::Ready(val) => val,
+        Poll::Pending => unreachable!("compute-only future yielded Pending"),
+    }
 }
 
 #[cfg(test)]

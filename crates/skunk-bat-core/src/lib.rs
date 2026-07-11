@@ -76,6 +76,9 @@ pub struct AdvisoryVerdict {
     pub source: String,
     /// Associated threat IDs (if any).
     pub threat_ids: Vec<String>,
+    /// Anomalies detected during advisory check (empty if none).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anomalies: Vec<threats::types::Anomaly>,
 }
 
 /// Security advisory verdict level.
@@ -277,6 +280,20 @@ impl SkunkBat {
     /// reasoning. Does NOT enforce — the gateway decides what to do.
     #[must_use]
     pub fn advisory_check(&self, source: &str) -> AdvisoryVerdict {
+        self.advisory_check_http(source, None)
+    }
+
+    /// Advisory check with optional HTTP telemetry (outer membrane).
+    ///
+    /// When `http` is `Some`, runs behavioral anomaly detection on the HTTP
+    /// dimensions. Returns `Verdict::Warn` if anomalies are detected but the
+    /// source is not quarantined.
+    #[must_use]
+    pub fn advisory_check_http(
+        &self,
+        source: &str,
+        http: Option<&threats::types::HttpObservation>,
+    ) -> AdvisoryVerdict {
         if self.defense.is_quarantined(source) {
             return AdvisoryVerdict {
                 verdict: Verdict::Block,
@@ -288,6 +305,7 @@ impl SkunkBat {
                     .get(source)
                     .map(|r| vec![r.threat_id.clone()])
                     .unwrap_or_default(),
+                anomalies: Vec::new(),
             };
         }
 
@@ -297,7 +315,46 @@ impl SkunkBat {
                 reason: "defense engine disabled — no advisory".to_owned(),
                 source: source.to_owned(),
                 threat_ids: Vec::new(),
+                anomalies: Vec::new(),
             };
+        }
+
+        if let Some(http_obs) = http {
+            let observation = threats::types::Observation {
+                connection_rate: 0.0,
+                traffic_volume: 0,
+                ports_accessed: Vec::new(),
+                timestamp: std::time::SystemTime::now(),
+                http: Some(http_obs.clone()),
+            };
+
+            let profiler = self.threat_detector.baseline_profiler_handle();
+            let http_anomalies: Vec<_> = profiler
+                .check_anomalies_sync(&observation)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|a| a.behavior.contains("HTTP"))
+                .collect();
+
+            if !http_anomalies.is_empty() {
+                self.observer.record_http_advisory(Verdict::Warn);
+                return AdvisoryVerdict {
+                    verdict: Verdict::Warn,
+                    reason: format!(
+                        "{} HTTP anomal{} detected for source",
+                        http_anomalies.len(),
+                        if http_anomalies.len() == 1 {
+                            "y"
+                        } else {
+                            "ies"
+                        }
+                    ),
+                    source: source.to_owned(),
+                    threat_ids: Vec::new(),
+                    anomalies: http_anomalies,
+                };
+            }
+            self.observer.record_http_advisory(Verdict::Allow);
         }
 
         AdvisoryVerdict {
@@ -305,6 +362,7 @@ impl SkunkBat {
             reason: "no threats detected for source".to_owned(),
             source: source.to_owned(),
             threat_ids: Vec::new(),
+            anomalies: Vec::new(),
         }
     }
 

@@ -80,6 +80,12 @@ impl SecurityObserver {
                     .load(Ordering::Relaxed),
                 alerts_sent: self.metrics.alerts_sent.load(Ordering::Relaxed),
             },
+            http: HttpMetrics {
+                requests_screened: self.metrics.http_requests_screened.load(Ordering::Relaxed),
+                allows: self.metrics.http_allows.load(Ordering::Relaxed),
+                warns: self.metrics.http_warns.load(Ordering::Relaxed),
+                blocks: self.metrics.http_blocks.load(Ordering::Relaxed),
+            },
             last_updated: Some(SystemTime::now()),
         }
     }
@@ -114,6 +120,24 @@ impl SecurityObserver {
     pub fn record_alert(&self) {
         self.metrics.alerts_sent.fetch_add(1, Ordering::Relaxed);
     }
+
+    /// Record an HTTP advisory verdict.
+    pub fn record_http_advisory(&self, verdict: crate::Verdict) {
+        match verdict {
+            crate::Verdict::Allow => {
+                self.metrics.http_allows.fetch_add(1, Ordering::Relaxed);
+            }
+            crate::Verdict::Warn => {
+                self.metrics.http_warns.fetch_add(1, Ordering::Relaxed);
+            }
+            crate::Verdict::Block => {
+                self.metrics.http_blocks.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.metrics
+            .http_requests_screened
+            .fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// Internal metrics storage (thread-safe).
@@ -129,6 +153,14 @@ struct SecurityMetricsInternal {
     connections_quarantined: AtomicU64,
     /// Alerts sent to operator
     alerts_sent: AtomicU64,
+    /// HTTP requests screened via advisory
+    http_requests_screened: AtomicU64,
+    /// HTTP advisories that returned Allow
+    http_allows: AtomicU64,
+    /// HTTP advisories that returned Warn
+    http_warns: AtomicU64,
+    /// HTTP advisories that returned Block
+    http_blocks: AtomicU64,
 }
 
 /// Security metrics (public snapshot).
@@ -143,6 +175,9 @@ pub struct SecurityMetrics {
     pub scanning: ScanMetrics,
     /// Defense response metrics.
     pub defense: DefenseMetrics,
+    /// HTTP outer membrane advisory metrics.
+    #[serde(default, skip_serializing_if = "HttpMetrics::is_empty")]
+    pub http: HttpMetrics,
     /// Last update timestamp.
     pub last_updated: Option<SystemTime>,
 }
@@ -170,6 +205,25 @@ pub struct DefenseMetrics {
     pub connections_quarantined: u64,
     /// Alerts sent to operator.
     pub alerts_sent: u64,
+}
+
+/// HTTP outer membrane advisory counters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HttpMetrics {
+    /// Total HTTP requests screened via `security.advisory`.
+    pub requests_screened: u64,
+    /// Requests that passed advisory (Allow).
+    pub allows: u64,
+    /// Requests flagged as suspicious (Warn).
+    pub warns: u64,
+    /// Requests blocked (quarantined source).
+    pub blocks: u64,
+}
+
+impl HttpMetrics {
+    const fn is_empty(&self) -> bool {
+        self.requests_screened == 0
+    }
 }
 
 impl SecurityMetrics {
@@ -334,5 +388,32 @@ mod tests {
 
         let metrics = observer.get_metrics();
         assert!(metrics.last_updated.is_some());
+    }
+
+    #[test]
+    fn test_http_advisory_metrics() {
+        let config = test_config();
+        let observer = SecurityObserver::new(&config);
+
+        observer.record_http_advisory(crate::Verdict::Allow);
+        observer.record_http_advisory(crate::Verdict::Allow);
+        observer.record_http_advisory(crate::Verdict::Warn);
+        observer.record_http_advisory(crate::Verdict::Block);
+
+        let metrics = observer.get_metrics();
+        assert_eq!(metrics.http.requests_screened, 4);
+        assert_eq!(metrics.http.allows, 2);
+        assert_eq!(metrics.http.warns, 1);
+        assert_eq!(metrics.http.blocks, 1);
+    }
+
+    #[test]
+    fn test_http_metrics_empty_when_unused() {
+        let config = test_config();
+        let observer = SecurityObserver::new(&config);
+
+        let metrics = observer.get_metrics();
+        assert!(metrics.http.is_empty());
+        assert_eq!(metrics.http.requests_screened, 0);
     }
 }

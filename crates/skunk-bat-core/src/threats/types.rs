@@ -76,6 +76,15 @@ pub enum ThreatType {
         /// Observed value
         observed: String,
     },
+    /// HTTP-layer anomaly (outer membrane).
+    HttpAnomaly {
+        /// Anomalous dimension (e.g. `request_rate`, `path_diversity`, `error_rate_4xx`)
+        dimension: String,
+        /// Deviation from baseline in standard deviations
+        deviation: f64,
+        /// Source IP address
+        source_ip: String,
+    },
 }
 
 /// Threat severity.
@@ -102,6 +111,30 @@ pub struct Observation {
     pub ports_accessed: Vec<u16>,
     /// Timestamp
     pub timestamp: SystemTime,
+    /// HTTP-layer telemetry (outer membrane).
+    /// `None` for inner-membrane (IPC/BTSP) observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<HttpObservation>,
+}
+
+/// HTTP-specific telemetry for outer membrane anomaly detection.
+///
+/// Fed by Tower HTTP Gateway via `baseline.observe` / `security.advisory`.
+/// Each snapshot covers a sliding window for one source IP.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HttpObservation {
+    /// HTTP request rate (requests per second) in the observation window.
+    pub request_rate: f64,
+    /// 4xx error rate as a fraction (0.0–1.0).
+    pub error_rate_4xx: f64,
+    /// 5xx error rate as a fraction (0.0–1.0).
+    pub error_rate_5xx: f64,
+    /// Number of distinct URL paths accessed.
+    pub path_diversity: u32,
+    /// Average request payload size (bytes).
+    pub avg_payload_bytes: u64,
+    /// Number of distinct HTTP methods used.
+    pub method_diversity: u8,
 }
 
 /// Detected anomaly.
@@ -137,6 +170,15 @@ pub struct BaselineStats {
     pub traffic_volume: Option<DimensionStats>,
     /// Port diversity statistics (if available).
     pub port_diversity: Option<DimensionStats>,
+    /// HTTP request rate statistics (outer membrane).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_request_rate: Option<DimensionStats>,
+    /// HTTP path diversity statistics (outer membrane).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_path_diversity: Option<DimensionStats>,
+    /// HTTP 4xx error rate statistics (outer membrane).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_error_rate_4xx: Option<DimensionStats>,
 }
 
 /// Path validation result.
@@ -309,6 +351,7 @@ mod tests {
             traffic_volume: 1_000_000,
             ports_accessed: vec![80, 443, 8080],
             timestamp: SystemTime::UNIX_EPOCH,
+            http: None,
         };
         let json = serde_json::to_string(&obs).unwrap();
         let parsed: Observation = serde_json::from_str(&json).unwrap();
@@ -423,6 +466,7 @@ mod tests {
             traffic_volume: 0,
             ports_accessed: vec![],
             timestamp: SystemTime::UNIX_EPOCH,
+            http: None,
         };
         let json = serde_json::to_string(&obs).unwrap();
         let parsed: Observation = serde_json::from_str(&json).unwrap();
@@ -488,6 +532,7 @@ mod tests {
             traffic_volume: 5_000_000,
             ports_accessed: (1..=100).collect(),
             timestamp: SystemTime::UNIX_EPOCH,
+            http: None,
         };
         assert_eq!(obs.ports_accessed.len(), 100);
         let json = serde_json::to_string(&obs).unwrap();

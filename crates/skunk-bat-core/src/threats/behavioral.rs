@@ -113,6 +113,33 @@ impl StatisticalProfiler {
                 mean: m,
                 std_dev: s,
             }),
+            http_request_rate: Self::stats_over(
+                self.observations
+                    .iter()
+                    .filter_map(|o| o.http.as_ref().map(|h| h.request_rate)),
+            )
+            .map(|(m, s)| DimensionStats {
+                mean: m,
+                std_dev: s,
+            }),
+            http_path_diversity: Self::stats_over(
+                self.observations
+                    .iter()
+                    .filter_map(|o| o.http.as_ref().map(|h| f64::from(h.path_diversity))),
+            )
+            .map(|(m, s)| DimensionStats {
+                mean: m,
+                std_dev: s,
+            }),
+            http_error_rate_4xx: Self::stats_over(
+                self.observations
+                    .iter()
+                    .filter_map(|o| o.http.as_ref().map(|h| h.error_rate_4xx)),
+            )
+            .map(|(m, s)| DimensionStats {
+                mean: m,
+                std_dev: s,
+            }),
         })
     }
 
@@ -136,6 +163,70 @@ impl StatisticalProfiler {
         let variance = mean.mul_add(-mean, sum_sq / n);
         let std_dev = variance.max(0.0).sqrt();
         Some((mean, std_dev))
+    }
+
+    /// Detect anomalies in HTTP outer membrane dimensions.
+    fn detect_http_anomalies(
+        &self,
+        http: &super::types::HttpObservation,
+        anomalies: &mut Vec<Anomaly>,
+    ) {
+        if let Some((mean, std_dev)) = Self::stats_over(
+            self.observations
+                .iter()
+                .filter_map(|o| o.http.as_ref().map(|h| h.request_rate)),
+        ) {
+            let deviation = (http.request_rate - mean).abs() / std_dev;
+            if deviation > self.threshold {
+                anomalies.push(Anomaly {
+                    deviation,
+                    behavior: format!(
+                        "Unusual HTTP request rate: {:.1}/s (baseline: {mean:.1}±{std_dev:.1})",
+                        http.request_rate,
+                    ),
+                    confidence: (deviation / (self.threshold * 2.0)).min(1.0),
+                });
+            }
+        }
+
+        if let Some((mean, std_dev)) = Self::stats_over(
+            self.observations
+                .iter()
+                .filter_map(|o| o.http.as_ref().map(|h| f64::from(h.path_diversity))),
+        ) {
+            let current = f64::from(http.path_diversity);
+            let deviation = (current - mean).abs() / std_dev;
+            if deviation > self.threshold {
+                anomalies.push(Anomaly {
+                    deviation,
+                    behavior: format!(
+                        "Unusual HTTP path diversity: {} paths (baseline: {mean:.1}±{std_dev:.1})",
+                        http.path_diversity,
+                    ),
+                    confidence: (deviation / (self.threshold * 2.0)).min(1.0),
+                });
+            }
+        }
+
+        if let Some((mean, std_dev)) = Self::stats_over(
+            self.observations
+                .iter()
+                .filter_map(|o| o.http.as_ref().map(|h| h.error_rate_4xx)),
+        ) {
+            let deviation = (http.error_rate_4xx - mean).abs() / std_dev;
+            if deviation > self.threshold {
+                anomalies.push(Anomaly {
+                    deviation,
+                    behavior: format!(
+                        "Unusual HTTP 4xx error rate: {:.1}% (baseline: {:.1}%±{:.1}%)",
+                        http.error_rate_4xx * 100.0,
+                        mean * 100.0,
+                        std_dev * 100.0,
+                    ),
+                    confidence: (deviation / (self.threshold * 2.0)).min(1.0),
+                });
+            }
+        }
     }
 }
 
@@ -223,6 +314,10 @@ impl BaselineProfiler for StatisticalProfiler {
             }
         }
 
+        if let Some(http) = &observation.http {
+            self.detect_http_anomalies(http, &mut anomalies);
+        }
+
         Ok(anomalies)
     }
 
@@ -246,6 +341,7 @@ mod tests {
             traffic_volume: 1000,
             ports_accessed: vec![80, 443],
             timestamp: SystemTime::now(),
+            http: None,
         }
     }
 
@@ -469,6 +565,7 @@ mod tests {
                     traffic_volume: 1000,
                     ports_accessed: vec![80],
                     timestamp: SystemTime::now(),
+                    http: None,
                 })
                 .await
                 .unwrap();
@@ -480,6 +577,7 @@ mod tests {
                 traffic_volume: 100_000_000,
                 ports_accessed: vec![80],
                 timestamp: SystemTime::now(),
+                http: None,
             })
             .await
             .unwrap();
@@ -517,5 +615,157 @@ mod tests {
         let (mean, std_dev) = StatisticalProfiler::stats_over([10.0, 20.0].into_iter()).unwrap();
         assert!((mean - 15.0).abs() < f64::EPSILON);
         assert!(std_dev > 0.0);
+    }
+
+    fn http_observation(request_rate: f64, path_diversity: u32, error_rate: f64) -> Observation {
+        Observation {
+            connection_rate: 0.0,
+            traffic_volume: 0,
+            ports_accessed: Vec::new(),
+            timestamp: SystemTime::now(),
+            http: Some(super::super::types::HttpObservation {
+                request_rate,
+                error_rate_4xx: error_rate,
+                error_rate_5xx: 0.0,
+                path_diversity,
+                avg_payload_bytes: 256,
+                method_diversity: 2,
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn http_baseline_no_anomaly_within_normal_range() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        for i in 0..15 {
+            let rate = f64::from(i).mul_add(0.3, 10.0);
+            let paths = 5 + (i % 3);
+            let err = f64::from(i).mul_add(0.002, 0.02);
+            profiler
+                .update(&http_observation(rate, paths, err))
+                .await
+                .unwrap();
+        }
+        let anomalies = profiler
+            .detect_anomalies(&http_observation(12.0, 6, 0.03))
+            .await
+            .unwrap();
+        assert!(anomalies.is_empty(), "slight variation should not trigger");
+    }
+
+    #[tokio::test]
+    async fn http_detects_request_rate_spike() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        for i in 0..15 {
+            let rate = f64::from(i).mul_add(0.3, 10.0);
+            profiler
+                .update(&http_observation(
+                    rate,
+                    5 + (i % 3),
+                    f64::from(i).mul_add(0.002, 0.02),
+                ))
+                .await
+                .unwrap();
+        }
+        let anomalies = profiler
+            .detect_anomalies(&http_observation(500.0, 5, 0.02))
+            .await
+            .unwrap();
+        assert!(
+            anomalies
+                .iter()
+                .any(|a| a.behavior.contains("HTTP request rate")),
+            "should detect HTTP request rate anomaly"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_detects_path_diversity_spike() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        for i in 0..15 {
+            profiler
+                .update(&http_observation(
+                    f64::from(i).mul_add(0.3, 10.0),
+                    5 + (i % 3),
+                    0.02,
+                ))
+                .await
+                .unwrap();
+        }
+        let anomalies = profiler
+            .detect_anomalies(&http_observation(10.0, 200, 0.02))
+            .await
+            .unwrap();
+        assert!(
+            anomalies
+                .iter()
+                .any(|a| a.behavior.contains("HTTP path diversity")),
+            "should detect HTTP path diversity anomaly"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_detects_error_rate_spike() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        for i in 0..15 {
+            profiler
+                .update(&http_observation(
+                    10.0,
+                    5 + (i % 3),
+                    f64::from(i).mul_add(0.002, 0.02),
+                ))
+                .await
+                .unwrap();
+        }
+        let anomalies = profiler
+            .detect_anomalies(&http_observation(10.0, 5, 0.90))
+            .await
+            .unwrap();
+        assert!(
+            anomalies
+                .iter()
+                .any(|a| a.behavior.contains("HTTP 4xx error rate")),
+            "should detect HTTP 4xx error rate anomaly"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_stats_populated_in_baseline() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        for i in 0..15 {
+            profiler
+                .update(&http_observation(
+                    f64::from(i).mul_add(0.3, 10.0),
+                    5 + (i % 3),
+                    0.02,
+                ))
+                .await
+                .unwrap();
+        }
+        let stats = profiler
+            .query_stats()
+            .expect("baseline should be established");
+        assert!(stats.http_request_rate.is_some());
+        assert!(stats.http_path_diversity.is_some());
+        assert!(stats.http_error_rate_4xx.is_some());
+    }
+
+    #[tokio::test]
+    async fn mixed_observations_http_stats_only_from_http() {
+        let mut profiler = StatisticalProfiler::new(2.5);
+        for _ in 0..10 {
+            profiler.update(&observation(10.0)).await.unwrap();
+        }
+        for _ in 0..5 {
+            profiler
+                .update(&http_observation(20.0, 8, 0.05))
+                .await
+                .unwrap();
+        }
+        let stats = profiler
+            .query_stats()
+            .expect("baseline should be established");
+        assert!(stats.connection_rate.is_some());
+        assert!(stats.http_request_rate.is_some());
     }
 }

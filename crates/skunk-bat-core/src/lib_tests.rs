@@ -306,3 +306,63 @@ fn advisory_check_quarantined_source() {
     assert!(v.reason.contains("quarantined"));
     assert!(v.threat_ids.contains(&"t-001".to_string()));
 }
+
+#[test]
+fn advisory_check_http_clean_source() {
+    let sb = SkunkBat::new(SkunkBatConfig::default());
+    let http = threats::types::HttpObservation {
+        request_rate: 5.0,
+        error_rate_4xx: 0.02,
+        error_rate_5xx: 0.0,
+        path_diversity: 3,
+        avg_payload_bytes: 512,
+        method_diversity: 2,
+    };
+    let v = sb.advisory_check_http("10.0.0.1", Some(&http));
+    assert_eq!(v.verdict, Verdict::Allow);
+    assert!(v.anomalies.is_empty());
+}
+
+#[test]
+fn advisory_check_http_quarantined_overrides() {
+    let sb = SkunkBat::new(SkunkBatConfig::default());
+    sb.quarantine("10.0.0.1", "hostile probe", "t-001");
+    let http = threats::types::HttpObservation {
+        request_rate: 5.0,
+        error_rate_4xx: 0.02,
+        error_rate_5xx: 0.0,
+        path_diversity: 3,
+        avg_payload_bytes: 512,
+        method_diversity: 2,
+    };
+    let v = sb.advisory_check_http("10.0.0.1", Some(&http));
+    assert_eq!(v.verdict, Verdict::Block);
+}
+
+#[test]
+fn advisory_check_http_without_http_data() {
+    let sb = SkunkBat::new(SkunkBatConfig::default());
+    let v = sb.advisory_check_http("10.0.0.1", None);
+    assert_eq!(v.verdict, Verdict::Allow);
+    assert!(v.anomalies.is_empty());
+}
+
+#[test]
+fn http_metrics_track_advisories() {
+    let sb = SkunkBat::new(SkunkBatConfig::default());
+    let http = threats::types::HttpObservation {
+        request_rate: 5.0,
+        error_rate_4xx: 0.02,
+        error_rate_5xx: 0.0,
+        path_diversity: 3,
+        avg_payload_bytes: 512,
+        method_diversity: 2,
+    };
+    let _ = sb.advisory_check_http("10.0.0.1", Some(&http));
+    let _ = sb.advisory_check_http("10.0.0.2", Some(&http));
+    let metrics = sb.get_security_metrics();
+    assert_eq!(metrics.http.requests_screened, 2);
+    assert_eq!(metrics.http.allows, 2);
+    assert_eq!(metrics.http.warns, 0);
+    assert_eq!(metrics.http.blocks, 0);
+}

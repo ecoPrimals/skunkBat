@@ -54,72 +54,84 @@ fn build_baseline(self_port: u16) -> Vec<Observation> {
             traffic_volume: 2048,
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 2.8,
             traffic_volume: 1536,
             ports_accessed: vec![self_port, 0],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 4.1,
             traffic_volume: 3072,
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 3.5,
             traffic_volume: 2560,
             ports_accessed: vec![self_port, 0],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 5.0,
             traffic_volume: 4096,
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 2.1,
             traffic_volume: 1024,
             ports_accessed: vec![0],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 4.8,
             traffic_volume: 3584,
             ports_accessed: vec![self_port, 0],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 3.9,
             traffic_volume: 2816,
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 2.5,
             traffic_volume: 1280,
             ports_accessed: vec![0],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 4.3,
             traffic_volume: 3328,
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 3.0,
             traffic_volume: 2048,
             ports_accessed: vec![self_port, 0],
             timestamp: now,
+            http: None,
         },
         Observation {
             connection_rate: 5.2,
             traffic_volume: 4352,
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
     ]
 }
@@ -152,6 +164,7 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
                 9002, 9090, 9200, 9300, 9400, 9500,
             ],
             timestamp: now,
+            http: None,
         },
         // 2: Payload flood — normal conn rate but extreme volume
         Observation {
@@ -159,6 +172,7 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             traffic_volume: 10_485_760, // 10 MB/s
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
         // 3: Malformed JSON-RPC burst — rapid small payloads
         Observation {
@@ -166,6 +180,7 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             traffic_volume: 512,
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
         // 4: Service enumeration — methodical probing at moderate rate
         Observation {
@@ -173,6 +188,7 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             traffic_volume: 4096,
             ports_accessed: (self_port..self_port + 6).collect(),
             timestamp: now,
+            http: None,
         },
         // 5: Amplification attempt — tiny request, expecting large response
         Observation {
@@ -180,6 +196,7 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             traffic_volume: 128,
             ports_accessed: vec![self_port],
             timestamp: now,
+            http: None,
         },
         // 6: Slow-rate exhaustion — sustained elevated connections
         Observation {
@@ -187,6 +204,7 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             traffic_volume: 2048,
             ports_accessed: vec![self_port, 0],
             timestamp: now,
+            http: None,
         },
         // 7: Protocol confusion — unexpected ports, moderate rate
         Observation {
@@ -194,6 +212,7 @@ pub fn pentest_attack_patterns() -> Vec<Observation> {
             traffic_volume: 6144,
             ports_accessed: vec![22, 53, 139, 445, 3306, 5432],
             timestamp: now,
+            http: None,
         },
     ]
 }

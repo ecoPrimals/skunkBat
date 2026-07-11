@@ -46,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             traffic_volume: 1024 * (100 + i * 2),
             ports_accessed: vec![80, 443], // Typical web traffic
             timestamp: SystemTime::now(),
+            http: None,
         };
         profiler.update(&obs).await?;
 
@@ -86,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         traffic_volume: 1024 * 110,
         ports_accessed: vec![80, 443],
         timestamp: SystemTime::now(),
+        http: None,
     };
 
     let anomalies = profiler.detect_anomalies(&normal_obs).await?;
@@ -107,6 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         traffic_volume: 1024 * 130,
         ports_accessed: vec![80, 443, 8080],
         timestamp: SystemTime::now(),
+        http: None,
     };
 
     let anomalies = profiler.detect_anomalies(&elevated_obs).await?;
@@ -137,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         traffic_volume: 1024 * 500,
         ports_accessed: vec![80, 443, 22, 3389, 5900],
         timestamp: SystemTime::now(),
+        http: None,
     };
 
     let anomalies = profiler.detect_anomalies(&anomalous_obs).await?;
@@ -181,6 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             traffic_volume: 1024 * (100 + i * 5),
             ports_accessed: vec![80, 443],
             timestamp: SystemTime::now(),
+            http: None,
         };
         profiler.update(&obs).await?;
 
@@ -207,6 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         traffic_volume: 1024 * 250,
         ports_accessed: vec![80, 443],
         timestamp: SystemTime::now(),
+        http: None,
     };
 
     let anomalies = profiler.detect_anomalies(&new_normal_obs).await?;

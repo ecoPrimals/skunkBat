@@ -125,9 +125,10 @@ pub(super) async fn dispatch_respond(
 
 /// Handle `security.advisory` — advisory check for Tower HTTP Gateway.
 ///
-/// Accepts `{"source": "<ip>"}`. Returns an `AdvisoryVerdict` with verdict,
-/// reason, and any associated threat IDs. The gateway uses this to decide
-/// whether to route, warn-log, or reject an inbound request.
+/// Accepts `{"source": "<ip>", "http": { ... }}`. The `http` field is optional;
+/// when present, runs behavioral anomaly detection on HTTP dimensions.
+/// Returns an `AdvisoryVerdict` with verdict, reason, anomalies, and any
+/// associated threat IDs.
 pub(super) async fn dispatch_advisory(
     state: &Arc<RwLock<SkunkBat>>,
     id: serde_json::Value,
@@ -146,8 +147,13 @@ pub(super) async fn dispatch_advisory(
         );
     };
 
+    let http: Option<skunk_bat_core::threats::types::HttpObservation> = params
+        .as_ref()
+        .and_then(|p| p.get("http"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
     let sb = state.read().await;
-    let verdict = sb.advisory_check(source);
+    let verdict = sb.advisory_check_http(source, http.as_ref());
     drop(sb);
 
     Response::success(id, serde_json::to_value(&verdict).unwrap_or_default())
