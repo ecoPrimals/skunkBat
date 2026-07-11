@@ -1,0 +1,21 @@
+[package]
+name = "skuny-ingest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Log tailer that feeds live traffic observations into skunkBat's behavioral profiler"
+
+[[bin]]
+name = "skuny-ingest"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

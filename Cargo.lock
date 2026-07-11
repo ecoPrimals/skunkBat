@@ -703,6 +703,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "skuny-ingest"
+version = "0.2.18"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
