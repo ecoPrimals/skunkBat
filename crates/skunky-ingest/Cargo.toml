@@ -1,12 +1,12 @@
 [package]
-name = "skuny-ingest"
+name = "skunky-ingest"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Log tailer that feeds live traffic observations into skunkBat's behavioral profiler"
 
 [[bin]]
-name = "skuny-ingest"
+name = "skunky-ingest"
 path = "src/main.rs"
 
 [lints]

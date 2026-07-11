@@ -28,7 +28,7 @@ mod tests {
 
     #[tokio::test]
     async fn round_trip_cursor() {
-        let dir = std::env::temp_dir().join("skuny-ingest-test-cursor");
+        let dir = std::env::temp_dir().join("skunky-ingest-test-cursor");
         let _ = fs::create_dir_all(&dir).await;
         let path = dir.join("cursor.pos");
 
@@ -41,7 +41,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_file_returns_zero() {
-        let path = PathBuf::from("/tmp/skuny-ingest-nonexistent-cursor-file");
+        let path = PathBuf::from("/tmp/skunky-ingest-nonexistent-cursor-file");
         assert_eq!(load(&path).await, 0);
     }
 }

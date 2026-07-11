@@ -1,4 +1,4 @@
-//! skuny-ingest — Live traffic log tailer for skunkBat behavioral detection.
+//! skunky-ingest — Live traffic log tailer for skunkBat behavioral detection.
 //!
 //! Tails structured JSON access logs (Caddy format), aggregates per-source-IP
 //! metrics over a configurable window, and pushes `baseline.observe` JSON-RPC
@@ -18,9 +18,9 @@ use clap::Parser;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 
-/// skuny-ingest: feed live Caddy access logs into skunkBat's behavioral profiler.
+/// skunky-ingest: feed live Caddy access logs into skunkBat's behavioral profiler.
 #[derive(Parser, Debug)]
-#[command(name = "skuny-ingest", version, about)]
+#[command(name = "skunky-ingest", version, about)]
 struct Cli {
     /// Path to the Caddy JSON access log file.
     #[arg(long, default_value = "/var/log/caddy/access.log")]
@@ -35,7 +35,7 @@ struct Cli {
     window_secs: u64,
 
     /// Cursor file for tracking file position across restarts.
-    #[arg(long, default_value = "/var/lib/skuny-ingest/cursor.pos")]
+    #[arg(long, default_value = "/var/lib/skunky-ingest/cursor.pos")]
     cursor_path: PathBuf,
 
     /// Tail poll interval in milliseconds (when log has no new data).
@@ -63,7 +63,7 @@ async fn main() {
         addr = %cli.skunkbat_addr,
         window = cli.window_secs,
         dry_run = cli.dry_run,
-        "skuny-ingest starting"
+        "skunky-ingest starting"
     );
 
     if let Err(e) = run(cli).await {
@@ -186,7 +186,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         failed = state.lines_failed,
         sent = state.observations_sent,
         offset = state.byte_offset,
-        "skuny-ingest shutting down"
+        "skunky-ingest shutting down"
     );
 
     Ok(())

@@ -703,7 +703,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "skuny-ingest"
+name = "skunky-ingest"
 version = "0.2.18"
 dependencies = [
  "clap",
