@@ -8,11 +8,11 @@
 
 use serde::Serialize;
 use skunk_bat_core::PrimalHealth;
-use skunk_bat_core::SkunkBat;
 use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use super::App;
 use super::jsonrpc::{self, Request, Response};
 use super::method_gate::{CallerContext, EnforcementMode, MethodGate, PERMISSION_DENIED};
 
@@ -125,7 +125,7 @@ fn capabilities_response() -> serde_json::Value {
 /// access to protected methods. In enforced mode, unauthenticated calls to
 /// protected methods are rejected with `-32001 PERMISSION_DENIED`.
 pub(super) async fn dispatch(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     gate: &MethodGate,
     caller: &CallerContext,
     request: Request,
@@ -205,7 +205,7 @@ pub(super) async fn dispatch(
 /// quarantined sources are rejected with `PERMISSION_DENIED` regardless
 /// of method or token. Health probes are exempt so monitoring stays alive.
 async fn enforce_gate(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     gate: &MethodGate,
     caller: &CallerContext,
     request: &Request,
@@ -282,7 +282,7 @@ async fn enforce_gate(
 
 /// Health domain: `health.liveness`, `health.readiness`, `health.check`.
 async fn dispatch_health(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     method: &str,
 ) -> Response {
@@ -302,7 +302,7 @@ async fn dispatch_health(
 
 /// Lifecycle domain: `lifecycle.state`, `lifecycle.status`, `lifecycle.capabilities`.
 async fn dispatch_lifecycle(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     method: &str,
 ) -> Response {

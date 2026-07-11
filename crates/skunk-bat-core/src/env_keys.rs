@@ -136,3 +136,23 @@ pub const SKUNKBAT_INTEGRATION_TIMEOUT_MS: &str = "SKUNKBAT_INTEGRATION_TIMEOUT_
 
 /// Persistent data directory for quarantine state, cache, etc.
 pub const SKUNKBAT_DATA_DIR: &str = "SKUNKBAT_DATA_DIR";
+
+// ── Threat Detection Thresholds ────────────────────────────────
+
+/// Sigma deviation that triggers an anomaly report (default: 2.5).
+pub const SKUNKBAT_SIGMA_THRESHOLD: &str = "SKUNKBAT_SIGMA_THRESHOLD";
+
+/// Normalized system load (0.0–1.0) that triggers a `DoS` threat (default: 0.9).
+pub const SKUNKBAT_DOS_LOAD_THRESHOLD: &str = "SKUNKBAT_DOS_LOAD_THRESHOLD";
+
+/// Confidence assigned when lineage verification fails (default: 0.95).
+pub const SKUNKBAT_GENETIC_CONFIDENCE: &str = "SKUNKBAT_GENETIC_CONFIDENCE";
+
+/// Rolling window size for behavioral profiler observations (default: 100).
+pub const SKUNKBAT_BEHAVIORAL_WINDOW: &str = "SKUNKBAT_BEHAVIORAL_WINDOW";
+
+/// Minimum observations before baseline is established (default: 10).
+pub const SKUNKBAT_BEHAVIORAL_MIN_OBS: &str = "SKUNKBAT_BEHAVIORAL_MIN_OBS";
+
+/// Audit log ring buffer capacity (default: 1024).
+pub const SKUNKBAT_AUDIT_LOG_CAPACITY: &str = "SKUNKBAT_AUDIT_LOG_CAPACITY";

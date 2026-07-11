@@ -8,18 +8,18 @@
 //! - `response.evaluate`
 //! - `baseline.query` / `baseline.anomaly` / `baseline.reset`
 
-use skunk_bat_core::SkunkBat;
 use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use super::App;
 use super::jsonrpc::{self, Response};
 
 /// Handle `defense.quarantine` — manually quarantine a source address.
 ///
 /// Params: `{ source: string, reason: string, threat_id: string }`
 pub(super) async fn dispatch_defense_quarantine(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {
@@ -66,7 +66,7 @@ pub(super) async fn dispatch_defense_quarantine(
 ///
 /// Params: `{ source: string }`
 pub(super) async fn dispatch_defense_release(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {
@@ -107,7 +107,7 @@ pub(super) async fn dispatch_defense_release(
 ///
 /// Returns the recommended action type, target, approval requirement, and reason.
 pub(super) async fn dispatch_response_evaluate(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {
@@ -133,7 +133,7 @@ pub(super) async fn dispatch_response_evaluate(
 
 /// Handle `baseline.query` — query the baseline profiler's current statistics.
 pub(super) async fn dispatch_baseline_query(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
 ) -> Response {
     let sb = state.read().await;
@@ -156,7 +156,7 @@ pub(super) async fn dispatch_baseline_query(
 ///
 /// Params: `Observation { connection_rate, traffic_volume, ports_accessed, timestamp }`
 pub(super) async fn dispatch_baseline_anomaly(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {
@@ -196,7 +196,7 @@ pub(super) async fn dispatch_baseline_anomaly(
 ///
 /// Params (optional): `{ reseed: bool }` (default: true)
 pub(super) async fn dispatch_baseline_reset(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {

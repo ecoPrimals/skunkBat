@@ -6,11 +6,11 @@
 //! Handles `security.*`, `threat.report`, `baseline.observe`, and the
 //! Tower HTTP Gateway `security.advisory` method.
 
-use skunk_bat_core::SkunkBat;
 use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use super::App;
 use super::dispatch::{serialize, try_serialize};
 use super::jsonrpc::{self, Response};
 
@@ -45,7 +45,7 @@ pub(super) fn parse_threat_params(
 
 /// Security domain: `security.scan`, `security.detect`, `security.metrics`, `security.audit_log`.
 pub(super) async fn dispatch_security(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     method: &str,
     params: Option<serde_json::Value>,
@@ -82,7 +82,7 @@ pub(super) async fn dispatch_security(
 
 /// Handle `security.respond` — requires params with a threat payload.
 pub(super) async fn dispatch_respond(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {
@@ -130,7 +130,7 @@ pub(super) async fn dispatch_respond(
 /// Returns an `AdvisoryVerdict` with verdict, reason, anomalies, and any
 /// associated threat IDs.
 pub(super) async fn dispatch_advisory(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {
@@ -163,7 +163,7 @@ pub(super) async fn dispatch_advisory(
 ///
 /// Accepts an `Observation` JSON payload. Returns `{"status":"ok"}` on success.
 pub(super) async fn dispatch_baseline_observe(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {
@@ -209,7 +209,7 @@ pub(super) async fn dispatch_baseline_observe(
 
 /// Structured threat report — detection results + defense posture in one call.
 pub(super) async fn dispatch_threat_report(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
 ) -> Response {
     let sb = state.read().await;
@@ -254,7 +254,7 @@ pub(super) async fn dispatch_threat_report(
 /// - `since_seq`: sequence cursor (default 0, returns events after this seq)
 /// - `limit`: max events to return (default 100, max 1000)
 pub(super) async fn dispatch_audit_log(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     id: serde_json::Value,
     params: Option<serde_json::Value>,
 ) -> Response {

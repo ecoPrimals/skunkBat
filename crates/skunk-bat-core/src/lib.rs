@@ -130,25 +130,47 @@ pub use observability::audit_log::AuditLog;
 
 /// The skunkBat primal.
 ///
-/// Provides reconnaissance, threat detection, and automated defense
-/// for the ecoPrimals ecosystem.
-pub struct SkunkBat {
+/// Generic over the lineage verifier — defaults to [`threats::LocalLineageVerifier`]
+/// (conservative local-only mode). When a remote lineage provider is
+/// discovered at runtime, construct with [`SkunkBat::with_verifier`] to
+/// inject the discovered implementation.
+pub struct SkunkBat<L: threats::traits::LineageVerifier = threats::LocalLineageVerifier> {
     config: SkunkBatConfig,
     state: PrimalState,
     reconnaissance: ReconnaissanceEngine,
-    threat_detector: ThreatDetector,
+    threat_detector: ThreatDetector<L>,
     defense: DefenseEngine,
     observer: SecurityObserver,
     audit_log: AuditLog,
 }
 
 impl SkunkBat {
-    /// Create a new skunkBat instance.
+    /// Create a new skunkBat instance with default local verifier.
     #[must_use]
     pub fn new(config: SkunkBatConfig) -> Self {
         Self {
             reconnaissance: ReconnaissanceEngine::new(&config),
             threat_detector: ThreatDetector::new(&config),
+            defense: DefenseEngine::new(&config),
+            observer: SecurityObserver::new(&config),
+            audit_log: AuditLog::with_capacity(config.thresholds.audit_log_capacity),
+            config,
+            state: PrimalState::Created,
+        }
+    }
+}
+
+impl<L: threats::traits::LineageVerifier> SkunkBat<L> {
+    /// Create a skunkBat instance with a runtime-discovered lineage verifier.
+    ///
+    /// Use this when a remote verifier is available (e.g. `RuntimeVerifier`
+    /// from the integrations crate). Falls back to `SkunkBat::new()` when
+    /// no remote provider is discovered.
+    #[must_use]
+    pub fn with_verifier(config: SkunkBatConfig, verifier: L) -> Self {
+        Self {
+            reconnaissance: ReconnaissanceEngine::new(&config),
+            threat_detector: ThreatDetector::with_lineage_verifier(&config, verifier),
             defense: DefenseEngine::new(&config),
             observer: SecurityObserver::new(&config),
             audit_log: AuditLog::with_capacity(config.thresholds.audit_log_capacity),
@@ -423,7 +445,7 @@ impl SkunkBat {
     }
 }
 
-impl PrimalLifecycle for SkunkBat {
+impl<L: threats::traits::LineageVerifier> PrimalLifecycle for SkunkBat<L> {
     fn state(&self) -> PrimalState {
         self.state
     }
@@ -497,7 +519,7 @@ impl PrimalLifecycle for SkunkBat {
     }
 }
 
-impl PrimalHealth for SkunkBat {
+impl<L: threats::traits::LineageVerifier> PrimalHealth for SkunkBat<L> {
     fn health_status(&self) -> HealthStatus {
         if self.state.is_running() {
             // Check sub-systems

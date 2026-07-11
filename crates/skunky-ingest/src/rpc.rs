@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::aggregator::ObservationPayload;
+use crate::error::IngestError;
 
 /// riboCipher signal bytes: NDJSON JSON-RPC.
 const RIBOCIPHER_NDJSON: [u8; 2] = [0xEC, 0x01];
@@ -60,7 +61,7 @@ impl RpcClient {
     /// Send a `baseline.observe` call with the given observation.
     ///
     /// Reconnects automatically if the connection was lost.
-    pub async fn observe(&mut self, obs: &ObservationPayload) -> Result<(), String> {
+    pub async fn observe(&mut self, obs: &ObservationPayload) -> Result<(), IngestError> {
         let req = RpcRequest {
             jsonrpc: "2.0",
             method: "baseline.observe",
@@ -68,57 +69,54 @@ impl RpcClient {
             id: REQUEST_ID.fetch_add(1, Ordering::Relaxed),
         };
 
-        let mut line = serde_json::to_string(&req).map_err(|e| format!("serialize: {e}"))?;
+        let mut line = serde_json::to_string(&req)?;
         line.push('\n');
 
         self.ensure_connected().await?;
 
         let stream = self.stream.as_mut().expect("just connected");
 
-        let write_result = stream.get_mut().write_all(line.as_bytes()).await;
-        if let Err(e) = write_result {
+        if let Err(e) = stream.get_mut().write_all(line.as_bytes()).await {
             self.stream = None;
-            return Err(format!("write: {e}"));
+            return Err(IngestError::Io(e));
         }
 
         let stream = self.stream.as_mut().expect("still connected");
         let mut resp_line = String::new();
-        let read_result = stream.read_line(&mut resp_line).await;
-        if let Err(e) = read_result {
+        if let Err(e) = stream.read_line(&mut resp_line).await {
             self.stream = None;
-            return Err(format!("read: {e}"));
+            return Err(IngestError::Io(e));
         }
 
         if resp_line.is_empty() {
             self.stream = None;
-            return Err("connection closed by server".to_string());
+            return Err(IngestError::Rpc("connection closed by server".to_string()));
         }
 
-        let resp: RpcResponse =
-            serde_json::from_str(&resp_line).map_err(|e| format!("parse response: {e}"))?;
+        let resp: RpcResponse = serde_json::from_str(&resp_line)?;
 
         if let Some(err) = resp.error {
-            return Err(err.to_string());
+            return Err(IngestError::RpcServer {
+                code: err.code,
+                message: err.message,
+            });
         }
 
         if resp.result.is_some() {
             Ok(())
         } else {
-            Err("response missing both result and error".to_string())
+            Err(IngestError::Rpc(
+                "response missing both result and error".to_string(),
+            ))
         }
     }
 
-    async fn ensure_connected(&mut self) -> Result<(), String> {
+    async fn ensure_connected(&mut self) -> Result<(), IngestError> {
         if self.stream.is_none() {
-            let tcp = TcpStream::connect(&self.addr)
-                .await
-                .map_err(|e| format!("connect to {}: {e}", self.addr))?;
+            let tcp = TcpStream::connect(&self.addr).await?;
 
             let mut buf = BufReader::new(tcp);
-            buf.get_mut()
-                .write_all(&RIBOCIPHER_NDJSON)
-                .await
-                .map_err(|e| format!("riboCipher signal: {e}"))?;
+            buf.get_mut().write_all(&RIBOCIPHER_NDJSON).await?;
 
             self.stream = Some(buf);
             tracing::info!(addr = %self.addr, "connected to skunkBat");

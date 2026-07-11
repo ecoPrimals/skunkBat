@@ -24,10 +24,14 @@ pub mod transport;
 use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::SkunkBat;
 use skunk_bat_integrations::forwarding::{self, ForwardingConfig};
+use skunk_bat_integrations::verifier::RuntimeVerifier;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use transport::SessionRegistry;
+
+/// Concrete `SkunkBat` type used by the server — runtime-discovered verifier.
+pub type App = SkunkBat<RuntimeVerifier>;
 
 /// Background service handles — aborted on shutdown.
 struct BackgroundTasks {
@@ -74,7 +78,7 @@ fn session_sweep_interval() -> std::time::Duration {
 
 /// Spawn all background services (registration, announcement, forwarding, federation, session sweep).
 async fn spawn_background(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     sessions: &Arc<SessionRegistry>,
     socket_path: Option<&String>,
     port: u16,
@@ -127,7 +131,7 @@ async fn spawn_background(
 ///
 /// Traps `SIGINT`/`SIGTERM` for graceful lifecycle stop and UDS socket cleanup.
 pub async fn serve(
-    skunkbat: SkunkBat,
+    skunkbat: App,
     addr: String,
     port: u16,
     socket_override: Option<&str>,

@@ -41,11 +41,11 @@ pub use negotiate::SessionRegistry;
 use btsp::perform_server_handshake;
 use negotiate::SessionRegistry as BtspSessionRegistry;
 use peek::PeekedStream;
-use skunk_bat_core::SkunkBat;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
+use super::App;
 use super::method_gate::CallerContext;
 use super::server::handle_connection;
 
@@ -131,7 +131,7 @@ async fn classify_connection<S: tokio::io::AsyncRead + Unpin>(
     reason = "TCP accept loop with 4 intent branches + BTSP"
 )]
 pub async fn serve_tcp(
-    state: Arc<RwLock<SkunkBat>>,
+    state: Arc<RwLock<App>>,
     sessions: Arc<BtspSessionRegistry>,
     addr: String,
     port: u16,
@@ -286,7 +286,7 @@ async fn setup_uds_listener()
 /// Bind UDS and accept connections per BTSP Phase 1 naming + riboCipher routing.
 #[cfg(unix)]
 pub async fn serve_uds(
-    state: Arc<RwLock<SkunkBat>>,
+    state: Arc<RwLock<App>>,
     sessions: Arc<BtspSessionRegistry>,
 ) -> Result<(), TransportError> {
     let (listener, btsp_config) = setup_uds_listener().await?;
@@ -384,7 +384,7 @@ pub async fn serve_uds(
 
 #[cfg(not(unix))]
 pub async fn serve_uds(
-    _state: Arc<RwLock<SkunkBat>>,
+    _state: Arc<RwLock<App>>,
     _sessions: Arc<BtspSessionRegistry>,
 ) -> Result<(), TransportError> {
     tracing::warn!("Unix domain sockets not available on this platform");
@@ -415,7 +415,7 @@ async fn respond_to_probe<S: tokio::io::AsyncWrite + Unpin>(stream: &mut S) {
 /// - `[1]`: TCP loopback
 /// - `[2]`: TCP remote (unauthenticated)
 /// - `[2, 3]`: TCP remote + BTSP authenticated
-async fn record_transport_path(state: &Arc<RwLock<SkunkBat>>, caller: &CallerContext) {
+async fn record_transport_path(state: &Arc<RwLock<App>>, caller: &CallerContext) {
     use super::method_gate::ConnectionOrigin;
     let path = match caller.origin {
         ConnectionOrigin::Unix => vec![0],

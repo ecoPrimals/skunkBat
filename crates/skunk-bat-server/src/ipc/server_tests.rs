@@ -2,11 +2,15 @@
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
 use super::*;
-use skunk_bat_core::SkunkBatConfig;
+use skunk_bat_core::{SkunkBat, SkunkBatConfig};
+use skunk_bat_integrations::verifier::RuntimeVerifier;
 use std::time::Duration;
 
-fn make_state() -> Arc<RwLock<SkunkBat>> {
-    Arc::new(RwLock::new(SkunkBat::new(SkunkBatConfig::default())))
+fn make_state() -> Arc<RwLock<App>> {
+    Arc::new(RwLock::new(SkunkBat::with_verifier(
+        SkunkBatConfig::default(),
+        RuntimeVerifier::from_env(),
+    )))
 }
 
 fn make_sessions() -> Arc<SessionRegistry> {

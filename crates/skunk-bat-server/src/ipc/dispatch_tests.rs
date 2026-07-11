@@ -5,11 +5,14 @@
 
 use super::super::method_gate::{CallerContext, EnforcementMode, MethodGate};
 use super::*;
-use skunk_bat_core::PrimalLifecycle;
-use skunk_bat_core::SkunkBatConfig;
+use skunk_bat_core::{PrimalLifecycle, SkunkBat, SkunkBatConfig};
+use skunk_bat_integrations::verifier::RuntimeVerifier;
 
-fn make_state() -> Arc<RwLock<SkunkBat>> {
-    Arc::new(RwLock::new(SkunkBat::new(SkunkBatConfig::default())))
+fn make_state() -> Arc<RwLock<App>> {
+    Arc::new(RwLock::new(SkunkBat::with_verifier(
+        SkunkBatConfig::default(),
+        RuntimeVerifier::from_env(),
+    )))
 }
 
 fn make_gate() -> MethodGate {

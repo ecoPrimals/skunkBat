@@ -9,7 +9,10 @@
 mod aggregator;
 mod caddy;
 mod cursor;
+mod error;
 mod rpc;
+
+use error::IngestError;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -80,7 +83,7 @@ struct TailState {
     observations_sent: u64,
 }
 
-async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64), Box<dyn std::error::Error>> {
+async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64), IngestError> {
     if let Some(parent) = cli.cursor_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -110,7 +113,7 @@ async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64), Box<dyn std::erro
     Ok((reader, start_offset))
 }
 
-async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(cli: Cli) -> Result<(), IngestError> {
     let (mut reader, start_offset) = open_log(&cli).await?;
 
     let mut rpc = rpc::RpcClient::new(cli.skunkbat_addr.clone());

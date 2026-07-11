@@ -63,6 +63,17 @@ impl ThreatDetector {
     /// observations so anomaly detection is active from first `detect()` call.
     #[must_use]
     pub fn new(config: &SkunkBatConfig) -> Self {
+        Self::with_lineage_verifier(config, LocalLineageVerifier)
+    }
+}
+
+impl<L: LineageVerifier> ThreatDetector<L> {
+    /// Create a threat detector with a custom lineage verifier
+    /// and the default `StatisticalProfiler`.
+    ///
+    /// Seeds the baseline profiler so anomaly detection is active immediately.
+    #[must_use]
+    pub fn with_lineage_verifier(config: &SkunkBatConfig, verifier: L) -> Self {
         let mut profiler = StatisticalProfiler::with_config(
             config.thresholds.sigma_threshold,
             config.thresholds.behavioral_rolling_window,
@@ -71,7 +82,7 @@ impl ThreatDetector {
         profiler.seed_baseline(&baseline::normal_baseline_with_port(
             config.common.listen_port,
         ));
-        Self::with_verifiers(config, LocalLineageVerifier, profiler)
+        Self::with_verifiers(config, verifier, profiler)
     }
 }
 

@@ -148,8 +148,8 @@ impl Default for SkunkBatConfig {
 impl SkunkBatConfig {
     /// Hydrate config from environment variables, falling back to defaults.
     ///
-    /// Reads `SKUNKBAT_LINEAGE_ID` and `SKUNKBAT_TOPOLOGY_PATH` to configure
-    /// runtime-discovered integrations. All other fields use `Default`.
+    /// Reads identity, topology, and threat-detection thresholds from env.
+    /// Fields not set in the environment retain their `Default` values.
     #[must_use]
     pub fn from_env() -> Self {
         let mut config = Self::default();
@@ -173,7 +173,42 @@ impl SkunkBatConfig {
             }
         }
 
+        hydrate_thresholds(&mut config.thresholds);
+
         config
+    }
+}
+
+/// Parse env var into a typed value, logging a warning on malformed input.
+fn try_env_parse<T: std::str::FromStr>(key: &str) -> Option<T> {
+    let val = std::env::var(key).ok()?;
+    val.parse().map_or_else(
+        |_| {
+            tracing::warn!("ignoring malformed env var {key}={val:?}");
+            None
+        },
+        Some,
+    )
+}
+
+fn hydrate_thresholds(t: &mut ThreatThresholds) {
+    if let Some(v) = try_env_parse::<f64>(crate::env_keys::SKUNKBAT_SIGMA_THRESHOLD) {
+        t.sigma_threshold = v;
+    }
+    if let Some(v) = try_env_parse::<f64>(crate::env_keys::SKUNKBAT_DOS_LOAD_THRESHOLD) {
+        t.dos_load_threshold = v;
+    }
+    if let Some(v) = try_env_parse::<f64>(crate::env_keys::SKUNKBAT_GENETIC_CONFIDENCE) {
+        t.genetic_confidence = v;
+    }
+    if let Some(v) = try_env_parse::<usize>(crate::env_keys::SKUNKBAT_BEHAVIORAL_WINDOW) {
+        t.behavioral_rolling_window = v;
+    }
+    if let Some(v) = try_env_parse::<usize>(crate::env_keys::SKUNKBAT_BEHAVIORAL_MIN_OBS) {
+        t.behavioral_min_observations = v;
+    }
+    if let Some(v) = try_env_parse::<usize>(crate::env_keys::SKUNKBAT_AUDIT_LOG_CAPACITY) {
+        t.audit_log_capacity = v;
     }
 }
 

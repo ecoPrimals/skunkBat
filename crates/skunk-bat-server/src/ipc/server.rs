@@ -18,12 +18,12 @@
 //! returns an invalid-request error — transport upgrades are incompatible
 //! with batch semantics (wire format changes mid-response are undefined).
 
-use skunk_bat_core::SkunkBat;
 use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity, EventSource};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::RwLock;
 
+use super::App;
 use super::dispatch;
 use super::jsonrpc::{self, Response};
 use super::method_gate::{CallerContext, MethodGate};
@@ -35,7 +35,7 @@ use super::transport::{read_frame, write_frame};
 /// When `session_id` is `Some`, the session is removed from the registry
 /// on connection close (disconnect, error, or EOF).
 pub(super) async fn handle_connection<S>(
-    state: Arc<RwLock<SkunkBat>>,
+    state: Arc<RwLock<App>>,
     sessions: Arc<SessionRegistry>,
     stream: S,
     caller: CallerContext,
@@ -128,7 +128,7 @@ enum NegotiateAction {
 /// - `Handled` → response already sent, caller skips this line
 /// - `NotNegotiate` → not a negotiate request, process normally
 async fn try_negotiate_upgrade<W>(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     sessions: &Arc<SessionRegistry>,
     line: &str,
     writer: &mut W,
@@ -198,7 +198,7 @@ where
 /// Encrypted BTSP frame loop — reads length-prefixed encrypted frames,
 /// decrypts, dispatches JSON-RPC, encrypts response, writes.
 async fn run_encrypted_frame_loop<R, W>(
-    state: Arc<RwLock<SkunkBat>>,
+    state: Arc<RwLock<App>>,
     sessions: Arc<SessionRegistry>,
     gate: &MethodGate,
     caller: &CallerContext,
@@ -274,7 +274,7 @@ async fn run_encrypted_frame_loop<R, W>(
 /// function runs. If it reaches here (e.g. inside the encrypted frame
 /// loop), it is processed as a regular negotiate without upgrade.
 async fn handle_single(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     sessions: &Arc<SessionRegistry>,
     gate: &MethodGate,
     caller: &CallerContext,
@@ -323,7 +323,7 @@ async fn handle_single(
 /// invalid-request error. `btsp.negotiate` is rejected inside batches
 /// (transport upgrades require standalone requests).
 async fn handle_batch(
-    state: &Arc<RwLock<SkunkBat>>,
+    state: &Arc<RwLock<App>>,
     _sessions: &Arc<SessionRegistry>,
     gate: &MethodGate,
     caller: &CallerContext,

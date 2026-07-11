@@ -150,6 +150,7 @@ fn build_baseline(self_port: u16) -> Vec<Observation> {
 /// 5. Amplification attempt (asymmetric volume spike)
 /// 6. Slow-rate exhaustion (sustained elevated connections)
 /// 7. Protocol confusion (unexpected ports, moderate rate)
+#[cfg(test)]
 #[must_use]
 pub fn pentest_attack_patterns() -> Vec<Observation> {
     let self_port = DEFAULT_SELF_PORT;
