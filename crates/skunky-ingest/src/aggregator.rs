@@ -83,7 +83,15 @@ impl IpBucket {
             self.methods.insert(entry.request.method.clone());
         }
 
-        self.ports.insert(443);
+        // Caddy serves HTTPS — port derived from host header if present,
+        // otherwise defaults to 443.
+        let port = entry
+            .request
+            .host
+            .rsplit_once(':')
+            .and_then(|(_, p)| p.parse().ok())
+            .unwrap_or(443);
+        self.ports.insert(port);
     }
 }
 
@@ -155,7 +163,8 @@ impl Aggregator {
 
                 ObservationPayload {
                     connection_rate: request_rate,
-                    traffic_volume: bucket.total_bytes,
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    traffic_volume: (bucket.total_bytes as f64 / window_secs) as u64,
                     ports_accessed: bucket.ports.iter().copied().collect(),
                     timestamp: TimestampPayload {
                         secs_since_epoch: now.as_secs(),

@@ -18,6 +18,7 @@ pub struct StatisticalProfiler {
     threshold: f64,
     rolling_window: usize,
     min_observations: usize,
+    seed_port: u16,
 }
 
 impl StatisticalProfiler {
@@ -31,6 +32,7 @@ impl StatisticalProfiler {
             threshold,
             rolling_window: 100,
             min_observations: 10,
+            seed_port: crate::DEFAULT_PORT,
         }
     }
 
@@ -46,7 +48,13 @@ impl StatisticalProfiler {
             threshold,
             rolling_window,
             min_observations,
+            seed_port: crate::DEFAULT_PORT,
         }
+    }
+
+    /// Set the port used for synthetic baseline seeding on `reset(true)`.
+    pub const fn set_seed_port(&mut self, port: u16) {
+        self.seed_port = port;
     }
 
     /// Seed the profiler with baseline observations to establish normal behavior.
@@ -76,7 +84,7 @@ impl StatisticalProfiler {
     pub fn reset(&mut self, reseed: bool) {
         self.observations.clear();
         if reseed {
-            self.seed_baseline(&super::baseline::normal_baseline());
+            self.seed_baseline(&super::baseline::normal_baseline_with_port(self.seed_port));
         }
     }
 

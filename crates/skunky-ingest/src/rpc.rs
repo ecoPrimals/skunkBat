@@ -74,14 +74,18 @@ impl RpcClient {
 
         self.ensure_connected().await?;
 
-        let stream = self.stream.as_mut().expect("just connected");
+        let Some(stream) = self.stream.as_mut() else {
+            return Err(IngestError::Rpc("connection not established".to_string()));
+        };
 
         if let Err(e) = stream.get_mut().write_all(line.as_bytes()).await {
             self.stream = None;
             return Err(IngestError::Io(e));
         }
 
-        let stream = self.stream.as_mut().expect("still connected");
+        let Some(stream) = self.stream.as_mut() else {
+            return Err(IngestError::Rpc("connection lost after write".to_string()));
+        };
         let mut resp_line = String::new();
         if let Err(e) = stream.read_line(&mut resp_line).await {
             self.stream = None;

@@ -156,3 +156,14 @@ pub const SKUNKBAT_BEHAVIORAL_MIN_OBS: &str = "SKUNKBAT_BEHAVIORAL_MIN_OBS";
 
 /// Audit log ring buffer capacity (default: 1024).
 pub const SKUNKBAT_AUDIT_LOG_CAPACITY: &str = "SKUNKBAT_AUDIT_LOG_CAPACITY";
+
+// ── Baseline Control ──────────────────────────────────────────
+
+/// Skip synthetic baseline seeding at startup (`1` or `true`).
+///
+/// When live data flows via `skunky-ingest`, synthetic IPC-style
+/// seed observations pollute the rolling window. Set this to start
+/// with an empty profiler that learns purely from live traffic.
+/// Anomaly detection will activate after `behavioral_min_observations`
+/// real observations arrive.
+pub const SKUNKBAT_SKIP_SYNTHETIC_BASELINE: &str = "SKUNKBAT_SKIP_SYNTHETIC_BASELINE";

@@ -128,6 +128,14 @@ pub struct SkunkBatConfig {
     /// sequence generate `TopologyViolation` threats.
     #[serde(default)]
     pub expected_topology_path: Option<Vec<u8>>,
+
+    /// Skip synthetic baseline seeding at startup.
+    ///
+    /// When `true`, the profiler starts empty and learns purely from
+    /// live observations (e.g. from `skunky-ingest`). Anomaly detection
+    /// activates after `behavioral_min_observations` real observations.
+    #[serde(default)]
+    pub skip_synthetic_baseline: bool,
 }
 
 impl Default for SkunkBatConfig {
@@ -141,6 +149,7 @@ impl Default for SkunkBatConfig {
             lineage_id: None,
             thresholds: ThreatThresholds::default(),
             expected_topology_path: None,
+            skip_synthetic_baseline: false,
         }
     }
 }
@@ -174,6 +183,10 @@ impl SkunkBatConfig {
         }
 
         hydrate_thresholds(&mut config.thresholds);
+
+        if let Ok(val) = std::env::var(crate::env_keys::SKUNKBAT_SKIP_SYNTHETIC_BASELINE) {
+            config.skip_synthetic_baseline = val == "1" || val.eq_ignore_ascii_case("true");
+        }
 
         config
     }
@@ -245,6 +258,7 @@ mod tests {
             lineage_id: Some("family-alpha".to_owned()),
             thresholds: ThreatThresholds::default(),
             expected_topology_path: None,
+            skip_synthetic_baseline: false,
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: SkunkBatConfig = serde_json::from_str(&json).unwrap();

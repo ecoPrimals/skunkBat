@@ -26,6 +26,7 @@ pub fn test_config() -> SkunkBatConfig {
         lineage_id: None,
         thresholds: ThreatThresholds::default(),
         expected_topology_path: None,
+        skip_synthetic_baseline: false,
     }
 }
 

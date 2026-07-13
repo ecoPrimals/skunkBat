@@ -359,6 +359,7 @@ async fn test_detect_disabled() {
         lineage_id: None,
         thresholds: crate::config::ThreatThresholds::default(),
         expected_topology_path: None,
+        skip_synthetic_baseline: false,
     };
     let detector = ThreatDetector::new(&config);
     assert!(!detector.is_healthy());
@@ -379,6 +380,7 @@ fn test_start_disabled() {
         lineage_id: None,
         thresholds: crate::config::ThreatThresholds::default(),
         expected_topology_path: None,
+        skip_synthetic_baseline: false,
     };
     let detector = ThreatDetector::new(&config);
     assert!(detector.start().is_ok());

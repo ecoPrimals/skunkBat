@@ -260,6 +260,7 @@ async fn test_health_status_degraded() {
         lineage_id: None,
         thresholds: crate::config::ThreatThresholds::default(),
         expected_topology_path: None,
+        skip_synthetic_baseline: false,
     };
     let mut skunkbat = SkunkBat::new(config);
     skunkbat.start().await.unwrap();

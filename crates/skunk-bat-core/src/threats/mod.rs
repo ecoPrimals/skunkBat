@@ -71,7 +71,9 @@ impl<L: LineageVerifier> ThreatDetector<L> {
     /// Create a threat detector with a custom lineage verifier
     /// and the default `StatisticalProfiler`.
     ///
-    /// Seeds the baseline profiler so anomaly detection is active immediately.
+    /// Seeds the baseline profiler unless `config.skip_synthetic_baseline`
+    /// is set — in live-ingest deployments, real traffic replaces synthetic
+    /// seed data.
     #[must_use]
     pub fn with_lineage_verifier(config: &SkunkBatConfig, verifier: L) -> Self {
         let mut profiler = StatisticalProfiler::with_config(
@@ -79,9 +81,14 @@ impl<L: LineageVerifier> ThreatDetector<L> {
             config.thresholds.behavioral_rolling_window,
             config.thresholds.behavioral_min_observations,
         );
-        profiler.seed_baseline(&baseline::normal_baseline_with_port(
-            config.common.listen_port,
-        ));
+        profiler.set_seed_port(config.common.listen_port);
+        if config.skip_synthetic_baseline {
+            tracing::info!("synthetic baseline skipped — profiler will learn from live traffic");
+        } else {
+            profiler.seed_baseline(&baseline::normal_baseline_with_port(
+                config.common.listen_port,
+            ));
+        }
         Self::with_verifiers(config, verifier, profiler)
     }
 }

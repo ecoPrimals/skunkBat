@@ -8,6 +8,7 @@
 
 mod aggregator;
 mod caddy;
+mod cloudflare;
 mod cursor;
 mod error;
 mod rpc;
@@ -48,6 +49,18 @@ struct Cli {
     /// Dry-run mode: parse and aggregate but don't send to skunkBat.
     #[arg(long, default_value_t = false)]
     dry_run: bool,
+
+    /// Cloudflare API token for analytics polling (or set `CF_API_TOKEN`).
+    #[arg(long)]
+    cf_api_token: Option<String>,
+
+    /// Cloudflare zone ID for analytics polling (or set `CF_ZONE_ID`).
+    #[arg(long)]
+    cf_zone_id: Option<String>,
+
+    /// Cloudflare analytics poll interval in seconds.
+    #[arg(long, default_value_t = 300)]
+    cf_poll_secs: u64,
 }
 
 #[tokio::main]
@@ -114,6 +127,15 @@ async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64), IngestError> {
 }
 
 async fn run(cli: Cli) -> Result<(), IngestError> {
+    let cf_config = cloudflare::CfConfig::from_args(
+        cli.cf_api_token.clone(),
+        cli.cf_zone_id.clone(),
+        cli.cf_poll_secs,
+    );
+    if cf_config.is_some() {
+        tracing::info!("Cloudflare analytics source configured (stub — poll not yet wired)");
+    }
+
     let (mut reader, start_offset) = open_log(&cli).await?;
 
     let mut rpc = rpc::RpcClient::new(cli.skunkbat_addr.clone());
@@ -230,7 +252,7 @@ async fn process_line(
                     tracing::debug!("observation accepted");
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "observe failed, will retry next window");
+                    tracing::warn!(error = %e, "observe failed (dropped, next window is fresh)");
                 }
             }
         }
