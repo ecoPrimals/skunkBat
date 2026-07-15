@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion. 563 tests, 30 IPC methods."
-date = 2026-07-04
+description = "Defense meta-primal — metadata-only threat detection, lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, cross-architecture. 567 tests, 30 IPC methods."
+date = 2026-07-15
 
 [taxonomies]
 primals = ["skunkbat"]
@@ -13,13 +13,14 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 563 passing (4 crates)
+- **Tests**: 567 passing (4 crates)
 - **Source**: max 690 lines production code (test files exempt from 800L cap)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)
 - **riboCipher**: Tier 1 (clear signal) implemented — `0xEC` + protocol type routing
 - **ThreatThresholds**: All detection constants configurable, no magic numbers
+- **Cross-arch**: `cargo check --target x86_64-pc-windows-gnu` passes clean; musl static targets via `.cargo/config.toml`
 
 ## Capabilities
 

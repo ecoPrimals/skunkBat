@@ -11,6 +11,7 @@ observability — all metadata-only, no content inspection by architecture.
 | `skunk-bat-core` | Threat detection (6 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2/3 (BearDog-delegated handshake + `btsp.negotiate`), Wire Standard L2/L3 | binary |
+| `skunky-ingest` | Live Caddy log tailer feeding HTTP traffic observations into behavioral profiler via `baseline.observe` | binary |
 
 ## Key Concepts
 
@@ -84,7 +85,7 @@ Full spec compliance including:
 
 ## Tests
 
-563 tests passing (core + integrations + server + transport + chaos), all workspace.
+567 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
@@ -100,7 +101,7 @@ mode semantics for local, loopback, and remote callers.
 v0.2.18 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
 
-**563 tests** passing across all workspace crates (4 crates). Max production file 690 lines — no
+**567 tests** passing across all workspace crates (4 crates). Max production file 690 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
 via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
 to env vars with defaults (session TTL, sweep, forwarding, registration).
@@ -140,8 +141,20 @@ Defense attestation with `ActionType`-specific audit events at `Warn` severity.
 
 **Integration**: Capability-based runtime discovery. No primal names hardcoded in routing.
 RuntimeVerifier injected at startup — server uses SkunkBat::with_verifier(config, RuntimeVerifier::from_env()). One-shot CLI commands (health, scan, detect) use local default. Self-registration with discovery (`ipc.register`).
-BTSP WAN timeouts (10s provider call, 30s handshake). Graceful shutdown via `BackgroundTasks`.
+BTSP WAN timeouts (10s provider call, 30s handshake — both env-configurable). Graceful shutdown via `BackgroundTasks`.
 riboCipher probes respond with health JSON + close.
+
+**Cross-Architecture**: `#[cfg(unix)]` / `#[cfg(not(unix))]` guards on UDS transport
+(`provider_call`, `serve_uds`, `call_uds`), Unix signals (`SIGTERM`), and capability
+symlinks. `cargo check --target x86_64-pc-windows-gnu` passes clean. musl static build
+aliases in `.cargo/config.toml` (`build-x64`, `build-arm64`).
+
+**skunky-ingest**: Live Caddy JSON access log tailer feeding per-source-IP HTTP metrics
+into `baseline.observe` via TCP JSON-RPC. Aggregates connection rate, traffic volume,
+request rate, error rates, path/method diversity, latency per configurable time window.
+Cloudflare analytics stub prepared for outer-membrane data flow. Crash-safe cursor
+tracking. `SKUNKBAT_SKIP_SYNTHETIC_BASELINE` allows profiler to learn purely from live
+traffic.
 
 **Code Quality**: Zero TODO/FIXME/HACK in production. Zero `.unwrap()`/`.expect()` in
 production paths. Silent error drops surfaced (UDS setup, mutex poison, BTSP handshake).

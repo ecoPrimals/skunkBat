@@ -124,6 +124,13 @@ cargo clippy --workspace -- -D warnings
 cargo fmt --all -- --check
 cargo doc --no-deps
 cargo deny check
+
+# Cross-architecture (musl static binaries via .cargo/config.toml)
+cargo build-x64   # x86_64-unknown-linux-musl
+cargo build-arm64  # aarch64-unknown-linux-musl
+
+# Windows cross-check
+cargo check --target x86_64-pc-windows-gnu
 ```
 
 ---
@@ -165,6 +172,11 @@ export SKUNKBAT_LINEAGE_ID=my-family          # Genetic verification (enables Be
 export SKUNKBAT_TOPOLOGY_PATH=1,2,3           # Expected layer traversal path
 export SKUNKBAT_INTEGRATION_TIMEOUT_MS=3000   # Integration RPC timeout (ms)
 export SKUNKBAT_DATA_DIR=./data                # Quarantine persistence directory
+export SKUNKBAT_FEDERATION_POLL_SECS=10       # Federation broadcast poll interval
+export SKUNKBAT_FEDERATION_BATCH_SIZE=50      # Federation max events per poll
+export SKUNKBAT_CONTENT_TIMEOUT=5             # NestGate content RPC timeout (secs)
+export SKUNKBAT_HANDSHAKE_DEADLINE=30         # BTSP handshake deadline (secs)
+export SKUNKBAT_SKIP_SYNTHETIC_BASELINE=false # Skip synthetic baseline seeding
 ```
 
 ### Threat Thresholds
@@ -216,8 +228,10 @@ No primal names are hardcoded in production code.
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 563 tests passing (lib + integration + chaos), full workspace
+- 567 tests passing (lib + integration + chaos), full workspace
 - All 30 IPC methods stability-tiered (28 application + 2 transport; Stable; `auth.*` beta)
+- Cross-architecture: `cargo check --target x86_64-pc-windows-gnu` passes clean;
+  musl static builds via `.cargo/config.toml` aliases (`build-x64`, `build-arm64`)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)
 - `async-trait` eliminated and banned — native RPITIT throughout
 - Self-registration with discovery (`ipc.register`) + Neural API `primal.announce`

@@ -4,6 +4,31 @@ All notable changes to skunkBat are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`skunky-ingest` binary crate** (Wave 136b): Live Caddy JSON access log tailer
+  feeding per-source-IP HTTP metrics into `baseline.observe` via TCP JSON-RPC.
+  Per-window aggregation of connection rate, traffic volume, request rate, error
+  rates (4xx/5xx), path/method diversity, latency. Crash-safe cursor tracking.
+  `thiserror`-based typed errors. riboCipher NDJSON signal prefix on connect.
+- **Cloudflare analytics stub** (Wave 137b): `cloudflare.rs` module with `CfConfig`
+  and `poll_analytics` placeholder. CLI flags `--cf-api-token`, `--cf-zone-id`,
+  `--cf-poll-secs` for future outer-membrane data flow.
+- **HTTP anomaly detection** (Wave 136a): `HttpObservation` struct, HTTP-dimension
+  statistical profiling (`request_rate`, `path_diversity`, `error_rate_4xx`),
+  `advisory_check_http()` for Tower HTTP Gateway with HTTP-specific anomaly filtering.
+  `HttpMetrics` in `SecurityObserver`.
+- **Conditional synthetic baseline** (Wave 137b): `SKUNKBAT_SKIP_SYNTHETIC_BASELINE`
+  env var. When live data flows via `skunky-ingest`, start with empty profiler that
+  learns from traffic. Fixed `StatisticalProfiler::reset` port consistency.
+- **Cross-architecture adoption** (Wave 141a): `#[cfg(unix)]`/`#[cfg(not(unix))]`
+  guards on UDS transport (`provider_call`), Unix signals (`SIGTERM`), registration
+  callsites, capability symlinks. Windows cross-check passes clean.
+  musl static build aliases in `.cargo/config.toml` (`build-x64`, `build-arm64`).
+- **4 new env keys**: `SKUNKBAT_FEDERATION_POLL_SECS`, `SKUNKBAT_FEDERATION_BATCH_SIZE`,
+  `SKUNKBAT_CONTENT_TIMEOUT`, `SKUNKBAT_HANDSHAKE_DEADLINE` — hardcoded timeouts
+  evolved to env-configurable.
+
 ### Changed
 
 - **`CapabilityClient` consolidation**: Extracted shared transport logic (endpoint,
@@ -28,6 +53,21 @@ All notable changes to skunkBat are documented here.
   env var controls bearDog, songBird, and toadStool RPC timeouts (default 3–5s).
 - **Test fixture consolidation**: Extracted 4 duplicated `test_config()` functions
   into `test_support` module with `test_config()` and `test_config_with_lineage()`.
+- **Generic `SkunkBat<L: LineageVerifier>`**: Core struct generic over lineage verifier
+  trait. `RuntimeVerifier` injected at server startup via `with_verifier()`. One-shot
+  CLI commands use default local verifier.
+- **Test extraction**: ~1,500 lines of inline tests extracted to dedicated `_tests.rs`
+  files across 5 modules (defense, behavioral, types, forwarding, method_gate, btsp).
+- **`skunky-ingest` error evolution**: `Box<dyn Error>` → `thiserror` `IngestError` enum.
+  `expect()` calls in RPC client replaced with `let-else` error propagation.
+- **Session sweep metrics**: `SessionRegistry::len()` wired into production sweep logging.
+- **`BondType` annotation refinement**: `#[allow(dead_code)]` → `#[cfg_attr(not(test), allow)]`.
+- **Toadstool cross-platform**: UDS discovery loop restructured inside `#[cfg(unix)]`
+  block, eliminating cross-platform unused variable warnings.
+- **Caddy latency wiring**: `duration` field wired into aggregator `IpBucket` for
+  latency tracking via `mul_add`. False `dead_code` on `host` field removed.
+- **Platform UID**: Magic number `1000` → named `DEFAULT_USER_UID` constant.
+- **`pentest_attack_patterns()`** gated behind `#[cfg(test)]`.
 
 ## [0.2.18] — 2026-07-04 (Wave 132c: Tower HTTP Gateway advisory)
 
