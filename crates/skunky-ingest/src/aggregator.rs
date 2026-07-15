@@ -46,6 +46,7 @@ pub struct HttpPayload {
 struct IpBucket {
     request_count: u64,
     total_bytes: u64,
+    total_duration_ms: f64,
     status_4xx: u64,
     status_5xx: u64,
     paths: HashSet<String>,
@@ -58,6 +59,7 @@ impl IpBucket {
         Self {
             request_count: 0,
             total_bytes: 0,
+            total_duration_ms: 0.0,
             status_4xx: 0,
             status_5xx: 0,
             paths: HashSet::new(),
@@ -69,6 +71,7 @@ impl IpBucket {
     fn record(&mut self, entry: &LogEntry) {
         self.request_count += 1;
         self.total_bytes += entry.size;
+        self.total_duration_ms = entry.duration.mul_add(1000.0, self.total_duration_ms);
 
         if (400..500).contains(&entry.status) {
             self.status_4xx += 1;

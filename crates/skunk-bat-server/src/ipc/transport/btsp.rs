@@ -47,8 +47,10 @@ pub async fn write_frame<W: tokio::io::AsyncWriteExt + Unpin>(
 ///
 /// 10s is generous for local UDS on the same gate; accommodates slow
 /// crypto on resource-constrained hardware without hanging indefinitely.
+#[cfg(unix)]
 const PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+#[cfg(unix)]
 pub async fn provider_call(
     socket: &std::path::Path,
     method: &str,
@@ -68,6 +70,19 @@ pub async fn provider_call(
     })?
 }
 
+#[cfg(not(unix))]
+pub async fn provider_call(
+    socket: &std::path::Path,
+    _method: &str,
+    _params: Value,
+) -> Result<Value, TransportError> {
+    Err(TransportError::Provider(format!(
+        "{}: UDS provider not available on this platform",
+        socket.display(),
+    )))
+}
+
+#[cfg(unix)]
 async fn provider_call_inner(
     socket: &std::path::Path,
     method: &str,
@@ -166,9 +181,18 @@ pub struct HandshakeResult {
 
 /// Maximum time allowed for the full BTSP handshake sequence.
 ///
-/// 30s accommodates WAN latency (65ms+ RTT) plus `BearDog` provider calls
-/// while preventing indefinite connection hangs from slow/malicious peers.
-const HANDSHAKE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+/// 30s default accommodates WAN latency (65ms+ RTT) plus `BearDog`
+/// provider calls while preventing indefinite connection hangs.
+/// Overridable via `SKUNKBAT_HANDSHAKE_DEADLINE`.
+fn handshake_deadline() -> std::time::Duration {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_HANDSHAKE_DEADLINE)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs,
+        )
+}
 
 pub async fn perform_server_handshake<S>(
     stream: &mut S,
@@ -177,14 +201,12 @@ pub async fn perform_server_handshake<S>(
 where
     S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
 {
-    tokio::time::timeout(
-        HANDSHAKE_DEADLINE,
-        perform_server_handshake_inner(stream, config),
-    )
-    .await
-    .map_err(|_| {
-        TransportError::Handshake(format!("timed out after {}s", HANDSHAKE_DEADLINE.as_secs()))
-    })?
+    let deadline = handshake_deadline();
+    tokio::time::timeout(deadline, perform_server_handshake_inner(stream, config))
+        .await
+        .map_err(|_| {
+            TransportError::Handshake(format!("timed out after {}s", deadline.as_secs()))
+        })?
 }
 
 async fn perform_server_handshake_inner<S>(

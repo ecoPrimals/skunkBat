@@ -114,7 +114,11 @@ async fn spawn_background(
     let session_sweep = tokio::spawn(async move {
         loop {
             tokio::time::sleep(sweep_interval).await;
-            sweep_sessions.sweep_expired(ttl).await;
+            let evicted = sweep_sessions.sweep_expired(ttl).await;
+            if evicted > 0 {
+                let active = sweep_sessions.len().await;
+                tracing::debug!(active, "session sweep complete");
+            }
         }
     });
 
@@ -175,6 +179,36 @@ pub async fn serve(
 
     let bg = spawn_background(&state, &sessions, socket_path.as_ref(), port).await;
 
+    wait_for_shutdown(tcp_handle, uds_handle).await?;
+
+    bg.abort_all();
+
+    {
+        let mut sb = state.write().await;
+        if let Err(e) = sb.stop().await {
+            tracing::warn!("lifecycle stop error: {e}");
+        }
+    }
+
+    if let Some(ref path) = socket_path {
+        tokio::fs::remove_file(path).await.ok();
+        let symlink = std::path::Path::new(path)
+            .parent()
+            .map(|p| p.join("security.sock"));
+        if let Some(s) = symlink {
+            tokio::fs::remove_file(s).await.ok();
+        }
+        tracing::info!("cleaned up socket files");
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown(
+    tcp_handle: Option<JoinHandle<Result<(), transport::TransportError>>>,
+    uds_handle: Option<JoinHandle<Result<(), transport::TransportError>>>,
+) -> Result<(), transport::TransportError> {
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     tokio::select! {
@@ -201,26 +235,26 @@ pub async fn serve(
             tracing::info!("SIGTERM received, stopping skunkBat");
         }
     }
+    Ok(())
+}
 
-    bg.abort_all();
-
-    {
-        let mut sb = state.write().await;
-        if let Err(e) = sb.stop().await {
-            tracing::warn!("lifecycle stop error: {e}");
+#[cfg(not(unix))]
+async fn wait_for_shutdown(
+    tcp_handle: Option<JoinHandle<Result<(), transport::TransportError>>>,
+    _uds_handle: Option<JoinHandle<Result<(), transport::TransportError>>>,
+) -> Result<(), transport::TransportError> {
+    tokio::select! {
+        result = async {
+            match tcp_handle {
+                Some(h) => h.await,
+                None => std::future::pending().await,
+            }
+        } => {
+            result??;
+        }
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("Ctrl+C received, stopping skunkBat");
         }
     }
-
-    if let Some(ref path) = socket_path {
-        tokio::fs::remove_file(path).await.ok();
-        let symlink = std::path::Path::new(path)
-            .parent()
-            .map(|p| p.join("security.sock"));
-        if let Some(s) = symlink {
-            tokio::fs::remove_file(s).await.ok();
-        }
-        tracing::info!("cleaned up socket files");
-    }
-
     Ok(())
 }

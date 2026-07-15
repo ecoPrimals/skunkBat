@@ -157,6 +157,18 @@ pub const SKUNKBAT_BEHAVIORAL_MIN_OBS: &str = "SKUNKBAT_BEHAVIORAL_MIN_OBS";
 /// Audit log ring buffer capacity (default: 1024).
 pub const SKUNKBAT_AUDIT_LOG_CAPACITY: &str = "SKUNKBAT_AUDIT_LOG_CAPACITY";
 
+/// Federation broadcast poll interval in seconds (default: 10).
+pub const SKUNKBAT_FEDERATION_POLL_SECS: &str = "SKUNKBAT_FEDERATION_POLL_SECS";
+
+/// Federation broadcast batch size — max events per poll cycle (default: 50).
+pub const SKUNKBAT_FEDERATION_BATCH_SIZE: &str = "SKUNKBAT_FEDERATION_BATCH_SIZE";
+
+/// `NestGate` content integrity RPC timeout in seconds (default: 5).
+pub const SKUNKBAT_CONTENT_TIMEOUT: &str = "SKUNKBAT_CONTENT_TIMEOUT";
+
+/// BTSP handshake deadline in seconds (default: 30).
+pub const SKUNKBAT_HANDSHAKE_DEADLINE: &str = "SKUNKBAT_HANDSHAKE_DEADLINE";
+
 // ── Baseline Control ──────────────────────────────────────────
 
 /// Skip synthetic baseline seeding at startup (`1` or `true`).

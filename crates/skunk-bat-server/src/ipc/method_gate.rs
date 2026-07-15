@@ -71,7 +71,8 @@ pub(super) fn classify_method(method: &str) -> MethodAccessLevel {
 /// How the caller connected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConnectionOrigin {
-    /// Local Unix domain socket.
+    /// Local Unix domain socket — only constructed on Unix platforms.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Unix,
     /// TCP loopback (127.0.0.1 / `::1`).
     Loopback,
@@ -92,6 +93,7 @@ pub(super) struct CallerContext {
 
 impl CallerContext {
     /// Context for a Unix domain socket connection (trusted local).
+    #[cfg_attr(not(unix), allow(dead_code))]
     #[must_use]
     pub const fn unix() -> Self {
         Self {

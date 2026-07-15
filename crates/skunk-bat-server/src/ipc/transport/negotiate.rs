@@ -62,10 +62,10 @@ impl std::fmt::Display for CipherSuite {
 }
 
 /// Bond types that determine minimum cipher requirements.
-#[allow(
-    dead_code,
-    reason = "target-conditional: used in tests, enforcement planned"
-)]
+///
+/// Used in tests to validate cipher negotiation rules. Production
+/// enforcement wires after `BearDog` bond-type discovery is live.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BondType {
     /// Covalent (genetic lineage) — any cipher allowed including null.
@@ -79,10 +79,7 @@ pub enum BondType {
 impl BondType {
     /// Minimum cipher required by this bond type.
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "target-conditional: used in tests, enforcement planned"
-    )]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn minimum_cipher(self) -> CipherSuite {
         match self {
             Self::Covalent => CipherSuite::Null,
@@ -175,10 +172,6 @@ impl SessionRegistry {
     }
 
     /// Number of active sessions.
-    #[allow(
-        dead_code,
-        reason = "target-conditional: used in tests + future metrics"
-    )]
     pub async fn len(&self) -> usize {
         self.sessions.read().await.len()
     }

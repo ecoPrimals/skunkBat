@@ -295,8 +295,17 @@ pub async fn run_federation_loop(audit_log: skunk_bat_core::AuditLog, client: Fe
 
     tracing::info!(cursor, "Federation broadcast loop started");
 
+    let poll_secs = std::env::var(skunk_bat_core::env_keys::SKUNKBAT_FEDERATION_POLL_SECS)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10u64);
+    let batch_size: usize = std::env::var(skunk_bat_core::env_keys::SKUNKBAT_FEDERATION_BATCH_SIZE)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+
     loop {
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(poll_secs)).await;
 
         if !broadcaster.is_connected().await {
             if let Err(e) = broadcaster.client.connect().await {
@@ -307,7 +316,7 @@ pub async fn run_federation_loop(audit_log: skunk_bat_core::AuditLog, client: Fe
             }
         }
 
-        let events = audit_log.query(cursor, 50).await;
+        let events = audit_log.query(cursor, batch_size).await;
         if events.is_empty() {
             continue;
         }

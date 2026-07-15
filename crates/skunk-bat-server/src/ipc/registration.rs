@@ -10,6 +10,7 @@
 //! estimates, and signal tier for intelligent routing. Non-blocking: if
 //! no discovery service is available, continues in standalone mode.
 
+#[cfg(unix)]
 use std::time::Duration;
 
 /// Capabilities registered for discovery — only advertise domains with live IPC.
@@ -29,6 +30,7 @@ const CAPABILITIES: &[&str] = &[
     "btsp",
 ];
 
+#[cfg(unix)]
 fn registration_timeout() -> Duration {
     std::env::var(skunk_bat_core::env_keys::SKUNKBAT_REGISTRATION_TIMEOUT)
         .ok()
@@ -56,6 +58,7 @@ pub async fn self_register(endpoint: String) {
         "endpoint": &endpoint,
     });
 
+    #[cfg(unix)]
     match skunk_bat_integrations::rpc::call_uds(
         &discovery_socket,
         "ipc.register",
@@ -76,6 +79,12 @@ pub async fn self_register(endpoint: String) {
         Err(e) => {
             tracing::debug!("discovery registration unavailable: {e} — standalone mode");
         }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (discovery_socket, params);
+        tracing::debug!("UDS registration not available on this platform — standalone mode");
     }
 }
 
@@ -120,6 +129,7 @@ pub async fn neural_announce(socket_path: &str) {
 
     let params = announce_payload(socket_path);
 
+    #[cfg(unix)]
     match skunk_bat_integrations::rpc::call_uds(
         &neural_socket,
         "primal.announce",
@@ -137,6 +147,12 @@ pub async fn neural_announce(socket_path: &str) {
         Err(e) => {
             tracing::debug!("Neural API announce unavailable: {e} — routing passive");
         }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (neural_socket, params);
+        tracing::debug!("UDS announce not available on this platform — routing passive");
     }
 }
 

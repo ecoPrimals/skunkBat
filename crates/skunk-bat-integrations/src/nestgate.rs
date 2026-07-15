@@ -21,8 +21,13 @@ use skunk_bat_core::env_keys;
 /// Capability domain socket name for content (`NestGate` CAS).
 const CONTENT_CAPABILITY: &str = "content";
 
-/// Default IPC timeout for content operations.
-const CONTENT_TIMEOUT: Duration = Duration::from_secs(5);
+/// IPC timeout for content operations (overridable via `SKUNKBAT_CONTENT_TIMEOUT`).
+fn content_timeout() -> Duration {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_CONTENT_TIMEOUT)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(Duration::from_secs(5), Duration::from_secs)
+}
 
 /// Content integrity verification client.
 ///
@@ -50,17 +55,17 @@ impl ContentProtector {
         Self {
             uds_path,
             tcp_endpoint,
-            timeout: CONTENT_TIMEOUT,
+            timeout: content_timeout(),
         }
     }
 
-    /// Create targeting a specific TCP endpoint.
+    /// Create targeting a specific TCP endpoint (uses default 5s timeout).
     #[must_use]
     pub const fn new(endpoint: String) -> Self {
         Self {
             uds_path: None,
             tcp_endpoint: Some(endpoint),
-            timeout: CONTENT_TIMEOUT,
+            timeout: Duration::from_secs(5),
         }
     }
 

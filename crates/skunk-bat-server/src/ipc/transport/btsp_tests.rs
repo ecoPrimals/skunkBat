@@ -69,6 +69,7 @@ fn handshake_state_construction() {
     assert!(hs.client_response.is_empty());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn provider_call_success() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -109,6 +110,7 @@ async fn provider_call_success() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn provider_call_rpc_error() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -148,6 +150,7 @@ async fn provider_call_rpc_error() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn handshake_exchange_with_mock_provider() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -239,6 +242,7 @@ async fn handshake_exchange_with_mock_provider() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn handshake_verify_failure() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

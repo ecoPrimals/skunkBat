@@ -168,43 +168,52 @@ impl DiscoveryClient {
             return Ok(Vec::new());
         };
 
-        let timeout = self.transport.timeout();
-        let mut discovered = Vec::new();
+        #[cfg(unix)]
+        let discovered = {
+            let timeout = self.transport.timeout();
+            let mut found = Vec::new();
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("sock") {
-                continue;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("sock") {
+                    continue;
+                }
+                if path.symlink_metadata().ok().is_some_and(|m| m.is_symlink()) {
+                    continue;
+                }
+
+                let path_str = path.to_string_lossy().into_owned();
+
+                if let Ok(value) =
+                    crate::rpc::call_uds(&path_str, "capabilities.list", None, timeout).await
+                {
+                    let service_id = value["primal"].as_str().unwrap_or("unknown").to_owned();
+                    let version = value["version"].as_str().unwrap_or("0.0.0").to_owned();
+                    let capabilities = value["provided_capabilities"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|c| c["type"].as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    found.push(DiscoveredPrimal {
+                        service_id,
+                        capabilities,
+                        endpoint: path_str,
+                        version,
+                    });
+                }
             }
-            if path.symlink_metadata().ok().is_some_and(|m| m.is_symlink()) {
-                continue;
-            }
+            found
+        };
 
-            let path_str = path.to_string_lossy().into_owned();
-
-            #[cfg(unix)]
-            if let Ok(value) =
-                crate::rpc::call_uds(&path_str, "capabilities.list", None, timeout).await
-            {
-                let service_id = value["primal"].as_str().unwrap_or("unknown").to_owned();
-                let version = value["version"].as_str().unwrap_or("0.0.0").to_owned();
-                let capabilities = value["provided_capabilities"]
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|c| c["type"].as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                discovered.push(DiscoveredPrimal {
-                    service_id,
-                    capabilities,
-                    endpoint: path_str,
-                    version,
-                });
-            }
-        }
+        #[cfg(not(unix))]
+        let discovered = {
+            let _ = entries;
+            Vec::new()
+        };
 
         Ok(discovered)
     }

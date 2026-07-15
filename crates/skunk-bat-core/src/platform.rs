@@ -30,6 +30,9 @@ pub fn proc_uid() -> u32 {
     }
 }
 
+/// Standard first non-system UID on most Linux distributions.
+const DEFAULT_USER_UID: u32 = 1000;
+
 fn uid_fallback() -> u32 {
     std::process::Command::new("id")
         .arg("-u")
@@ -37,7 +40,7 @@ fn uid_fallback() -> u32 {
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(1000)
+        .unwrap_or(DEFAULT_USER_UID)
 }
 
 #[cfg(test)]

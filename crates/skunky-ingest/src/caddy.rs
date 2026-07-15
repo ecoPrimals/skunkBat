@@ -12,9 +12,7 @@ pub struct LogEntry {
     pub status: u16,
     #[serde(default)]
     pub size: u64,
-    /// Preserved for future latency analysis.
     #[serde(default)]
-    #[allow(dead_code)]
     pub duration: f64,
     pub ts: f64,
 }
@@ -23,9 +21,7 @@ pub struct LogEntry {
 #[derive(Debug, Deserialize)]
 pub struct RequestInfo {
     pub remote_ip: String,
-    /// Preserved for future per-host analysis.
     #[serde(default)]
-    #[allow(dead_code)]
     pub host: String,
     #[serde(default)]
     pub uri: String,

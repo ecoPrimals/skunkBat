@@ -26,6 +26,7 @@ pub struct BtspConfig {
     /// Family ID if set — triggers production socket naming.
     pub family_id: Option<String>,
     /// True when `BIOMEOS_INSECURE=1` is set (development mode).
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub insecure: bool,
 }
 
@@ -74,11 +75,13 @@ impl BtspConfig {
     /// Compute the capability-domain symlink path.
     ///
     /// `{socket_dir}/security.sock` → `skunkbat[-{fid}].sock`
+    #[cfg(unix)]
     pub fn capability_symlink_path(&self) -> String {
         format!("{}/security.sock", self.socket_dir)
     }
 
     /// Log the current BTSP mode.
+    #[cfg(unix)]
     pub fn log_mode(&self) {
         match &self.family_id {
             Some(fid) => {
