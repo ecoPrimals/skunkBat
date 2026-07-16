@@ -144,10 +144,13 @@ RuntimeVerifier injected at startup — server uses SkunkBat::with_verifier(conf
 BTSP WAN timeouts (10s provider call, 30s handshake — both env-configurable). Graceful shutdown via `BackgroundTasks`.
 riboCipher probes respond with health JSON + close.
 
-**Cross-Architecture**: `#[cfg(unix)]` / `#[cfg(not(unix))]` guards on UDS transport
-(`provider_call`, `serve_uds`, `call_uds`), Unix signals (`SIGTERM`), and capability
-symlinks. `cargo check --target x86_64-pc-windows-gnu` passes clean. musl static build
-aliases in `.cargo/config.toml` (`build-x64`, `build-arm64`).
+**Cross-Architecture (Phase 2)**: `TransportEndpoint` trait dispatch replaces raw UDS
+everywhere except low-level server accept loops. Registration, BTSP provider calls,
+`CapabilityClient`, `ContentProtector`, and forwarding all use `call_endpoint()` —
+no `#[cfg]` in high-level IPC logic. Remaining `#[cfg(unix)]` guards: `serve_uds`,
+`call_uds` (low-level primitive), `setup_uds_listener`, `create_capability_symlink`,
+`discover_local`, Unix signals (`SIGTERM`). `cargo check --target x86_64-pc-windows-gnu`
+passes clean. musl static build aliases in `.cargo/config.toml` (`build-x64`, `build-arm64`).
 
 **skunky-ingest**: Live Caddy JSON access log tailer feeding per-source-IP HTTP metrics
 into `baseline.observe` via TCP JSON-RPC. Aggregates connection rate, traffic volume,
@@ -157,9 +160,11 @@ tracking. `SKUNKBAT_SKIP_SYNTHETIC_BASELINE` allows profiler to learn purely fro
 traffic.
 
 **Code Quality**: Zero TODO/FIXME/HACK in production. Zero `.unwrap()`/`.expect()` in
-production paths. Silent error drops surfaced (UDS setup, mutex poison, BTSP handshake).
-Registration uses `env_keys` constants. `MethodGate` pre-dispatch capability gate with
-enforced/permissive modes + quarantine enforcement.
+production paths. Zero `unsafe`. Zero `#[allow]` in production — all suppressions
+use `#[expect(reason)]` with documented justification. Silent error drops surfaced
+(UDS setup, mutex poison, BTSP handshake). Registration uses `env_keys` constants.
+`MethodGate` pre-dispatch capability gate with enforced/permissive modes + quarantine
+enforcement. Announce payload cost/latency hints use named constants.
 
 ## Stadial Composition Readiness
 

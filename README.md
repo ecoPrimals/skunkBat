@@ -221,7 +221,7 @@ No primal names are hardcoded in production code.
 
 - Edition 2024, `forbid(unsafe_code)` workspace-wide
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
-- `#[expect(reason)]` lint suppression standard (target-conditional `#[allow]` only)
+- `#[expect(reason)]` lint suppression standard — zero `#[allow]` in production code
 - `cargo deny` advisory/ban/license/source checks pass; `ring` explicitly banned
 - All source files under 800 lines (production max: 690; test files exempt)
 - SPDX `AGPL-3.0-or-later` headers on all source files

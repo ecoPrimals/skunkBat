@@ -2,8 +2,8 @@
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
 **Version**: 0.2.18
-**Date**: Jul 15, 2026
-**Wave**: 141a
+**Date**: Jul 16, 2026
+**Wave**: 142b
 
 ---
 
@@ -44,8 +44,9 @@
 - **Wire Standard L2/L3**: `capabilities.list` + `identity.get`
 - **Live observation feed**: `baseline.observe` IPC + `skunky-ingest` Caddy log tailer
 - **Conditional baseline**: `SKUNKBAT_SKIP_SYNTHETIC_BASELINE` for live-traffic-only profiling
-- **Cross-architecture**: `#[cfg]` guards on UDS transport + Unix signals; Windows cross-check clean
+- **Cross-architecture (Phase 2)**: `TransportEndpoint` trait dispatch in all high-level IPC; `#[cfg]` only in low-level UDS accept/signal primitives; Windows cross-check clean
 - **All timeouts env-configurable**: provider call, handshake, federation poll/batch, content, session TTL/sweep, forwarding, registration
+- **Zero `#[allow]` in production**: all suppressions use `#[expect(reason)]` with documented justification
 - **Generic `SkunkBat<L>`**: lineage verifier trait-generic; `RuntimeVerifier` injected at server startup
 - **Capability-based discovery**: no primal names hardcoded in routing
 
@@ -101,7 +102,7 @@ See `CHANGELOG.md` for complete wave-by-wave implementation history.
 Key milestones: Wave 120 (live detection), 123 (MethodGate enforcement), 124 (method wiring),
 128 (composable primitives + registration honesty), 132c (Tower HTTP advisory), 136a (HTTP
 anomaly detection), 136b (skunky-ingest), 137b (conditional baseline + CF groundwork),
-141a (cross-architecture + deep debt).
+141a (cross-architecture Phase 1), 142b (Phase 2 TransportEndpoint abstraction + deep debt sweep).
 
 ## Cascade Status
 
