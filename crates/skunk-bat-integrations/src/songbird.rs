@@ -429,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_connected_default() {
-        let client = FederationClient::new("127.0.0.1:1".into(), "test".into());
+        let client = FederationClient::new("127.0.0.1:1", "test".to_owned());
         assert!(!client.is_connected().await);
     }
 
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_tcp_endpoint_present() {
-        let client = FederationClient::new("10.0.0.1:5000".into(), "x".into());
+        let client = FederationClient::new("10.0.0.1:5000", "x".to_owned());
         assert_eq!(client.tcp_endpoint().as_deref(), Some("10.0.0.1:5000"));
         assert_eq!(client.endpoint(), "10.0.0.1:5000");
     }

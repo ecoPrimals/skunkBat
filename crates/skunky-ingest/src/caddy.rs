@@ -29,7 +29,10 @@ pub struct RequestInfo {
     pub method: String,
     /// Deserialized for future user-agent fingerprinting (Phase 2).
     #[serde(default)]
-    #[expect(dead_code, reason = "Phase 2: scanner fingerprinting from User-Agent")]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Phase 2: scanner fingerprinting")
+    )]
     pub headers: Headers,
 }
 
@@ -38,7 +41,10 @@ pub struct RequestInfo {
 pub struct Headers {
     /// Deserialized for future scanner fingerprinting (Phase 2).
     #[serde(default, rename = "User-Agent")]
-    #[expect(dead_code, reason = "Phase 2: scanner fingerprinting from User-Agent")]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Phase 2: scanner fingerprinting")
+    )]
     pub user_agent: Vec<String>,
 }
 

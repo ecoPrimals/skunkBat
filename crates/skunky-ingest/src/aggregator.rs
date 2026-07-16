@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn window_accumulates_then_flushes() {
-        let mut agg = Aggregator::new(Duration::from_secs(60));
+        let mut agg = Aggregator::new(Duration::from_mins(1));
 
         assert!(
             agg.ingest(&make_entry("1.2.3.4", "/a", 200, 100.0))
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn flush_remaining_drains_partial_window() {
-        let mut agg = Aggregator::new(Duration::from_secs(60));
+        let mut agg = Aggregator::new(Duration::from_mins(1));
 
         agg.ingest(&make_entry("5.5.5.5", "/x", 200, 1.0));
         agg.ingest(&make_entry("5.5.5.5", "/y", 500, 2.0));
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn empty_aggregator_flush_produces_nothing() {
-        let mut agg = Aggregator::new(Duration::from_secs(60));
+        let mut agg = Aggregator::new(Duration::from_mins(1));
         assert!(agg.flush_remaining().is_empty());
     }
 }

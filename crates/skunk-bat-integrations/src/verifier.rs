@@ -89,8 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_variant_errors_when_unreachable() {
-        let verifier =
-            RuntimeVerifier::Remote(RemoteLineageVerifier::new("unreachable.invalid:1".into()));
+        let verifier = RuntimeVerifier::Remote(RemoteLineageVerifier::new("unreachable.invalid:1"));
         let result = verifier.is_family("test-peer").await;
         assert!(result.is_err(), "unreachable provider should return Err");
     }
@@ -104,8 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_variant_get_lineage_errors_when_unreachable() {
-        let verifier =
-            RuntimeVerifier::Remote(RemoteLineageVerifier::new("unreachable.invalid:1".into()));
+        let verifier = RuntimeVerifier::Remote(RemoteLineageVerifier::new("unreachable.invalid:1"));
         let result = verifier.get_lineage("test-peer").await;
         assert!(result.is_err(), "unreachable provider should return Err");
     }

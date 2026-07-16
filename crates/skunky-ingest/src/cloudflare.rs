@@ -20,11 +20,11 @@ use crate::aggregator::ObservationPayload;
 /// on deployment team providing `CF_API_TOKEN` + `CF_ZONE_ID` on golgi).
 #[derive(Debug, Clone)]
 pub struct CfConfig {
-    #[expect(dead_code, reason = "blocked on deployment team wiring CF credentials")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "awaiting CF credential wiring"))]
     pub api_token: String,
-    #[expect(dead_code, reason = "blocked on deployment team wiring CF credentials")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "awaiting CF credential wiring"))]
     pub zone_id: String,
-    #[expect(dead_code, reason = "blocked on deployment team wiring CF credentials")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "awaiting CF credential wiring"))]
     pub poll_interval_secs: u64,
 }
 
@@ -56,6 +56,10 @@ impl CfConfig {
 /// Returns empty until the HTTP/GraphQL client is wired. The query
 /// will target `httpRequestsAdaptiveGroups` with `clientIP` dimension
 /// to produce per-source metrics matching `ObservationPayload`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "awaiting CF credential wiring into main loop")
+)]
 pub fn poll_analytics(_config: &CfConfig) -> Vec<ObservationPayload> {
     tracing::debug!("CF analytics poll — awaiting HTTP client implementation");
     Vec::new()
