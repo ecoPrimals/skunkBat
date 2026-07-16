@@ -27,12 +27,8 @@ struct RpcRequest<'a> {
 
 #[derive(Debug, Deserialize)]
 struct RpcResponse {
-    #[allow(dead_code)]
-    jsonrpc: String,
     result: Option<serde_json::Value>,
     error: Option<RpcError>,
-    #[allow(dead_code)]
-    id: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

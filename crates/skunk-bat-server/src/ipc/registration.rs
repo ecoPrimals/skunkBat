@@ -159,6 +159,26 @@ pub async fn neural_announce(socket_path: &str) {
     }
 }
 
+/// Neural API cost hints — relative compute weight per capability domain.
+///
+/// biomeOS uses these for weighted capability routing. Higher values
+/// indicate heavier operations; the scheduler prefers lower-cost providers.
+mod cost {
+    pub const DEFENSE: f64 = 15.0;
+    pub const THREAT_DETECTION: f64 = 20.0;
+    pub const BASELINE: f64 = 10.0;
+}
+
+/// Neural API latency estimates (milliseconds) per capability domain.
+///
+/// Best-case local-gate latency for synchronous calls. biomeOS uses
+/// these to set routing timeouts and SLA expectations.
+mod latency {
+    pub const DEFENSE_MS: u32 = 5;
+    pub const THREAT_DETECTION_MS: u32 = 10;
+    pub const BASELINE_MS: u32 = 2;
+}
+
 /// Build the `primal.announce` payload (v3.68 wire schema).
 ///
 /// Visible for testing — validates payload structure.
@@ -172,14 +192,14 @@ pub(super) fn announce_payload(socket_path: &str) -> serde_json::Value {
         "socket": socket_path,
         "signal_tiers": ["tower"],
         "cost_hints": {
-            "defense": 15.0,
-            "threat_detection": 20.0,
-            "baseline": 10.0
+            "defense": cost::DEFENSE,
+            "threat_detection": cost::THREAT_DETECTION,
+            "baseline": cost::BASELINE
         },
         "latency_estimates": {
-            "defense": 5,
-            "threat_detection": 10,
-            "baseline": 2
+            "defense": latency::DEFENSE_MS,
+            "threat_detection": latency::THREAT_DETECTION_MS,
+            "baseline": latency::BASELINE_MS
         },
         "attestation": null
     })

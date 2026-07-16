@@ -437,11 +437,14 @@ mod tests {
     #[tokio::test]
     async fn test_call_no_endpoint() {
         let client = CapabilityClient::new("", 100);
-        let result = client
-            .call("health.liveness", None)
-            .await;
+        let result = client.call("health.liveness", None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no transport endpoint resolved"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no transport endpoint resolved")
+        );
     }
 
     #[tokio::test]

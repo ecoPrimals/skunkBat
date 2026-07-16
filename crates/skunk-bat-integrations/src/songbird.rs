@@ -370,8 +370,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_error_propagation() {
-        let client =
-            FederationClient::new("unreachable.invalid:9999", "skunkbat".into());
+        let client = FederationClient::new("unreachable.invalid:9999", "skunkbat".into());
 
         let broadcaster = FederationThreatBroadcaster::new(client);
 

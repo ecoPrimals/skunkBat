@@ -152,7 +152,10 @@ impl Aggregator {
             .record(entry);
     }
 
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "u64→f64 acceptable for rate stats"
+    )]
     fn flush(&self, window_secs: f64) -> Vec<ObservationPayload> {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -166,7 +169,11 @@ impl Aggregator {
 
                 ObservationPayload {
                     connection_rate: request_rate,
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "bytes/sec → u64 for wire schema"
+                    )]
                     traffic_volume: (bucket.total_bytes as f64 / window_secs) as u64,
                     ports_accessed: bucket.ports.iter().copied().collect(),
                     timestamp: TimestampPayload {
@@ -177,10 +184,10 @@ impl Aggregator {
                         request_rate,
                         error_rate_4xx: bucket.status_4xx as f64 / total,
                         error_rate_5xx: bucket.status_5xx as f64 / total,
-                        #[allow(clippy::cast_possible_truncation)]
+                        #[expect(clippy::cast_possible_truncation, reason = "HashSet len → u32")]
                         path_diversity: bucket.paths.len() as u32,
                         avg_payload_bytes: bucket.total_bytes / bucket.request_count.max(1),
-                        #[allow(clippy::cast_possible_truncation)]
+                        #[expect(clippy::cast_possible_truncation, reason = "clamped to 255")]
                         method_diversity: bucket.methods.len().min(255) as u8,
                     },
                 }

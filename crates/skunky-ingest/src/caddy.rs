@@ -27,18 +27,18 @@ pub struct RequestInfo {
     pub uri: String,
     #[serde(default)]
     pub method: String,
-    /// Preserved for future user-agent fingerprinting.
+    /// Deserialized for future user-agent fingerprinting (Phase 2).
     #[serde(default)]
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "Phase 2: scanner fingerprinting from User-Agent")]
     pub headers: Headers,
 }
 
 /// HTTP headers — only fields we care about.
 #[derive(Debug, Default, Deserialize)]
 pub struct Headers {
-    /// Preserved for future scanner fingerprinting.
+    /// Deserialized for future scanner fingerprinting (Phase 2).
     #[serde(default, rename = "User-Agent")]
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "Phase 2: scanner fingerprinting from User-Agent")]
     pub user_agent: Vec<String>,
 }
 

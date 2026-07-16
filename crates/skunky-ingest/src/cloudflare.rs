@@ -12,19 +12,19 @@
 //! perspective: traffic that Cloudflare sees but Caddy may not (blocked
 //! at CDN, cached, DDoS-filtered).
 
-// Phase 1: stub — actual HTTP client and GraphQL query to be wired
-// when CF credentials are available on golgi.
-
 use crate::aggregator::ObservationPayload;
 
 /// Cloudflare Analytics API configuration.
+///
+/// Fields stored for when the HTTP/GraphQL client is wired (blocked
+/// on deployment team providing `CF_API_TOKEN` + `CF_ZONE_ID` on golgi).
 #[derive(Debug, Clone)]
 pub struct CfConfig {
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "blocked on deployment team wiring CF credentials")]
     pub api_token: String,
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "blocked on deployment team wiring CF credentials")]
     pub zone_id: String,
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "blocked on deployment team wiring CF credentials")]
     pub poll_interval_secs: u64,
 }
 
@@ -53,13 +53,11 @@ impl CfConfig {
 
 /// Poll Cloudflare analytics and return observations.
 ///
-/// Stub: returns empty vec until the HTTP client is wired.
-/// The GraphQL query will target `httpRequestsAdaptiveGroups` with
-/// `clientIP` dimension to produce per-source metrics matching
-/// the `ObservationPayload` schema.
-#[allow(dead_code)]
+/// Returns empty until the HTTP/GraphQL client is wired. The query
+/// will target `httpRequestsAdaptiveGroups` with `clientIP` dimension
+/// to produce per-source metrics matching `ObservationPayload`.
 pub fn poll_analytics(_config: &CfConfig) -> Vec<ObservationPayload> {
-    tracing::debug!("CF analytics poll — stub (not yet implemented)");
+    tracing::debug!("CF analytics poll — awaiting HTTP client implementation");
     Vec::new()
 }
 
