@@ -60,7 +60,7 @@ impl FederationClient {
     /// UDS is not discovered — use [`FederationClient::from_env`] for full transport
     /// resolution.
     #[must_use]
-    pub fn new(endpoint: String, node_id: String) -> Self {
+    pub fn new(endpoint: &str, node_id: String) -> Self {
         tracing::info!("Initializing federation client for node {node_id}");
         Self {
             transport: crate::rpc::CapabilityClient::new(endpoint, default_timeout_ms()),
@@ -89,15 +89,15 @@ impl FederationClient {
         }
     }
 
-    /// The TCP endpoint this client targets (if any).
+    /// A string summary of the endpoint for logging (empty if unresolved).
     #[must_use]
-    pub fn endpoint(&self) -> &str {
+    pub fn endpoint(&self) -> String {
         self.transport.endpoint()
     }
 
-    /// Returns `Some` only if a non-empty TCP endpoint is configured.
+    /// The TCP endpoint as `host:port` (if resolved to TCP).
     #[must_use]
-    pub fn tcp_endpoint(&self) -> Option<&str> {
+    pub fn tcp_endpoint(&self) -> Option<String> {
         self.transport.tcp_endpoint()
     }
 
@@ -371,7 +371,7 @@ mod tests {
     #[tokio::test]
     async fn test_broadcast_error_propagation() {
         let client =
-            FederationClient::new("unreachable.invalid:9999".to_string(), "skunkbat".into());
+            FederationClient::new("unreachable.invalid:9999", "skunkbat".into());
 
         let broadcaster = FederationThreatBroadcaster::new(client);
 
@@ -383,7 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_threat_conversion() {
-        let client = FederationClient::new(String::new(), "my-skunkbat".into());
+        let client = FederationClient::new("", "my-skunkbat".into());
         let broadcaster = FederationThreatBroadcaster::new(client);
 
         let intel = broadcaster.create_intel(
@@ -406,7 +406,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_without_connect() {
-        let client = FederationClient::new(String::new(), "skunkbat".into());
+        let client = FederationClient::new("", "skunkbat".into());
         let result = client
             .broadcast_threat(&ThreatIntelligence {
                 source_node: "test".into(),
@@ -423,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscribe_without_connect() {
-        let client = FederationClient::new(String::new(), "skunkbat".into());
+        let client = FederationClient::new("", "skunkbat".into());
         let result = client.subscribe_threats().await;
         assert!(result.is_err(), "Should error when not connected");
     }
@@ -446,7 +446,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcaster_is_connected() {
-        let client = FederationClient::new(String::new(), "test".into());
+        let client = FederationClient::new("", "test".into());
         let broadcaster = FederationThreatBroadcaster::new(client);
         assert!(!broadcaster.is_connected().await);
     }
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_tcp_endpoint_empty() {
-        let client = FederationClient::new(String::new(), "x".into());
+        let client = FederationClient::new("", "x".into());
         assert!(client.tcp_endpoint().is_none());
         assert!(client.endpoint().is_empty());
     }
@@ -478,13 +478,13 @@ mod tests {
     #[test]
     fn test_tcp_endpoint_present() {
         let client = FederationClient::new("10.0.0.1:5000".into(), "x".into());
-        assert_eq!(client.tcp_endpoint(), Some("10.0.0.1:5000"));
+        assert_eq!(client.tcp_endpoint().as_deref(), Some("10.0.0.1:5000"));
         assert_eq!(client.endpoint(), "10.0.0.1:5000");
     }
 
     #[test]
     fn test_create_intel_all_fields() {
-        let client = FederationClient::new(String::new(), "node-abc".into());
+        let client = FederationClient::new("", "node-abc".into());
         let broadcaster = FederationThreatBroadcaster::new(client);
         let intel = broadcaster.create_intel(
             "GeneticViolation",
@@ -517,7 +517,7 @@ mod tests {
         )
         .await;
 
-        let client = FederationClient::new(String::new(), "test-node".into());
+        let client = FederationClient::new("", "test-node".into());
         let log_clone = log.clone();
 
         let handle = tokio::spawn(async move {

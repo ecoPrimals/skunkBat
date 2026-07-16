@@ -43,90 +43,24 @@ pub async fn write_frame<W: tokio::io::AsyncWriteExt + Unpin>(
 
 // ── Provider Client ────────────────────────────────────────────────────
 
-/// Timeout for provider (`BearDog`) UDS calls.
+/// Timeout for provider (`BearDog`) RPC calls.
 ///
-/// 10s is generous for local UDS on the same gate; accommodates slow
+/// 10s is generous for local calls on the same gate; accommodates slow
 /// crypto on resource-constrained hardware without hanging indefinitely.
-#[cfg(unix)]
 const PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-#[cfg(unix)]
+/// Call the BTSP security provider via its resolved `TransportEndpoint`.
+///
+/// Dispatches through `rpc::call_endpoint` — works on any platform where
+/// the provider is reachable (UDS on Unix, TCP everywhere).
 pub async fn provider_call(
-    socket: &std::path::Path,
+    endpoint: &skunk_bat_integrations::rpc::TransportEndpoint,
     method: &str,
     params: Value,
 ) -> Result<Value, TransportError> {
-    tokio::time::timeout(
-        PROVIDER_TIMEOUT,
-        provider_call_inner(socket, method, params),
-    )
-    .await
-    .map_err(|_| {
-        TransportError::Provider(format!(
-            "{}: timed out after {}s",
-            socket.display(),
-            PROVIDER_TIMEOUT.as_secs()
-        ))
-    })?
-}
-
-#[cfg(not(unix))]
-pub async fn provider_call(
-    socket: &std::path::Path,
-    _method: &str,
-    _params: Value,
-) -> Result<Value, TransportError> {
-    Err(TransportError::Provider(format!(
-        "{}: UDS provider not available on this platform",
-        socket.display(),
-    )))
-}
-
-#[cfg(unix)]
-async fn provider_call_inner(
-    socket: &std::path::Path,
-    method: &str,
-    params: Value,
-) -> Result<Value, TransportError> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-    let mut stream = tokio::net::UnixStream::connect(socket)
+    skunk_bat_integrations::rpc::call_endpoint(endpoint, method, Some(params), PROVIDER_TIMEOUT)
         .await
-        .map_err(|e| TransportError::Provider(format!("{}: {e}", socket.display())))?;
-
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    });
-    let mut line = serde_json::to_string(&request)
-        .map_err(|e| TransportError::Provider(format!("serialize: {e}")))?;
-    line.push('\n');
-    stream
-        .write_all(line.as_bytes())
-        .await
-        .map_err(|e| TransportError::Provider(format!("write: {e}")))?;
-    stream
-        .flush()
-        .await
-        .map_err(|e| TransportError::Provider(format!("flush: {e}")))?;
-
-    let mut reader = BufReader::new(stream);
-    let mut response_line = String::new();
-    reader
-        .read_line(&mut response_line)
-        .await
-        .map_err(|e| TransportError::Provider(format!("read: {e}")))?;
-
-    let resp: Value = serde_json::from_str(&response_line)
-        .map_err(|e| TransportError::Provider(format!("parse: {e}")))?;
-    if let Some(err) = resp.get("error") {
-        return Err(TransportError::Provider(format!("rpc error: {err}")));
-    }
-    resp.get("result")
-        .cloned()
-        .ok_or_else(|| TransportError::Provider("no result in response".to_owned()))
+        .map_err(|e| TransportError::Provider(format!("{endpoint:?}: {e}")))
 }
 
 // ── Handshake Key Derivation ──────────────────────────────────────────
@@ -255,7 +189,7 @@ where
     let family_seed = std::env::var(skunk_bat_core::env_keys::FAMILY_SEED).unwrap_or_default();
 
     let create_result = provider_call(
-        &config.provider_socket,
+        &config.provider_endpoint,
         "btsp.server.create_session",
         serde_json::json!({
             "family_seed": family_seed,
@@ -312,7 +246,7 @@ where
     S: tokio::io::AsyncWriteExt + Unpin,
 {
     let verify_result = provider_call(
-        &config.provider_socket,
+        &config.provider_endpoint,
         "btsp.server.verify",
         serde_json::json!({
             "session_token": hs.session_token,
@@ -350,7 +284,7 @@ where
     let cipher = json_str_or(&verify_result, "cipher", "null");
 
     if let Err(e) = provider_call(
-        &config.provider_socket,
+        &config.provider_endpoint,
         "btsp.server.negotiate",
         serde_json::json!({
             "session_token": hs.session_token,

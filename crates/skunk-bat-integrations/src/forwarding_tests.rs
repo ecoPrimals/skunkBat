@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
 use super::*;
+use crate::rpc::TransportEndpoint;
 use skunk_bat_core::observability::audit_log::{EventKind, EventSource};
 use std::time::Duration;
 
@@ -45,19 +46,13 @@ fn default_config() {
 #[test]
 fn resolve_endpoints_have_capability_sockets() {
     let target = resolve_rhizocrypt();
-    match &target {
-        ResolvedTarget::Legacy { uds, .. } => {
-            assert!(uds.as_ref().unwrap().contains("provenance.sock"));
-        }
-        ResolvedTarget::Endpoint(_) => {}
+    if let Some(TransportEndpoint::Uds { path }) = &target {
+        assert!(path.contains("provenance.sock"));
     }
 
     let target = resolve_sweetgrass();
-    match &target {
-        ResolvedTarget::Legacy { uds, .. } => {
-            assert!(uds.as_ref().unwrap().contains("attribution.sock"));
-        }
-        ResolvedTarget::Endpoint(_) => {}
+    if let Some(TransportEndpoint::Uds { path }) = &target {
+        assert!(path.contains("attribution.sock"));
     }
 }
 

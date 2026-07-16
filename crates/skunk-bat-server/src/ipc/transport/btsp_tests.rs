@@ -32,12 +32,10 @@ async fn frame_empty() {
 
 #[tokio::test]
 async fn provider_call_unreachable() {
-    let result = provider_call(
-        std::path::Path::new("/nonexistent/socket.sock"),
-        "test.method",
-        serde_json::json!({}),
-    )
-    .await;
+    let ep = skunk_bat_integrations::rpc::TransportEndpoint::Uds {
+        path: "/nonexistent/socket.sock".into(),
+    };
+    let result = provider_call(&ep, "test.method", serde_json::json!({})).await;
     assert!(result.is_err());
 }
 
@@ -101,7 +99,10 @@ async fn provider_call_success() {
         }
     });
 
-    let result = provider_call(&sock, "test.hello", serde_json::json!({"name": "skunkbat"}))
+    let ep = skunk_bat_integrations::rpc::TransportEndpoint::Uds {
+        path: sock.to_string_lossy().into_owned(),
+    };
+    let result = provider_call(&ep, "test.hello", serde_json::json!({"name": "skunkbat"}))
         .await
         .unwrap();
     assert_eq!(result["greeting"], "hello");
@@ -142,7 +143,10 @@ async fn provider_call_rpc_error() {
         }
     });
 
-    let result = provider_call(&sock, "test.bad", serde_json::json!({})).await;
+    let ep = skunk_bat_integrations::rpc::TransportEndpoint::Uds {
+        path: sock.to_string_lossy().into_owned(),
+    };
+    let result = provider_call(&ep, "test.bad", serde_json::json!({})).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("invalid request"));
 
@@ -205,7 +209,9 @@ async fn handshake_exchange_with_mock_provider() {
     });
 
     let config = crate::ipc::transport::config::BtspHandshakeConfig {
-        provider_socket: sock.clone(),
+        provider_endpoint: skunk_bat_integrations::rpc::TransportEndpoint::Uds {
+            path: sock.to_string_lossy().into_owned(),
+        },
         family_id: "test-fam".into(),
     };
 
@@ -292,7 +298,9 @@ async fn handshake_verify_failure() {
     });
 
     let config = crate::ipc::transport::config::BtspHandshakeConfig {
-        provider_socket: sock.clone(),
+        provider_endpoint: skunk_bat_integrations::rpc::TransportEndpoint::Uds {
+            path: sock.to_string_lossy().into_owned(),
+        },
         family_id: "test-fam".into(),
     };
 

@@ -51,7 +51,7 @@ impl DiscoveryClient {
     /// UDS is not discovered — use [`DiscoveryClient::from_env`] for full transport
     /// resolution.
     #[must_use]
-    pub fn new(endpoint: String) -> Self {
+    pub fn new(endpoint: &str) -> Self {
         tracing::info!("Initializing discovery client");
         Self {
             transport: crate::rpc::CapabilityClient::new(endpoint, default_timeout_ms()),
@@ -82,14 +82,15 @@ impl DiscoveryClient {
     }
 
     /// The TCP endpoint this client targets (if any).
+    /// A string summary of the endpoint for logging (empty if unresolved).
     #[must_use]
-    pub fn endpoint(&self) -> &str {
+    pub fn endpoint(&self) -> String {
         self.transport.endpoint()
     }
 
-    /// Returns `Some` only if a non-empty TCP endpoint is configured.
+    /// The TCP endpoint as `host:port` (if resolved to TCP).
     #[must_use]
-    pub fn tcp_endpoint(&self) -> Option<&str> {
+    pub fn tcp_endpoint(&self) -> Option<String> {
         self.transport.tcp_endpoint()
     }
 
@@ -329,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_graceful_degradation() {
-        let client = DiscoveryClient::new("unreachable.invalid:9999".to_string());
+        let client = DiscoveryClient::new("unreachable.invalid:9999");
         let discovery = CapabilityPrimalDiscovery::new(client, "skunkbat".into());
 
         let result = discovery.discover_all().await;
@@ -341,7 +342,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_by_capability_degradation() {
-        let client = DiscoveryClient::new("unreachable.invalid:9999".to_string());
+        let client = DiscoveryClient::new("unreachable.invalid:9999");
         let result = client.discover_by_capability("lineage-verification").await;
         assert!(result.is_ok());
         assert!(result.expect("ok").is_empty());
@@ -356,20 +357,20 @@ mod tests {
 
     #[test]
     fn test_client_builder() {
-        let client = DiscoveryClient::new("host:1234".into()).with_timeout(5000);
+        let client = DiscoveryClient::new("host:1234").with_timeout(5000);
         assert_eq!(client.endpoint(), "host:1234");
     }
 
     #[test]
     fn test_client_tcp_endpoint_empty() {
-        let client = DiscoveryClient::new(String::new());
+        let client = DiscoveryClient::new("");
         assert!(client.tcp_endpoint().is_none());
     }
 
     #[test]
     fn test_client_tcp_endpoint_present() {
-        let client = DiscoveryClient::new("10.0.0.1:3000".into());
-        assert_eq!(client.tcp_endpoint(), Some("10.0.0.1:3000"));
+        let client = DiscoveryClient::new("10.0.0.1:3000");
+        assert_eq!(client.tcp_endpoint().as_deref(), Some("10.0.0.1:3000"));
     }
 
     #[test]
@@ -380,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_all_unreachable() {
-        let client = DiscoveryClient::new("unreachable.invalid:9999".into());
+        let client = DiscoveryClient::new("unreachable.invalid:9999");
         let result = client.discover_all().await;
         assert!(result.is_ok());
         assert!(result.expect("ok").is_empty());
@@ -422,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_capability_discovery_by_cap_graceful() {
-        let client = DiscoveryClient::new("unreachable.invalid:9999".into());
+        let client = DiscoveryClient::new("unreachable.invalid:9999");
         let discovery = CapabilityPrimalDiscovery::new(client, "sb".into());
         let nodes = discovery
             .discover_by_capability("defense")

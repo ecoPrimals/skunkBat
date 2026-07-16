@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 
-use crate::rpc::{self, RpcError};
+use crate::rpc::{self, RpcError, TransportEndpoint};
 
 use skunk_bat_core::env_keys;
 
@@ -35,36 +35,36 @@ fn content_timeout() -> Duration {
 /// and verifies data integrity for security auditing.
 #[derive(Debug, Clone)]
 pub struct ContentProtector {
-    uds_path: Option<String>,
-    tcp_endpoint: Option<String>,
+    resolved: Option<TransportEndpoint>,
     timeout: Duration,
 }
 
 impl ContentProtector {
     /// Create from environment with capability-socket discovery.
     ///
-    /// Probes `$BIOMEOS_SOCKET_DIR/content.sock`; uses it only if present.
-    /// Falls back to TCP via `NESTGATE_ENDPOINT` env var.
+    /// Resolution: `NESTGATE_ENDPOINT` env → TCP, then `content.sock` → UDS.
     #[must_use]
     pub fn from_env() -> Self {
-        let tcp_endpoint = std::env::var(env_keys::NESTGATE_ENDPOINT).ok();
-        let uds_path = {
-            let path = rpc::capability_socket(CONTENT_CAPABILITY);
-            std::path::Path::new(&path).exists().then_some(path)
-        };
+        let resolved = std::env::var(env_keys::NESTGATE_ENDPOINT)
+            .ok()
+            .and_then(|v| rpc::parse_tcp_host_port(&v))
+            .or_else(|| {
+                let path = rpc::capability_socket(CONTENT_CAPABILITY);
+                std::path::Path::new(&path)
+                    .exists()
+                    .then_some(TransportEndpoint::Uds { path })
+            });
         Self {
-            uds_path,
-            tcp_endpoint,
+            resolved,
             timeout: content_timeout(),
         }
     }
 
     /// Create targeting a specific TCP endpoint (uses default 5s timeout).
     #[must_use]
-    pub const fn new(endpoint: String) -> Self {
+    pub fn new(endpoint: &str) -> Self {
         Self {
-            uds_path: None,
-            tcp_endpoint: Some(endpoint),
+            resolved: rpc::parse_tcp_host_port(endpoint),
             timeout: Duration::from_secs(5),
         }
     }
@@ -172,14 +172,11 @@ impl ContentProtector {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, RpcError> {
-        rpc::call(
-            self.uds_path.as_deref(),
-            self.tcp_endpoint.as_deref(),
-            method,
-            params,
-            self.timeout,
-        )
-        .await
+        let ep = self
+            .resolved
+            .as_ref()
+            .ok_or_else(|| RpcError::Io("no NestGate endpoint resolved".to_owned()))?;
+        rpc::call_endpoint(ep, method, params, self.timeout).await
     }
 }
 
@@ -202,40 +199,47 @@ mod tests {
     fn from_env_construction() {
         let protector = ContentProtector::from_env();
         // UDS is only Some if the socket file exists on this host
-        let _ = protector.uds_path;
+        if let Some(TransportEndpoint::Uds { path }) = &protector.resolved {
+            assert!(path.ends_with("content.sock"));
+        }
     }
 
     #[test]
     fn new_with_endpoint() {
-        let protector = ContentProtector::new("127.0.0.1:9500".to_owned());
-        assert_eq!(protector.tcp_endpoint.as_deref(), Some("127.0.0.1:9500"));
-        assert!(protector.uds_path.is_none());
+        let protector = ContentProtector::new("127.0.0.1:9500");
+        assert_eq!(
+            protector.resolved,
+            Some(TransportEndpoint::Tcp {
+                host: "127.0.0.1".into(),
+                port: 9500
+            })
+        );
     }
 
     #[tokio::test]
     async fn content_exists_unreachable() {
-        let protector = ContentProtector::new("unreachable.invalid:1".to_owned());
+        let protector = ContentProtector::new("unreachable.invalid:1");
         let result = protector.content_exists("sha256:abc123").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn verify_integrity_unreachable() {
-        let protector = ContentProtector::new("unreachable.invalid:1".to_owned());
+        let protector = ContentProtector::new("unreachable.invalid:1");
         let result = protector.verify_integrity("sha256:abc123", "abc123").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn list_content_unreachable() {
-        let protector = ContentProtector::new("unreachable.invalid:1".to_owned());
+        let protector = ContentProtector::new("unreachable.invalid:1");
         let result = protector.list_content().await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn integrity_sweep_unreachable() {
-        let protector = ContentProtector::new("unreachable.invalid:1".to_owned());
+        let protector = ContentProtector::new("unreachable.invalid:1");
         let result = protector.integrity_sweep().await;
         assert!(result.is_err());
     }

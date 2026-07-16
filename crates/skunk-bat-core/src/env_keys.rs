@@ -24,6 +24,9 @@ pub const FAMILY_SEED: &str = "FAMILY_SEED";
 /// Explicit path to the BTSP security provider UDS socket.
 pub const BTSP_PROVIDER_SOCKET: &str = "BTSP_PROVIDER_SOCKET";
 
+/// `TransportEndpoint` JSON for BTSP security provider.
+pub const BTSP_PROVIDER_TRANSPORT: &str = "BTSP_PROVIDER_TRANSPORT";
+
 /// BTSP capability name for provider socket resolution.
 pub const BTSP_PROVIDER: &str = "BTSP_PROVIDER";
 

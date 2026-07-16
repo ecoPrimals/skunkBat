@@ -37,7 +37,7 @@ pub struct RemoteLineageVerifier {
 impl RemoteLineageVerifier {
     /// Create targeting a specific TCP endpoint.
     #[must_use]
-    pub fn new(endpoint: String) -> Self {
+    pub fn new(endpoint: &str) -> Self {
         tracing::info!("Initializing remote lineage verifier");
         Self {
             transport: crate::rpc::CapabilityClient::new(endpoint, default_timeout_ms()),
@@ -67,9 +67,9 @@ impl RemoteLineageVerifier {
         self
     }
 
-    /// Returns `Some` only if a non-empty TCP endpoint is configured.
+    /// The TCP endpoint as `host:port` (if resolved to TCP).
     #[must_use]
-    pub fn tcp_endpoint(&self) -> Option<&str> {
+    pub fn tcp_endpoint(&self) -> Option<String> {
         self.transport.tcp_endpoint()
     }
 
@@ -118,8 +118,8 @@ mod tests {
 
     #[test]
     fn test_construction() {
-        let verifier = RemoteLineageVerifier::new("10.0.0.1:9300".into());
-        assert_eq!(verifier.tcp_endpoint(), Some("10.0.0.1:9300"));
+        let verifier = RemoteLineageVerifier::new("10.0.0.1:9300");
+        assert_eq!(verifier.tcp_endpoint().as_deref(), Some("10.0.0.1:9300"));
     }
 
     #[test]
@@ -130,20 +130,20 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let verifier = RemoteLineageVerifier::new(String::new()).with_timeout(1000);
+        let verifier = RemoteLineageVerifier::new("").with_timeout(1000);
         assert!(verifier.tcp_endpoint().is_none());
     }
 
     #[tokio::test]
     async fn test_is_family_graceful_degradation() {
-        let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999".into());
+        let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999");
         let result = verifier.is_family("unknown-peer").await;
         assert!(result.is_err(), "unreachable provider should return Err");
     }
 
     #[tokio::test]
     async fn test_get_lineage_graceful_degradation() {
-        let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999".into());
+        let verifier = RemoteLineageVerifier::new("unreachable.invalid:9999");
         let result = verifier.get_lineage("unknown-peer").await;
         assert!(result.is_err(), "unreachable provider should return Err");
     }
@@ -183,8 +183,8 @@ mod tests {
             stream.flush().await.unwrap();
         });
 
-        let verifier =
-            RemoteLineageVerifier::new(format!("127.0.0.1:{}", addr.port())).with_timeout(2000);
+        let endpoint = format!("127.0.0.1:{}", addr.port());
+        let verifier = RemoteLineageVerifier::new(&endpoint).with_timeout(2000);
         let result = verifier.is_family("trusted-peer-01").await.unwrap();
         assert!(result, "mock bearDog should confirm family membership");
 
@@ -218,8 +218,8 @@ mod tests {
             stream.flush().await.unwrap();
         });
 
-        let verifier =
-            RemoteLineageVerifier::new(format!("127.0.0.1:{}", addr.port())).with_timeout(2000);
+        let endpoint = format!("127.0.0.1:{}", addr.port());
+        let verifier = RemoteLineageVerifier::new(&endpoint).with_timeout(2000);
         let lineage = verifier.get_lineage("trusted-peer-01").await.unwrap();
         assert_eq!(
             lineage.as_deref(),

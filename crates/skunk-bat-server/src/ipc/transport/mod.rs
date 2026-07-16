@@ -142,8 +142,8 @@ pub async fn serve_tcp(
     let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
     if let Some(ref cfg) = btsp_config {
         tracing::info!(
-            "BTSP Phase 2 active on TCP: provider={}",
-            cfg.provider_socket.display()
+            "BTSP Phase 2 active on TCP: provider={:?}",
+            cfg.provider_endpoint
         );
     }
 
@@ -275,8 +275,8 @@ async fn setup_uds_listener()
     let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
     if let Some(ref cfg) = btsp_config {
         tracing::info!(
-            "BTSP Phase 2 active on UDS (riboCipher signal): provider={}",
-            cfg.provider_socket.display()
+            "BTSP Phase 2 active on UDS (riboCipher signal): provider={:?}",
+            cfg.provider_endpoint
         );
     }
 

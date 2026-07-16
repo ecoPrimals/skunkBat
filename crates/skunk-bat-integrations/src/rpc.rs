@@ -126,45 +126,83 @@ pub fn capability_socket(capability: &str) -> String {
     format!("{dir}/{capability}.sock")
 }
 
+/// Parse a [`TransportEndpoint`] from an environment variable's JSON value.
+///
+/// Returns `None` if the variable is unset or its value is not valid
+/// `TransportEndpoint` JSON.
+#[must_use]
+pub fn parse_transport_env(var: &str) -> Option<TransportEndpoint> {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| serde_json::from_str(&v).ok())
+}
+
+/// Parse a `host:port` string into a TCP [`TransportEndpoint`].
+///
+/// Accepts `host:port`, `http://host:port`, `https://host:port`.
+/// Returns `None` if the string is empty or doesn't contain a valid port.
+#[must_use]
+pub fn parse_tcp_host_port(addr: &str) -> Option<TransportEndpoint> {
+    let stripped = addr
+        .strip_prefix("http://")
+        .or_else(|| addr.strip_prefix("https://"))
+        .unwrap_or(addr);
+    if stripped.is_empty() {
+        return None;
+    }
+    let (host, port_str) = stripped.rsplit_once(':')?;
+    let port = port_str.parse::<u16>().ok()?;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    Some(TransportEndpoint::Tcp {
+        host: host.to_owned(),
+        port,
+    })
+}
+
 /// Shared transport configuration for capability-based integration clients.
 ///
-/// Encapsulates the common pattern of UDS-first, TCP-fallback transport
-/// resolution that all integration clients share.
+/// Encapsulates transport resolution: resolves a [`TransportEndpoint`] from
+/// environment (TCP, UDS) and dispatches calls through `call_endpoint`.
 #[derive(Clone, Debug)]
 pub struct CapabilityClient {
-    endpoint: String,
-    uds_path: Option<String>,
+    resolved: Option<TransportEndpoint>,
     timeout_ms: u64,
 }
 
 impl CapabilityClient {
-    /// Create with an explicit TCP endpoint and no UDS.
+    /// Create with an explicit TCP endpoint.
     #[must_use]
-    pub const fn new(endpoint: String, timeout_ms: u64) -> Self {
+    pub fn new(endpoint: &str, timeout_ms: u64) -> Self {
+        let resolved = parse_tcp_host_port(endpoint);
         Self {
-            endpoint,
-            uds_path: None,
+            resolved,
             timeout_ms,
         }
     }
 
-    /// Create from environment: reads `endpoint_env` for TCP, probes
-    /// `$BIOMEOS_SOCKET_DIR/{capability}.sock` for UDS.
+    /// Create from environment: reads transport env (JSON), then
+    /// `endpoint_env` for TCP, probes `$BIOMEOS_SOCKET_DIR/{capability}.sock` for UDS.
     #[must_use]
     pub fn from_env(endpoint_env: &str, capability: &str, default_timeout_ms: u64) -> Self {
-        let endpoint = std::env::var(endpoint_env).unwrap_or_default();
-        let uds_path = {
+        let transport_env = format!("{}_TRANSPORT", endpoint_env.trim_end_matches("_ENDPOINT"));
+        let resolved = parse_transport_env(&transport_env).or_else(|| {
+            let tcp = std::env::var(endpoint_env).ok().filter(|v| !v.is_empty());
+            if let Some(ref addr) = tcp {
+                return parse_tcp_host_port(addr);
+            }
             let path = capability_socket(capability);
-            std::path::Path::new(&path).exists().then_some(path)
-        };
+            std::path::Path::new(&path)
+                .exists()
+                .then_some(TransportEndpoint::Uds { path })
+        });
+
         let timeout_ms = std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(default_timeout_ms);
 
         Self {
-            endpoint,
-            uds_path,
+            resolved,
             timeout_ms,
         }
     }
@@ -176,26 +214,39 @@ impl CapabilityClient {
         self
     }
 
-    /// The TCP endpoint (if any).
+    /// The resolved transport endpoint (if any).
     #[must_use]
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
+    pub const fn resolved(&self) -> Option<&TransportEndpoint> {
+        self.resolved.as_ref()
     }
 
-    /// Returns `Some` only if a non-empty TCP endpoint is configured.
+    /// A string summary of the endpoint for logging (empty if unresolved).
     #[must_use]
-    pub fn tcp_endpoint(&self) -> Option<&str> {
-        if self.endpoint.is_empty() {
-            None
-        } else {
-            Some(&self.endpoint)
+    pub fn endpoint(&self) -> String {
+        match &self.resolved {
+            Some(TransportEndpoint::Tcp { host, port }) => format!("{host}:{port}"),
+            Some(TransportEndpoint::Uds { path }) => path.clone(),
+            Some(TransportEndpoint::MeshRelay { peer_id, .. }) => format!("mesh:{peer_id}"),
+            None => String::new(),
         }
     }
 
-    /// The UDS path (if discovered and exists).
+    /// The TCP endpoint as a `host:port` string (if resolved to TCP).
     #[must_use]
-    pub fn uds_path(&self) -> Option<&str> {
-        self.uds_path.as_deref()
+    pub fn tcp_endpoint(&self) -> Option<String> {
+        match &self.resolved {
+            Some(TransportEndpoint::Tcp { host, port }) => Some(format!("{host}:{port}")),
+            _ => None,
+        }
+    }
+
+    /// The UDS path (if resolved to UDS).
+    #[must_use]
+    pub const fn uds_path(&self) -> Option<&str> {
+        match &self.resolved {
+            Some(TransportEndpoint::Uds { path }) => Some(path.as_str()),
+            _ => None,
+        }
     }
 
     /// The configured timeout as a `Duration`.
@@ -204,63 +255,23 @@ impl CapabilityClient {
         Duration::from_millis(self.timeout_ms)
     }
 
-    /// Make a JSON-RPC call using UDS-first, TCP-fallback transport.
+    /// Make a JSON-RPC call using the resolved `TransportEndpoint`.
     ///
     /// # Errors
     ///
-    /// Returns [`RpcError`] if no endpoint is available or the call fails.
+    /// Returns [`RpcError`] if no endpoint is resolved or the call fails.
     pub async fn call(
         &self,
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, RpcError> {
+        let endpoint = self
+            .resolved
+            .as_ref()
+            .ok_or_else(|| RpcError::Io("no transport endpoint resolved".to_owned()))?;
         let timeout = Duration::from_millis(self.timeout_ms);
-        crate::rpc::call(
-            self.uds_path.as_deref(),
-            self.tcp_endpoint(),
-            method,
-            params,
-            timeout,
-        )
-        .await
+        call_endpoint(endpoint, method, params, timeout).await
     }
-}
-
-/// High-level JSON-RPC call with UDS-first, TCP-fallback transport.
-///
-/// Tries UDS (if path provided and platform supports it), then TCP.
-/// Returns the `result` field from the JSON-RPC response.
-///
-/// # Errors
-///
-/// Returns [`RpcError`] if no endpoint is available or all transports fail.
-pub async fn call(
-    uds_path: Option<&str>,
-    tcp_endpoint: Option<&str>,
-    method: &str,
-    params: Option<serde_json::Value>,
-    timeout: Duration,
-) -> Result<serde_json::Value, RpcError> {
-    #[cfg(unix)]
-    if let Some(path) = uds_path {
-        match call_uds(path, method, params.clone(), timeout).await {
-            Ok(val) => return Ok(val),
-            Err(e) => tracing::debug!("UDS {path}: {e}"),
-        }
-    }
-
-    #[cfg(not(unix))]
-    let _ = uds_path;
-
-    if let Some(endpoint) = tcp_endpoint {
-        let addr = endpoint
-            .strip_prefix("http://")
-            .or_else(|| endpoint.strip_prefix("https://"))
-            .unwrap_or(endpoint);
-        return call_tcp(addr, method, params, timeout).await;
-    }
-
-    Err(RpcError::Io("no endpoint available".to_owned()))
 }
 
 /// JSON-RPC call via a resolved [`TransportEndpoint`].
@@ -425,16 +436,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_no_endpoint() {
-        let result = call(
-            None,
-            None,
-            "health.liveness",
-            None,
-            Duration::from_millis(100),
-        )
-        .await;
+        let client = CapabilityClient::new("", 100);
+        let result = client
+            .call("health.liveness", None)
+            .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no endpoint"));
+        assert!(result.unwrap_err().to_string().contains("no transport endpoint resolved"));
     }
 
     #[tokio::test]
@@ -551,14 +558,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_tcp_fallback() {
-        let result = call(
-            Some("/nonexistent/socket.sock"),
-            Some("127.0.0.1:1"),
-            "test.method",
-            None,
-            Duration::from_millis(200),
-        )
-        .await;
+        let ep = TransportEndpoint::Uds {
+            path: "/nonexistent/socket.sock".into(),
+        };
+        let result = call_endpoint(&ep, "test.method", None, Duration::from_millis(200)).await;
         assert!(result.is_err());
     }
 
@@ -577,27 +580,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_tcp_with_http_prefix() {
-        let result = call(
-            None,
-            Some("http://127.0.0.1:1"),
-            "test.method",
-            None,
-            Duration::from_millis(200),
-        )
-        .await;
+        let ep = parse_tcp_host_port("http://127.0.0.1:1").unwrap();
+        let result = call_endpoint(&ep, "test.method", None, Duration::from_millis(200)).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_call_tcp_with_https_prefix() {
-        let result = call(
-            None,
-            Some("https://127.0.0.1:1"),
-            "test.method",
-            None,
-            Duration::from_millis(200),
-        )
-        .await;
+        let ep = parse_tcp_host_port("https://127.0.0.1:1").unwrap();
+        let result = call_endpoint(&ep, "test.method", None, Duration::from_millis(200)).await;
         assert!(result.is_err());
     }
 

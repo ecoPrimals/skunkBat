@@ -112,13 +112,14 @@ impl BtspConfig {
 /// via the security provider before JSON-RPC is served.
 ///
 /// Provider discovery follows capability-based resolution:
-/// 1. `BTSP_PROVIDER_SOCKET` — explicit path (highest priority)
-/// 2. `{BIOMEOS_SOCKET_DIR}/{BTSP_PROVIDER}-{FAMILY_ID}.sock` — by capability
-/// 3. Falls back to `btsp` capability name (agnostic of which primal serves it)
+/// 1. `BTSP_PROVIDER_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
+/// 2. `BTSP_PROVIDER_SOCKET` — explicit UDS path
+/// 3. `{BIOMEOS_SOCKET_DIR}/{BTSP_PROVIDER}-{FAMILY_ID}.sock` — by capability
+/// 4. Falls back to `btsp` capability name (agnostic of which primal serves it)
 #[derive(Debug, Clone)]
 pub struct BtspHandshakeConfig {
-    /// Path to the BTSP security provider's UDS socket for `btsp.server.*` RPCs.
-    pub provider_socket: std::path::PathBuf,
+    /// Resolved transport for the BTSP security provider's `btsp.server.*` RPCs.
+    pub provider_endpoint: skunk_bat_integrations::rpc::TransportEndpoint,
     /// Family identifier (used for logging and future cipher scoping).
     #[expect(dead_code, reason = "reserved for BTSP Phase 2 cipher scoping")]
     pub family_id: String,
@@ -131,27 +132,32 @@ impl BtspHandshakeConfig {
     /// Resolve handshake config from the environment.
     ///
     /// Returns `Some` when `FAMILY_ID` is set to a production value.
-    /// Provider socket is resolved by capability, not by primal name.
+    /// Provider endpoint is resolved by capability, not by primal name.
     #[must_use]
     pub fn from_env() -> Option<Self> {
+        use skunk_bat_integrations::rpc::TransportEndpoint;
+
         let fid = std::env::var(skunk_bat_core::env_keys::FAMILY_ID)
             .ok()
             .filter(|v| !v.is_empty() && v != "default")?;
 
-        let provider_socket = std::env::var(skunk_bat_core::env_keys::BTSP_PROVIDER_SOCKET)
-            .ok()
-            .map_or_else(
-                || {
+        let provider_endpoint = skunk_bat_integrations::rpc::parse_transport_env(
+            skunk_bat_core::env_keys::BTSP_PROVIDER_TRANSPORT,
+        )
+        .unwrap_or_else(|| {
+            let path = std::env::var(skunk_bat_core::env_keys::BTSP_PROVIDER_SOCKET)
+                .ok()
+                .unwrap_or_else(|| {
                     let capability = std::env::var(skunk_bat_core::env_keys::BTSP_PROVIDER)
                         .unwrap_or_else(|_| DEFAULT_BTSP_CAPABILITY.to_owned());
                     let socket_dir = resolve_socket_dir();
-                    std::path::PathBuf::from(format!("{socket_dir}/{capability}-{fid}.sock"))
-                },
-                std::path::PathBuf::from,
-            );
+                    format!("{socket_dir}/{capability}-{fid}.sock")
+                });
+            TransportEndpoint::Uds { path }
+        });
 
         Some(Self {
-            provider_socket,
+            provider_endpoint,
             family_id: fid,
         })
     }
@@ -227,13 +233,15 @@ mod tests {
     #[test]
     fn handshake_config_construction() {
         let cfg = BtspHandshakeConfig {
-            provider_socket: "/tmp/beardog.sock".into(),
+            provider_endpoint: skunk_bat_integrations::rpc::TransportEndpoint::Uds {
+                path: "/tmp/beardog.sock".into(),
+            },
             family_id: "test-family".into(),
         };
-        assert_eq!(
-            cfg.provider_socket,
-            std::path::PathBuf::from("/tmp/beardog.sock")
-        );
+        assert!(matches!(
+            cfg.provider_endpoint,
+            skunk_bat_integrations::rpc::TransportEndpoint::Uds { .. }
+        ));
     }
 
     #[test]
@@ -244,11 +252,14 @@ mod tests {
     #[test]
     fn handshake_config_debug_and_clone() {
         let cfg = BtspHandshakeConfig {
-            provider_socket: "/tmp/beardog.sock".into(),
+            provider_endpoint: skunk_bat_integrations::rpc::TransportEndpoint::Tcp {
+                host: "127.0.0.1".into(),
+                port: 9300,
+            },
             family_id: "test-family".into(),
         };
         let cloned = cfg.clone();
-        assert_eq!(cloned.provider_socket, cfg.provider_socket);
+        assert_eq!(cloned.provider_endpoint, cfg.provider_endpoint);
         assert!(!format!("{cfg:?}").is_empty());
     }
 

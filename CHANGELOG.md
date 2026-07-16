@@ -25,6 +25,14 @@ All notable changes to skunkBat are documented here.
   guards on UDS transport (`provider_call`), Unix signals (`SIGTERM`), registration
   callsites, capability symlinks. Windows cross-check passes clean.
   musl static build aliases in `.cargo/config.toml` (`build-x64`, `build-arm64`).
+- **Phase 2: TransportEndpoint abstraction** (Wave 142b): Evolved all IPC dispatch
+  from `#[cfg]`-gated raw UDS to `TransportEndpoint` trait dispatch. Registration
+  (`self_register`, `neural_announce`) now resolve `TransportEndpoint` (UDS, TCP,
+  or `TransportEndpoint` JSON from env). BTSP `provider_call` dispatches via
+  `call_endpoint`. `CapabilityClient` holds `Option<TransportEndpoint>` internally.
+  Eliminated legacy `ResolvedTarget` enum, `rpc::call()`, and `ContentProtector`
+  raw `uds_path`/`tcp_endpoint` fields. New env key: `BTSP_PROVIDER_TRANSPORT`.
+  All integration constructors take `&str` (zero-copy). Every platform is first-class.
 - **4 new env keys**: `SKUNKBAT_FEDERATION_POLL_SECS`, `SKUNKBAT_FEDERATION_BATCH_SIZE`,
   `SKUNKBAT_CONTENT_TIMEOUT`, `SKUNKBAT_HANDSHAKE_DEADLINE` — hardcoded timeouts
   evolved to env-configurable.

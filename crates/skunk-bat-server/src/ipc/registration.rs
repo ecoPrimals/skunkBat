@@ -9,9 +9,14 @@
 //! `primal.announce` to biomeOS Neural API with cost hints, latency
 //! estimates, and signal tier for intelligent routing. Non-blocking: if
 //! no discovery service is available, continues in standalone mode.
+//!
+//! Transport is resolved via `TransportEndpoint` — UDS on Unix,
+//! TCP when `DISCOVERY_ENDPOINT` / `NEURAL_API_SOCKET` are configured.
+//! No `#[cfg]` gates in the registration flow itself.
 
-#[cfg(unix)]
 use std::time::Duration;
+
+use skunk_bat_integrations::rpc::{self, TransportEndpoint};
 
 /// Capabilities registered for discovery — only advertise domains with live IPC.
 ///
@@ -30,7 +35,6 @@ const CAPABILITIES: &[&str] = &[
     "btsp",
 ];
 
-#[cfg(unix)]
 fn registration_timeout() -> Duration {
     std::env::var(skunk_bat_core::env_keys::SKUNKBAT_REGISTRATION_TIMEOUT)
         .ok()
@@ -47,7 +51,7 @@ fn registration_timeout() -> Duration {
 ///
 /// If no discovery service is reachable, logs and returns (standalone mode).
 pub async fn self_register(endpoint: String) {
-    let Some(discovery_socket) = resolve_discovery_socket() else {
+    let Some(discovery_ep) = resolve_discovery_endpoint() else {
         tracing::info!("no discovery service found — standalone mode");
         return;
     };
@@ -58,9 +62,8 @@ pub async fn self_register(endpoint: String) {
         "endpoint": &endpoint,
     });
 
-    #[cfg(unix)]
-    match skunk_bat_integrations::rpc::call_uds(
-        &discovery_socket,
+    match rpc::call_endpoint(
+        &discovery_ep,
         "ipc.register",
         Some(params),
         registration_timeout(),
@@ -80,29 +83,35 @@ pub async fn self_register(endpoint: String) {
             tracing::debug!("discovery registration unavailable: {e} — standalone mode");
         }
     }
-
-    #[cfg(not(unix))]
-    {
-        let _ = (discovery_socket, params);
-        tracing::debug!("UDS registration not available on this platform — standalone mode");
-    }
 }
 
-/// Resolve the discovery socket path from environment/conventions.
+/// Resolve the discovery endpoint from environment/conventions.
 ///
-/// Probe order (first existing socket wins):
-/// 1. `DISCOVERY_SOCKET` env var (explicit override)
-/// 2. `{socket_dir}/discovery-{FAMILY_ID}.sock` (family-scoped)
-/// 3. `{socket_dir}/discovery.sock` (generic capability)
-fn resolve_discovery_socket() -> Option<String> {
+/// Probe order:
+/// 1. `DISCOVERY_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
+/// 2. `DISCOVERY_ENDPOINT` env → TCP
+/// 3. `DISCOVERY_SOCKET` env → UDS (if socket file exists)
+/// 4. `{socket_dir}/discovery-{FAMILY_ID}.sock` (family-scoped UDS)
+/// 5. `{socket_dir}/discovery.sock` (generic capability UDS)
+fn resolve_discovery_endpoint() -> Option<TransportEndpoint> {
+    if let Some(ep) = rpc::parse_transport_env(skunk_bat_core::env_keys::DISCOVERY_TRANSPORT) {
+        return Some(ep);
+    }
+
+    if let Ok(addr) = std::env::var(skunk_bat_core::env_keys::DISCOVERY_ENDPOINT)
+        && let Some(ep) = rpc::parse_tcp_host_port(&addr)
+    {
+        return Some(ep);
+    }
+
     if let Ok(path) = std::env::var(skunk_bat_core::env_keys::DISCOVERY_SOCKET)
         && !path.is_empty()
         && std::path::Path::new(&path).exists()
     {
-        return Some(path);
+        return Some(TransportEndpoint::Uds { path });
     }
 
-    let socket_dir = skunk_bat_integrations::rpc::socket_dir();
+    let socket_dir = rpc::socket_dir();
     let family_id = std::env::var(skunk_bat_core::env_keys::FAMILY_ID).unwrap_or_default();
 
     let mut candidates = Vec::with_capacity(2);
@@ -114,6 +123,7 @@ fn resolve_discovery_socket() -> Option<String> {
     candidates
         .into_iter()
         .find(|p| std::path::Path::new(p).exists())
+        .map(|path| TransportEndpoint::Uds { path })
 }
 
 /// Announce to biomeOS Neural API for intelligent routing (Wave 43).
@@ -122,16 +132,15 @@ fn resolve_discovery_socket() -> Option<String> {
 /// and signal tier. biomeOS uses this for weighted capability routing.
 /// Non-blocking: if biomeOS Neural API is unreachable, logs and returns.
 pub async fn neural_announce(socket_path: &str) {
-    let Some(neural_socket) = resolve_neural_api_socket() else {
-        tracing::debug!("no Neural API socket found — skipping primal.announce");
+    let Some(neural_ep) = resolve_neural_api_endpoint() else {
+        tracing::debug!("no Neural API endpoint found — skipping primal.announce");
         return;
     };
 
     let params = announce_payload(socket_path);
 
-    #[cfg(unix)]
-    match skunk_bat_integrations::rpc::call_uds(
-        &neural_socket,
+    match rpc::call_endpoint(
+        &neural_ep,
         "primal.announce",
         Some(params),
         registration_timeout(),
@@ -147,12 +156,6 @@ pub async fn neural_announce(socket_path: &str) {
         Err(e) => {
             tracing::debug!("Neural API announce unavailable: {e} — routing passive");
         }
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = (neural_socket, params);
-        tracing::debug!("UDS announce not available on this platform — routing passive");
     }
 }
 
@@ -182,23 +185,25 @@ pub(super) fn announce_payload(socket_path: &str) -> serde_json::Value {
     })
 }
 
-/// Resolve the biomeOS Neural API socket.
+/// Resolve the biomeOS Neural API endpoint.
 ///
 /// Probe order:
-/// 1. `NEURAL_API_SOCKET` env var
-/// 2. `{socket_dir}/neural-api.sock` (capability convention)
-fn resolve_neural_api_socket() -> Option<String> {
+/// 1. `NEURAL_API_SOCKET` env → UDS (if socket file exists)
+/// 2. `{socket_dir}/neural-api.sock` (capability convention UDS)
+fn resolve_neural_api_endpoint() -> Option<TransportEndpoint> {
     if let Ok(path) = std::env::var(skunk_bat_core::env_keys::NEURAL_API_SOCKET)
         && !path.is_empty()
         && std::path::Path::new(&path).exists()
     {
-        return Some(path);
+        return Some(TransportEndpoint::Uds { path });
     }
 
-    let socket_dir = skunk_bat_integrations::rpc::socket_dir();
+    let socket_dir = rpc::socket_dir();
     let path = format!("{socket_dir}/neural-api.sock");
 
-    std::path::Path::new(&path).exists().then_some(path)
+    std::path::Path::new(&path)
+        .exists()
+        .then_some(TransportEndpoint::Uds { path })
 }
 
 #[cfg(test)]
@@ -212,9 +217,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_returns_existing_path_or_none() {
-        let result = resolve_discovery_socket();
-        if let Some(ref path) = result {
+    fn resolve_returns_endpoint_or_none() {
+        let result = resolve_discovery_endpoint();
+        if let Some(TransportEndpoint::Uds { ref path }) = result {
             assert!(std::path::Path::new(path).exists());
         }
     }
@@ -230,9 +235,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_neural_api_returns_none_without_socket() {
-        let result = resolve_neural_api_socket();
-        if let Some(ref path) = result {
+    fn resolve_neural_api_returns_endpoint_or_none() {
+        let result = resolve_neural_api_endpoint();
+        if let Some(TransportEndpoint::Uds { ref path }) = result {
             assert!(std::path::Path::new(path).exists());
         }
     }

@@ -103,62 +103,54 @@ impl ForwardingConfig {
 ///
 /// Resolution order:
 /// 1. `RHIZOCRYPT_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
-/// 2. `RHIZOCRYPT_ENDPOINT` env (legacy TCP string)
-/// 3. Capability socket (`provenance.sock`)
-fn resolve_rhizocrypt() -> ResolvedTarget {
-    if let Some(ep) = parse_transport_env(env_keys::RHIZOCRYPT_TRANSPORT) {
-        return ResolvedTarget::Endpoint(ep);
-    }
-    let tcp = std::env::var(env_keys::RHIZOCRYPT_ENDPOINT).ok();
-    let uds = Some(rpc::capability_socket(PROVENANCE_CAPABILITY));
-    ResolvedTarget::Legacy { uds, tcp }
+/// 2. `RHIZOCRYPT_ENDPOINT` env → TCP
+/// 3. Capability socket (`provenance.sock`) → UDS
+fn resolve_rhizocrypt() -> Option<TransportEndpoint> {
+    rpc::parse_transport_env(env_keys::RHIZOCRYPT_TRANSPORT)
+        .or_else(|| {
+            std::env::var(env_keys::RHIZOCRYPT_ENDPOINT)
+                .ok()
+                .and_then(|v| rpc::parse_tcp_host_port(&v))
+        })
+        .or_else(|| {
+            let path = rpc::capability_socket(PROVENANCE_CAPABILITY);
+            std::path::Path::new(&path)
+                .exists()
+                .then_some(TransportEndpoint::Uds { path })
+        })
 }
 
 /// Resolve the sweetGrass endpoint.
 ///
 /// Resolution order:
 /// 1. `SWEETGRASS_TRANSPORT` env (sourDough `TransportEndpoint` JSON)
-/// 2. `SWEETGRASS_ENDPOINT` env (legacy TCP string)
-/// 3. Capability socket (`attribution.sock`)
-fn resolve_sweetgrass() -> ResolvedTarget {
-    if let Some(ep) = parse_transport_env(env_keys::SWEETGRASS_TRANSPORT) {
-        return ResolvedTarget::Endpoint(ep);
-    }
-    let tcp = std::env::var(env_keys::SWEETGRASS_ENDPOINT).ok();
-    let uds = Some(rpc::capability_socket(ATTRIBUTION_CAPABILITY));
-    ResolvedTarget::Legacy { uds, tcp }
+/// 2. `SWEETGRASS_ENDPOINT` env → TCP
+/// 3. Capability socket (`attribution.sock`) → UDS
+fn resolve_sweetgrass() -> Option<TransportEndpoint> {
+    rpc::parse_transport_env(env_keys::SWEETGRASS_TRANSPORT)
+        .or_else(|| {
+            std::env::var(env_keys::SWEETGRASS_ENDPOINT)
+                .ok()
+                .and_then(|v| rpc::parse_tcp_host_port(&v))
+        })
+        .or_else(|| {
+            let path = rpc::capability_socket(ATTRIBUTION_CAPABILITY);
+            std::path::Path::new(&path)
+                .exists()
+                .then_some(TransportEndpoint::Uds { path })
+        })
 }
 
-/// Resolved outbound target — either a sourDough `TransportEndpoint` or legacy (UDS + TCP).
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ResolvedTarget {
-    Endpoint(TransportEndpoint),
-    Legacy {
-        uds: Option<String>,
-        tcp: Option<String>,
-    },
-}
-
-/// Parse a `TransportEndpoint` from an environment variable.
-fn parse_transport_env(var: &str) -> Option<TransportEndpoint> {
-    std::env::var(var)
-        .ok()
-        .and_then(|v| serde_json::from_str(&v).ok())
-}
-
-/// Issue a JSON-RPC call to a resolved target.
+/// Issue a JSON-RPC call to a resolved endpoint.
 async fn call_resolved(
-    target: &ResolvedTarget,
+    endpoint: Option<&TransportEndpoint>,
     method: &str,
     params: Option<serde_json::Value>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
-    match target {
-        ResolvedTarget::Endpoint(ep) => rpc::call_endpoint(ep, method, params, timeout).await,
-        ResolvedTarget::Legacy { uds, tcp } => {
-            rpc::call(uds.as_deref(), tcp.as_deref(), method, params, timeout).await
-        }
-    }
+    let ep = endpoint
+        .ok_or_else(|| RpcError::Io("no endpoint resolved for forwarding target".to_owned()))?;
+    rpc::call_endpoint(ep, method, params, timeout).await
 }
 
 /// Forward a security event to rhizoCrypt's DAG as a vertex.
@@ -184,7 +176,7 @@ pub async fn forward_to_dag(
         "correlation_id": event.correlation_id,
     });
 
-    call_resolved(&target, "dag.event.append", Some(params), timeout).await
+    call_resolved(target.as_ref(), "dag.event.append", Some(params), timeout).await
 }
 
 /// Forward a security event to sweetGrass as a provenance braid entry.
@@ -212,7 +204,7 @@ pub async fn forward_to_braid(
         "correlation_id": event.correlation_id,
     });
 
-    call_resolved(&target, "braid.create", Some(params), timeout).await
+    call_resolved(target.as_ref(), "braid.create", Some(params), timeout).await
 }
 
 /// Run the forwarding loop as a background task.
