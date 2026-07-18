@@ -76,7 +76,11 @@ pub(super) async fn dispatch_security(
         }
         "security.metrics" => serialize(id, state.read().await.get_security_metrics()),
         "security.audit_log" => dispatch_audit_log(state, id, params).await,
-        _ => unreachable!(),
+        other => Response::error(
+            id,
+            super::jsonrpc::METHOD_NOT_FOUND,
+            format!("unknown security method: {other}"),
+        ),
     }
 }
 

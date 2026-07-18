@@ -296,7 +296,11 @@ async fn dispatch_health(
             Response::success(id, serde_json::json!({"ready": ready, "state": state_str}))
         }
         "health.check" => try_serialize(id, state.read().await.health_check().await),
-        _ => unreachable!(),
+        other => Response::error(
+            id,
+            super::jsonrpc::METHOD_NOT_FOUND,
+            format!("unknown health method: {other}"),
+        ),
     }
 }
 
@@ -326,7 +330,11 @@ async fn dispatch_lifecycle(
             let all: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
             Response::success(id, serde_json::json!({"capabilities": all}))
         }
-        _ => unreachable!(),
+        other => Response::error(
+            id,
+            super::jsonrpc::METHOD_NOT_FOUND,
+            format!("unknown lifecycle method: {other}"),
+        ),
     }
 }
 
@@ -368,7 +376,11 @@ fn dispatch_auth(
                 "has_token": caller.bearer_token.is_some()
             }),
         ),
-        _ => unreachable!(),
+        other => Response::error(
+            id,
+            super::jsonrpc::METHOD_NOT_FOUND,
+            format!("unknown auth method: {other}"),
+        ),
     }
 }
 
