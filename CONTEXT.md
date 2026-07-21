@@ -99,7 +99,9 @@ mode semantics for local, loopback, and remote callers.
 ## Status
 
 v0.2.18 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
-workspace-wide. `#[expect(reason)]` lint standard (target-conditional `#[allow]` only).
+workspace-wide. `#[expect(reason)]` lint standard — zero `#[allow]` in production code.
+Zero production `unreachable!()` panics in dispatch (evolved to `METHOD_NOT_FOUND` errors).
+Only 1 `unreachable!()` remains (compute-only future invariant in sync executor).
 
 **567 tests** passing across all workspace crates (4 crates). Max production file 690 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable

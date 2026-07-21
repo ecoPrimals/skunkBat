@@ -76,6 +76,16 @@ All notable changes to skunkBat are documented here.
   latency tracking via `mul_add`. False `dead_code` on `host` field removed.
 - **Platform UID**: Magic number `1000` → named `DEFAULT_USER_UID` constant.
 - **`pentest_attack_patterns()`** gated behind `#[cfg(test)]`.
+- **Dispatch safety** (Wave 149b): Replaced 4 production `unreachable!()` in
+  sub-dispatch functions with proper `METHOD_NOT_FOUND` JSON-RPC error responses.
+  Server can no longer panic from method list mismatch.
+- **Clippy lint evolution** (Wave 143b): Resolved `useless_conversion`,
+  `duration_suboptimal_units`. `#[expect(dead_code)]` evolved to
+  `#[cfg_attr(not(test), expect(dead_code))]` for items used from tests.
+- **Deep debt sweep** (Wave 142b): All production `#[allow]` evolved to
+  `#[expect(reason)]` with documented justification. Dead fields removed from
+  `skunky-ingest` `RpcResponse`. Announce payload cost/latency hints extracted
+  to named constant modules.
 
 ## [0.2.18] — 2026-07-04 (Wave 132c: Tower HTTP Gateway advisory)
 

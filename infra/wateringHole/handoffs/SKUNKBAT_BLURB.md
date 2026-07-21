@@ -2,8 +2,8 @@
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
 **Version**: 0.2.18
-**Date**: Jul 16, 2026
-**Wave**: 142b
+**Date**: Jul 21, 2026
+**Wave**: 150t
 
 ---
 
@@ -102,7 +102,8 @@ See `CHANGELOG.md` for complete wave-by-wave implementation history.
 Key milestones: Wave 120 (live detection), 123 (MethodGate enforcement), 124 (method wiring),
 128 (composable primitives + registration honesty), 132c (Tower HTTP advisory), 136a (HTTP
 anomaly detection), 136b (skunky-ingest), 137b (conditional baseline + CF groundwork),
-141a (cross-architecture Phase 1), 142b (Phase 2 TransportEndpoint abstraction + deep debt sweep).
+141a (cross-architecture Phase 1), 142b (Phase 2 TransportEndpoint abstraction + deep debt sweep),
+149b (dispatch safety — unreachable!() → METHOD_NOT_FOUND errors).
 
 ## Cascade Status
 
@@ -118,4 +119,8 @@ Both remotes at parity:
 - All production error paths surfaced (no silent drops)
 - No hardcoded primal names in routing
 - Zero `TODO`/`FIXME`/`HACK` in production code
+- Zero `#[allow]` in production — all `#[expect(reason)]` with justification
+- Zero production `unwrap()`/`expect()`, zero `unsafe`
+- Zero `unreachable!()` panics in dispatch (all evolved to `METHOD_NOT_FOUND`)
 - Cross-platform: Windows cross-check clean, musl static targets configured
+- Dimensional posture: GREEN — all dimensions clear (Wave 150t audit)
