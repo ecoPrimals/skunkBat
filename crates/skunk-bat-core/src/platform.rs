@@ -43,6 +43,53 @@ fn uid_fallback() -> u32 {
         .unwrap_or(DEFAULT_USER_UID)
 }
 
+/// Read the system's 1-minute load average, normalized to [0.0, 1.0] per CPU.
+///
+/// On Linux, reads `/proc/loadavg`. On other platforms, parses `uptime` output.
+/// Returns 0.0 if the load cannot be determined.
+#[must_use]
+pub fn system_load_normalized() -> f64 {
+    let raw = raw_load_average();
+
+    #[expect(clippy::cast_precision_loss, reason = "CPU count fits in f64")]
+    let cpus = std::thread::available_parallelism().map_or(1.0, |n| n.get() as f64);
+
+    (raw / cpus).min(1.0)
+}
+
+#[cfg(target_os = "linux")]
+fn raw_load_average() -> f64 {
+    std::fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+        .unwrap_or(0.0)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn raw_load_average() -> f64 {
+    let load = std::process::Command::new("uptime")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| {
+            s.rsplit("load average")
+                .next()?
+                .trim_start_matches([':', ' '])
+                .split(',')
+                .next()?
+                .trim()
+                .parse::<f64>()
+                .ok()
+        })
+        .unwrap_or(0.0);
+
+    if load == 0.0 {
+        tracing::debug!("Resource detection: unable to read system load on this platform");
+    }
+
+    load
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +102,11 @@ mod tests {
     #[test]
     fn uid_fallback_returns_value() {
         assert!(uid_fallback() > 0);
+    }
+
+    #[test]
+    fn system_load_is_normalized() {
+        let load = system_load_normalized();
+        assert!((0.0..=1.0).contains(&load));
     }
 }

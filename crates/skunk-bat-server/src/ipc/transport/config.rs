@@ -26,7 +26,10 @@ pub struct BtspConfig {
     /// Family ID if set — triggers production socket naming.
     pub family_id: Option<String>,
     /// True when `BIOMEOS_INSECURE=1` is set (development mode).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "field used only on Unix for socket permissions")
+    )]
     pub insecure: bool,
 }
 
@@ -121,7 +124,10 @@ pub struct BtspHandshakeConfig {
     /// Resolved transport for the BTSP security provider's `btsp.server.*` RPCs.
     pub provider_endpoint: skunk_bat_integrations::rpc::TransportEndpoint,
     /// Family identifier (used for logging and future cipher scoping).
-    #[expect(dead_code, reason = "reserved for BTSP Phase 2 cipher scoping")]
+    #[expect(
+        dead_code,
+        reason = "reserved for bond-type resolution during Tower Atomic negotiation"
+    )]
     pub family_id: String,
 }
 

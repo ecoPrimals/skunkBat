@@ -229,33 +229,35 @@ impl ConfigSnapshot {
     }
 
     /// Compare with another snapshot and return changed fields.
+    ///
+    /// Tuple: `(field_name, old_value, new_value)`.
     #[must_use]
-    pub fn diff(&self, other: &Self) -> Vec<(String, String, String)> {
+    pub fn diff(&self, other: &Self) -> Vec<(&'static str, String, String)> {
         let mut diffs = Vec::new();
         if self.features_json != other.features_json {
             diffs.push((
-                "features".to_owned(),
+                "features",
                 self.features_json.clone(),
                 other.features_json.clone(),
             ));
         }
         if self.lineage_id != other.lineage_id {
             diffs.push((
-                "lineage_id".to_owned(),
+                "lineage_id",
                 format!("{:?}", self.lineage_id),
                 format!("{:?}", other.lineage_id),
             ));
         }
         if self.topology_configured != other.topology_configured {
             diffs.push((
-                "topology_configured".to_owned(),
+                "topology_configured",
                 self.topology_configured.to_string(),
                 other.topology_configured.to_string(),
             ));
         }
         if self.threshold_fingerprint != other.threshold_fingerprint {
             diffs.push((
-                "thresholds".to_owned(),
+                "thresholds",
                 self.threshold_fingerprint.clone(),
                 other.threshold_fingerprint.clone(),
             ));

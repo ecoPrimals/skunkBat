@@ -232,7 +232,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
                 Threat {
                     id: format!("drift-{component}-{}", Self::threat_id_suffix()),
                     threat_type: ThreatType::ConfigurationDrift {
-                        component: component.clone(),
+                        component: (*component).to_owned(),
                         expected,
                         observed,
                     },

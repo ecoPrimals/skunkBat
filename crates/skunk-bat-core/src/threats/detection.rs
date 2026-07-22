@@ -172,7 +172,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         reason = "async signature for future async system metrics"
     )]
     pub(super) async fn detect_resource_exhaustion(&self) -> Result<Vec<Threat>, SkunkBatError> {
-        let load = check_system_load();
+        let load = crate::platform::system_load_normalized();
         if load > self.thresholds.dos_load_threshold {
             return Ok(vec![Threat {
                 id: format!("dos-{}", Self::threat_id_suffix()),
@@ -247,54 +247,5 @@ fn anomaly_severity(thresholds: &ThreatThresholds, deviation: f64) -> Severity {
         Severity::Medium
     } else {
         Severity::Low
-    }
-}
-
-fn check_system_load() -> f64 {
-    #[cfg(target_os = "linux")]
-    {
-        let raw = std::fs::read_to_string("/proc/loadavg")
-            .ok()
-            .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
-            .unwrap_or(0.0);
-
-        #[expect(clippy::cast_precision_loss, reason = "CPU count fits in f64")]
-        let cpus = std::thread::available_parallelism()
-            .ok()
-            .map_or(1.0, |n| n.get() as f64);
-
-        (raw / cpus).min(1.0)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let load = std::process::Command::new("uptime")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .and_then(|s| {
-                s.rsplit("load average")
-                    .next()?
-                    .trim_start_matches([':', ' '])
-                    .split(',')
-                    .next()?
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-            })
-            .map(|raw| {
-                #[expect(clippy::cast_precision_loss, reason = "CPU count fits in f64")]
-                let cpus = std::thread::available_parallelism()
-                    .map(|n| n.get() as f64)
-                    .unwrap_or(1.0);
-                (raw / cpus).min(1.0)
-            })
-            .unwrap_or(0.0);
-
-        if load == 0.0 {
-            tracing::debug!("Resource detection: unable to read system load on this platform");
-        }
-
-        load
     }
 }

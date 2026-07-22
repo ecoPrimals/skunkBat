@@ -32,7 +32,10 @@ fn make_request(method: &str) -> Request {
     }
 }
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "test helper reserved for gate-auth integration tests"
+)]
 fn make_request_with_token(method: &str, token: &str) -> Request {
     Request {
         jsonrpc: "2.0".to_string(),
