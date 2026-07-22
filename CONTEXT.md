@@ -85,7 +85,7 @@ Full spec compliance including:
 
 ## Tests
 
-567 tests passing (core + integrations + server + transport + chaos), all workspace.
+571 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
@@ -103,7 +103,7 @@ workspace-wide. `#[expect(reason)]` lint standard — zero `#[allow]` in product
 Zero production `unreachable!()` panics in dispatch (evolved to `METHOD_NOT_FOUND` errors).
 Only 1 `unreachable!()` remains (compute-only future invariant in sync executor).
 
-**567 tests** passing across all workspace crates (4 crates). Max production file 690 lines — no
+**571 tests** passing across all workspace crates (4 crates). Max production file 684 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
 via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
 to env vars with defaults (session TTL, sweep, forwarding, registration).
@@ -117,6 +117,11 @@ riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compl
 6 composable primitives shipped in v0.2.17 (`baseline.{query,anomaly,reset}`,
 `defense.{quarantine,release}`, `response.evaluate`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
+
+**Tower Atomic**: Bond-type cipher enforcement live — `btsp.negotiate` accepts optional
+`bond_type` param (Covalent/Metallic/Ionic) from songBird enrollment flow. Ionic bonds
+reject null cipher (require ChaCha20-Poly1305). Protocol version `1.0` advertised in
+negotiate + capabilities responses. Fallback behavior documented in `btsp.capabilities`.
 
 **MethodGate**: Pre-dispatch authorization gate with `Permissive`/`Enforced` modes
 (env `SKUNKBAT_AUTH_MODE`). Origin-based trust: UDS + loopback bypass enforcement;
@@ -166,7 +171,9 @@ production paths. Zero `unsafe`. Zero `#[allow]` in production — all suppressi
 use `#[expect(reason)]` with documented justification. Silent error drops surfaced
 (UDS setup, mutex poison, BTSP handshake). Registration uses `env_keys` constants.
 `MethodGate` pre-dispatch capability gate with enforced/permissive modes + quarantine
-enforcement. Announce payload cost/latency hints use named constants.
+enforcement. Announce payload cost/latency hints use named constants. Platform-specific
+logic consolidated in `platform.rs` (`proc_uid`, `system_load_normalized`). ConfigDiff
+returns `&'static str` field names to avoid allocation on hot detection path.
 
 ## Stadial Composition Readiness
 

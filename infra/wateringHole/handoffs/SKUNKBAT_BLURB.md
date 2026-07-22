@@ -2,7 +2,7 @@
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
 **Version**: 0.2.18
-**Date**: Jul 21, 2026
+**Date**: Jul 22, 2026
 **Wave**: 150t
 
 ---
@@ -11,9 +11,9 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 567 passing (0 failed, 4 crates) |
+| Tests | 571 passing (0 failed, 4 crates) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
-| Max file | 690 lines production (test files exempt from 800L cap) |
+| Max file | 684 lines production (test files exempt from 800L cap) |
 | IPC methods | 30 (28 application + 2 transport) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
@@ -36,7 +36,7 @@
 
 - **6-category threat detection**: genetic (lineage), behavioral (statistical), intrusion (signature), resource (exhaustion), topology (layer-hop), configuration drift
 - **HTTP anomaly detection**: `HttpObservation` model, HTTP-dimension profiling, `advisory_check_http()` for Tower HTTP Gateway
-- **BTSP Phase 1/2/3**: socket naming, BearDog-delegated handshake (TCP + UDS), `btsp.negotiate` with ChaCha20-Poly1305 AEAD encrypted framing
+- **BTSP Phase 1/2/3**: socket naming, BearDog-delegated handshake (TCP + UDS), `btsp.negotiate` with ChaCha20-Poly1305 AEAD encrypted framing, bond-type cipher enforcement (Covalent/Metallic/Ionic), protocol version `1.0`
 - **riboCipher Tier 1**: signal-first routing (`0xEC` clear signal + protocol type byte)
 - **JH-5 audit log**: 1024-event ring buffer with cursor-based forwarding to provenance/attribution DAGs
 - **Federation broadcast**: monitors audit log for `ThreatDetected` events, broadcasts via Songbird
@@ -103,7 +103,8 @@ Key milestones: Wave 120 (live detection), 123 (MethodGate enforcement), 124 (me
 128 (composable primitives + registration honesty), 132c (Tower HTTP advisory), 136a (HTTP
 anomaly detection), 136b (skunky-ingest), 137b (conditional baseline + CF groundwork),
 141a (cross-architecture Phase 1), 142b (Phase 2 TransportEndpoint abstraction + deep debt sweep),
-149b (dispatch safety — unreachable!() → METHOD_NOT_FOUND errors).
+149b (dispatch safety — unreachable!() → METHOD_NOT_FOUND errors), 150t (Tower Atomic bond-type
+cipher enforcement, platform consolidation, deep debt alloc reduction).
 
 ## Cascade Status
 

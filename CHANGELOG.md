@@ -6,6 +6,17 @@ All notable changes to skunkBat are documented here.
 
 ### Added
 
+- **Tower Atomic bond-type cipher enforcement** (Wave 150t): `BondType`
+  (Covalent/Metallic/Ionic) evolved from test-only to production usage in
+  `select_best_cipher()`. Ionic bonds reject null cipher, Metallic requires
+  HMAC minimum. `btsp.negotiate` accepts optional `bond_type` param from
+  songBird enrollment flow. `BTSP_PROTOCOL_VERSION` constant (`1.0`) in
+  negotiate + capabilities responses. `fallback` field in negotiate response.
+  `btsp.capabilities` now advertises `bond_types` and `fallback` behavior.
+  `cipher_strength()` ordering function for typed cipher comparison.
+- **Platform consolidation**: `system_load_normalized()` extracted to
+  `platform.rs`, consolidating inline `#[cfg(target_os)]` from `detection.rs`.
+  Platform-specific code now single module alongside `proc_uid()`.
 - **`skunky-ingest` binary crate** (Wave 136b): Live Caddy JSON access log tailer
   feeding per-source-IP HTTP metrics into `baseline.observe` via TCP JSON-RPC.
   Per-window aggregation of connection rate, traffic volume, request rate, error
@@ -82,10 +93,12 @@ All notable changes to skunkBat are documented here.
 - **Clippy lint evolution** (Wave 143b): Resolved `useless_conversion`,
   `duration_suboptimal_units`. `#[expect(dead_code)]` evolved to
   `#[cfg_attr(not(test), expect(dead_code))]` for items used from tests.
-- **Deep debt sweep** (Wave 142b): All production `#[allow]` evolved to
+- **Deep debt sweep** (Wave 142b–150t): All production `#[allow]` evolved to
   `#[expect(reason)]` with documented justification. Dead fields removed from
   `skunky-ingest` `RpcResponse`. Announce payload cost/latency hints extracted
-  to named constant modules.
+  to named constant modules. `ConfigDiff.diff()` returns `(&'static str, String, String)`
+  eliminating field-name allocations. `BtspHandshakeConfig.family_id` annotation updated
+  for Tower Atomic bond-type resolution.
 
 ## [0.2.18] — 2026-07-04 (Wave 132c: Tower HTTP Gateway advisory)
 

@@ -25,7 +25,8 @@ packet contents or tracking user behavior.
 - **JSON-RPC 2.0**: Full spec — single, batch, and notification support
 - **BTSP Phase 1/2/3**: Socket naming, BearDog-delegated handshake on TCP + UDS,
   first-byte peek for biomeOS composition bypass, `btsp.negotiate` cipher negotiation
-  with auto-upgrade to `ChaCha20-Poly1305` encrypted framing
+  with auto-upgrade to `ChaCha20-Poly1305` encrypted framing, bond-type cipher
+  enforcement (Covalent/Metallic/Ionic), protocol version `1.0`
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -223,13 +224,13 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - `#[expect(reason)]` lint suppression standard — zero `#[allow]` in production code
 - `cargo deny` advisory/ban/license/source checks pass; `ring` explicitly banned
-- All source files under 800 lines (production max: 690; test files exempt)
+- All source files under 800 lines (production max: 684; test files exempt)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code; zero production `unwrap()`/`expect()`
 - Zero dispatch `unreachable!()` panics — all evolved to `METHOD_NOT_FOUND` errors
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 567 tests passing (lib + integration + chaos), full workspace
+- 571 tests passing (lib + integration + chaos), full workspace
 - All 30 IPC methods stability-tiered (28 application + 2 transport; Stable; `auth.*` beta)
 - Cross-architecture: `cargo check --target x86_64-pc-windows-gnu` passes clean;
   musl static builds via `.cargo/config.toml` aliases (`build-x64`, `build-arm64`)
