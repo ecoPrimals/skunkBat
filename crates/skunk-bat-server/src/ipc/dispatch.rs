@@ -404,17 +404,21 @@ fn dispatch_method_gate_status(id: serde_json::Value, gate: &MethodGate) -> Resp
     )
 }
 
-/// BTSP transport capabilities.
+/// BTSP transport capabilities — protocol version, ciphers, bond types, fallback.
 fn dispatch_btsp_capabilities(id: serde_json::Value) -> Response {
+    use super::transport::negotiate::BTSP_PROTOCOL_VERSION;
     Response::success(
         id,
         serde_json::json!({
             "protocol": "btsp-v1",
+            "version": BTSP_PROTOCOL_VERSION,
             "phase": 3,
             "ciphers": ["chacha20-poly1305", "null"],
             "preferred": "chacha20-poly1305",
             "key_derivation": "hkdf-sha256",
-            "handshake": "btsp.negotiate"
+            "handshake": "btsp.negotiate",
+            "bond_types": ["Covalent", "Metallic", "Ionic"],
+            "fallback": "null"
         }),
     )
 }

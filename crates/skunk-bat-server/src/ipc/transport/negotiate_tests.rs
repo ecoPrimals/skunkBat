@@ -162,7 +162,7 @@ async fn negotiate_chacha_with_key() {
 #[test]
 fn select_best_cipher_no_key_always_null() {
     let offered = vec![CipherSuite::ChaCha20Poly1305];
-    assert_eq!(select_best_cipher(&offered, false), CipherSuite::Null);
+    assert_eq!(select_best_cipher(&offered, false, None), CipherSuite::Null);
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn select_best_cipher_prefers_chacha20() {
         CipherSuite::HmacPlain,
     ];
     assert_eq!(
-        select_best_cipher(&offered, true),
+        select_best_cipher(&offered, true, None),
         CipherSuite::ChaCha20Poly1305
     );
 }
@@ -182,7 +182,7 @@ fn select_best_cipher_prefers_chacha20() {
 fn select_best_cipher_hmac_not_implemented_falls_to_null() {
     let offered = vec![CipherSuite::Null, CipherSuite::HmacPlain];
     assert_eq!(
-        select_best_cipher(&offered, true),
+        select_best_cipher(&offered, true, None),
         CipherSuite::Null,
         "hmac-plain recognized but not implemented on wire — falls to null"
     );
@@ -191,7 +191,37 @@ fn select_best_cipher_hmac_not_implemented_falls_to_null() {
 #[test]
 fn select_best_cipher_null_only() {
     let offered = vec![CipherSuite::Null];
-    assert_eq!(select_best_cipher(&offered, true), CipherSuite::Null);
+    assert_eq!(select_best_cipher(&offered, true, None), CipherSuite::Null);
+}
+
+#[test]
+fn select_best_cipher_ionic_bond_rejects_null() {
+    let offered = vec![CipherSuite::Null];
+    assert_eq!(
+        select_best_cipher(&offered, true, Some(BondType::Ionic)),
+        CipherSuite::Null,
+        "ionic bond requires chacha20 but only null offered — rejection falls to null"
+    );
+}
+
+#[test]
+fn select_best_cipher_covalent_bond_allows_chacha20() {
+    let offered = vec![CipherSuite::ChaCha20Poly1305];
+    assert_eq!(
+        select_best_cipher(&offered, true, Some(BondType::Covalent)),
+        CipherSuite::ChaCha20Poly1305,
+        "covalent bond allows any cipher including chacha20"
+    );
+}
+
+#[test]
+fn select_best_cipher_ionic_bond_accepts_chacha20() {
+    let offered = vec![CipherSuite::ChaCha20Poly1305];
+    assert_eq!(
+        select_best_cipher(&offered, true, Some(BondType::Ionic)),
+        CipherSuite::ChaCha20Poly1305,
+        "ionic bond satisfied by chacha20"
+    );
 }
 
 #[test]

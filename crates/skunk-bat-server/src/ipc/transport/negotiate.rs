@@ -61,11 +61,14 @@ impl std::fmt::Display for CipherSuite {
     }
 }
 
+/// BTSP protocol version advertised in `btsp.negotiate` and `btsp.capabilities`.
+pub const BTSP_PROTOCOL_VERSION: &str = "1.0";
+
 /// Bond types that determine minimum cipher requirements.
 ///
-/// Used in tests to validate cipher negotiation rules. Production
-/// enforcement wires after `BearDog` bond-type discovery is live.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Covalent bonds (genetic lineage) allow any cipher including null.
+/// Metallic bonds (organizational) require at least HMAC integrity.
+/// Ionic bonds (contractual) require full AEAD encryption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BondType {
     /// Covalent (genetic lineage) — any cipher allowed including null.
@@ -79,7 +82,6 @@ pub enum BondType {
 impl BondType {
     /// Minimum cipher required by this bond type.
     #[must_use]
-    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn minimum_cipher(self) -> CipherSuite {
         match self {
             Self::Covalent => CipherSuite::Null,
@@ -263,11 +265,16 @@ pub async fn handle_negotiate(
 
     let offered_ciphers = extract_offered_ciphers(&params);
 
+    let bond_type = params
+        .get("bond_type")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|s| s.parse::<BondType>().ok());
+
     let Some(session) = registry.get(session_id).await else {
         return negotiate_error("unknown_session", "session_id not found in registry");
     };
 
-    let selected = select_best_cipher(&offered_ciphers, session.session_key.is_some());
+    let selected = select_best_cipher(&offered_ciphers, session.session_key.is_some(), bond_type);
 
     if selected == CipherSuite::Null {
         tracing::info!(
@@ -276,8 +283,10 @@ pub async fn handle_negotiate(
         );
         return NegotiateOutcome {
             response: serde_json::json!({
+                "version": BTSP_PROTOCOL_VERSION,
                 "cipher": "null",
-                "server_nonce": ""
+                "server_nonce": "",
+                "fallback": true
             }),
             session_keys: None,
         };
@@ -312,8 +321,10 @@ pub async fn handle_negotiate(
 
     NegotiateOutcome {
         response: serde_json::json!({
+            "version": BTSP_PROTOCOL_VERSION,
             "cipher": selected.as_str(),
-            "server_nonce": server_nonce_b64
+            "server_nonce": server_nonce_b64,
+            "fallback": false
         }),
         session_keys: derived_keys,
     }
@@ -338,19 +349,48 @@ fn extract_offered_ciphers(params: &serde_json::Value) -> Vec<CipherSuite> {
     }
 }
 
-/// Select the best cipher from client offers, respecting key availability.
+/// Select the best cipher from client offers, respecting key availability
+/// and optional bond-type minimum requirements.
 ///
 /// `HmacPlain` is recognized in the protocol but not yet implemented on
 /// the wire — treated as `Null` until a frame-level HMAC path exists.
-fn select_best_cipher(offered: &[CipherSuite], has_key: bool) -> CipherSuite {
+fn select_best_cipher(
+    offered: &[CipherSuite],
+    has_key: bool,
+    bond_type: Option<BondType>,
+) -> CipherSuite {
     if !has_key {
         return CipherSuite::Null;
     }
 
-    if offered.contains(&CipherSuite::ChaCha20Poly1305) {
+    let selected = if offered.contains(&CipherSuite::ChaCha20Poly1305) {
         CipherSuite::ChaCha20Poly1305
     } else {
         CipherSuite::Null
+    };
+
+    if let Some(bond) = bond_type {
+        let minimum = bond.minimum_cipher();
+        if cipher_strength(selected) < cipher_strength(minimum) {
+            tracing::warn!(
+                bond_type = %bond,
+                selected = %selected,
+                minimum = %minimum,
+                "bond type requires stronger cipher than negotiated — rejecting"
+            );
+            return CipherSuite::Null;
+        }
+    }
+
+    selected
+}
+
+/// Numeric strength ordering for cipher comparison.
+const fn cipher_strength(c: CipherSuite) -> u8 {
+    match c {
+        CipherSuite::Null => 0,
+        CipherSuite::HmacPlain => 1,
+        CipherSuite::ChaCha20Poly1305 => 2,
     }
 }
 
