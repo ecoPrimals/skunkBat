@@ -405,7 +405,9 @@ async fn respond_to_probe<S: tokio::io::AsyncWrite + Unpin>(stream: &mut S) {
         tracing::debug!("Probe response write failed: {e}");
         return;
     }
-    let _ = stream.flush().await;
+    if let Err(e) = stream.flush().await {
+        tracing::debug!("Probe response flush failed: {e}");
+    }
 }
 
 /// Record transport layer path for topology validation.

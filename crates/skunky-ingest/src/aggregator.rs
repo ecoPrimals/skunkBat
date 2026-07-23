@@ -10,6 +10,9 @@ use serde::Serialize;
 
 use crate::caddy::LogEntry;
 
+/// Fallback port when no port is present in the Caddy host header.
+const DEFAULT_HTTPS_PORT: u16 = 443;
+
 /// Aggregated observation ready for `baseline.observe` JSON-RPC.
 ///
 /// Field layout matches `skunk_bat_core::threats::types::Observation`
@@ -86,14 +89,12 @@ impl IpBucket {
             self.methods.insert(entry.request.method.clone());
         }
 
-        // Caddy serves HTTPS — port derived from host header if present,
-        // otherwise defaults to 443.
         let port = entry
             .request
             .host
             .rsplit_once(':')
             .and_then(|(_, p)| p.parse().ok())
-            .unwrap_or(443);
+            .unwrap_or(DEFAULT_HTTPS_PORT);
         self.ports.insert(port);
     }
 }

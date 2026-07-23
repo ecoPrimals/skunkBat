@@ -324,8 +324,10 @@ impl DefenseEngine {
         let Ok(map) = self.quarantine_map.lock() else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::warn!("Quarantine persist dir creation failed: {e}");
         }
         match serde_json::to_string_pretty(&*map) {
             Ok(json) => {

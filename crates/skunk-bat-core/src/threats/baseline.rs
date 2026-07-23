@@ -41,6 +41,7 @@ pub fn normal_baseline_with_port(self_port: u16) -> Vec<Observation> {
 }
 
 /// Convenience wrapper using the default self-port.
+#[cfg(test)]
 #[must_use]
 pub fn normal_baseline() -> Vec<Observation> {
     build_baseline(DEFAULT_SELF_PORT)

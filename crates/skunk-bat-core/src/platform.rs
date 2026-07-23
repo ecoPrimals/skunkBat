@@ -48,7 +48,7 @@ fn uid_fallback() -> u32 {
 /// On Linux, reads `/proc/loadavg`. On other platforms, parses `uptime` output.
 /// Returns 0.0 if the load cannot be determined.
 #[must_use]
-pub fn system_load_normalized() -> f64 {
+pub(crate) fn system_load_normalized() -> f64 {
     let raw = raw_load_average();
 
     #[expect(clippy::cast_precision_loss, reason = "CPU count fits in f64")]

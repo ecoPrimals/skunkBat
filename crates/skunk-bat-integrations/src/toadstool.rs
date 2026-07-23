@@ -15,12 +15,9 @@ use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::reconnaissance::{Node, NodeStatus, PrimalDiscovery};
 use std::time::SystemTime;
 
-/// Default RPC timeout for discovery calls (ms).
+/// RPC timeout for discovery calls (ms) — delegates to shared integration default.
 fn default_timeout_ms() -> u64 {
-    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5000)
+    super::rpc::integration_timeout_ms()
 }
 
 /// Discovery client for capability-based primal lookup.

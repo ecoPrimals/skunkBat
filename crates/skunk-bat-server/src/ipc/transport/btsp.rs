@@ -75,9 +75,13 @@ pub fn derive_handshake_key_from_env() -> Option<Vec<u8>> {
     use hkdf::Hkdf;
     use sha2::Sha256;
 
+    const MIN_FAMILY_SEED_BYTES: usize = 16;
+
     let seed_str = std::env::var(skunk_bat_core::env_keys::FAMILY_SEED).ok()?;
-    if seed_str.len() < 16 {
-        tracing::warn!("FAMILY_SEED too short for BTSP key derivation (minimum 16 bytes)");
+    if seed_str.len() < MIN_FAMILY_SEED_BYTES {
+        tracing::warn!(
+            "FAMILY_SEED too short for BTSP key derivation (minimum {MIN_FAMILY_SEED_BYTES} bytes)"
+        );
         return None;
     }
 

@@ -16,12 +16,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
-/// Default RPC timeout for federation calls (ms).
+/// RPC timeout for federation calls (ms) — delegates to shared integration default.
 fn default_timeout_ms() -> u64 {
-    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5000)
+    super::rpc::integration_timeout_ms()
 }
 
 /// Federation client for threat intelligence broadcasting.
@@ -290,6 +287,9 @@ impl ThreatBroadcaster for FederationThreatBroadcaster {
 pub async fn run_federation_loop(audit_log: skunk_bat_core::AuditLog, client: FederationClient) {
     use skunk_bat_core::observability::audit_log::{EventKind, EventSeverity};
 
+    const DEFAULT_POLL_SECS: u64 = 10;
+    const DEFAULT_BATCH_SIZE: usize = 50;
+
     let broadcaster = FederationThreatBroadcaster::new(client);
     let mut cursor: u64 = audit_log.latest_seq().await;
 
@@ -298,11 +298,11 @@ pub async fn run_federation_loop(audit_log: skunk_bat_core::AuditLog, client: Fe
     let poll_secs = std::env::var(skunk_bat_core::env_keys::SKUNKBAT_FEDERATION_POLL_SECS)
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(10u64);
+        .unwrap_or(DEFAULT_POLL_SECS);
     let batch_size: usize = std::env::var(skunk_bat_core::env_keys::SKUNKBAT_FEDERATION_BATCH_SIZE)
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(50);
+        .unwrap_or(DEFAULT_BATCH_SIZE);
 
     loop {
         tokio::time::sleep(Duration::from_secs(poll_secs)).await;

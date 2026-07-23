@@ -14,12 +14,9 @@
 use skunk_bat_core::error::SkunkBatError;
 use skunk_bat_core::threats::traits::LineageVerifier;
 
-/// Default RPC timeout for lineage calls (ms).
+/// RPC timeout for lineage calls (ms) — delegates to shared integration default.
 fn default_timeout_ms() -> u64 {
-    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3000)
+    super::rpc::integration_timeout_ms()
 }
 
 /// Remote lineage verifier backed by a runtime-discovered capability provider.

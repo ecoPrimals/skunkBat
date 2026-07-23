@@ -102,6 +102,22 @@ struct RpcResponseError {
     message: String,
 }
 
+/// Default integration RPC timeout in milliseconds.
+///
+/// All integration clients (bearDog, songBird, toadStool) share this default
+/// when `SKUNKBAT_INTEGRATION_TIMEOUT_MS` is not set.
+const DEFAULT_INTEGRATION_TIMEOUT_MS: u64 = 5000;
+
+/// Read integration RPC timeout from `SKUNKBAT_INTEGRATION_TIMEOUT_MS` env var,
+/// falling back to [`DEFAULT_INTEGRATION_TIMEOUT_MS`].
+#[must_use]
+pub fn integration_timeout_ms() -> u64 {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_INTEGRATION_TIMEOUT_MS)
+}
+
 /// Resolve the BIOMEOS socket directory from environment.
 ///
 /// Priority: `BIOMEOS_SOCKET_DIR` → `$XDG_RUNTIME_DIR/biomeos` → `/run/user/{uid}/biomeos`.

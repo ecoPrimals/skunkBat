@@ -257,6 +257,9 @@ pub(super) async fn dispatch_threat_report(
 /// Params (all optional):
 /// - `since_seq`: sequence cursor (default 0, returns events after this seq)
 /// - `limit`: max events to return (default 100, max 1000)
+const AUDIT_LOG_DEFAULT_PAGE: u64 = 100;
+const AUDIT_LOG_MAX_PAGE: u64 = 1000;
+
 pub(super) async fn dispatch_audit_log(
     state: &Arc<RwLock<App>>,
     id: serde_json::Value,
@@ -272,8 +275,8 @@ pub(super) async fn dispatch_audit_log(
         .as_ref()
         .and_then(|p| p.get("limit"))
         .and_then(serde_json::Value::as_u64)
-        .unwrap_or(100)
-        .min(1000) as usize;
+        .unwrap_or(AUDIT_LOG_DEFAULT_PAGE)
+        .min(AUDIT_LOG_MAX_PAGE) as usize;
 
     let sb = state.read().await;
     let events = sb.audit_log().query(since_seq, limit).await;
