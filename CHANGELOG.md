@@ -6,6 +6,13 @@ All notable changes to skunkBat are documented here.
 
 ### Added
 
+- **Server-side cipher floor policy** (Wave 150x pen-test response): New
+  `SKUNKBAT_CIPHER_FLOOR` env var sets server minimum cipher regardless of
+  client `bond_type`. Prevents cipher-downgrade attacks where clients omit
+  `bond_type` to negotiate null. `select_best_cipher_with_floor()` inner
+  function enables safe unit testing without env mutation. 6 new tests.
+- **`BindMode` typed error**: Replaced `type Err = String` with
+  `BindModeParseError` (thiserror-derived) for idiomatic Rust error handling.
 - **Process spawn-rate anomaly detection** (Wave 150x): New 7th threat category
   `ProcessSpawnAnomaly` detecting crash-loop services via `/proc/stat` fork
   counter rate tracking. `SpawnRateTracker` in `platform.rs` samples total

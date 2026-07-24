@@ -85,7 +85,7 @@ Full spec compliance including:
 
 ## Tests
 
-580 tests passing (core + integrations + server + transport + chaos), all workspace.
+586 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, spawn-rate anomaly, riboCipher signal classification, JSON-RPC
@@ -104,7 +104,7 @@ workspace-wide. `#[expect(reason)]` lint standard — zero `#[allow]` in product
 Zero production `unreachable!()` panics in dispatch (evolved to `METHOD_NOT_FOUND` errors).
 Only 1 `unreachable!()` remains (compute-only future invariant in sync executor).
 
-**580 tests** passing across all workspace crates (4 crates). Max production file 684 lines — no
+**586 tests** passing across all workspace crates (4 crates). Max production file 700 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
 via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
 to env vars with defaults (session TTL, sweep, forwarding, registration).

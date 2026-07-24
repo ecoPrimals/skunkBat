@@ -26,7 +26,8 @@ packet contents or tracking user behavior.
 - **BTSP Phase 1/2/3**: Socket naming, BearDog-delegated handshake on TCP + UDS,
   first-byte peek for biomeOS composition bypass, `btsp.negotiate` cipher negotiation
   with auto-upgrade to `ChaCha20-Poly1305` encrypted framing, bond-type cipher
-  enforcement (Covalent/Metallic/Ionic), protocol version `1.0`
+  enforcement (Covalent/Metallic/Ionic), server-side cipher floor policy
+  (`SKUNKBAT_CIPHER_FLOOR`), protocol version `1.0`
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -231,7 +232,7 @@ No primal names are hardcoded in production code.
 - Zero dispatch `unreachable!()` panics — all evolved to `METHOD_NOT_FOUND` errors
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 580 tests passing (lib + integration + chaos), full workspace
+- 586 tests passing (lib + integration + chaos), full workspace
 - All 30 IPC methods stability-tiered (28 application + 2 transport; Stable; `auth.*` beta)
 - Cross-architecture: `cargo check --target x86_64-pc-windows-gnu` passes clean;
   musl static builds via `.cargo/config.toml` aliases (`build-x64`, `build-arm64`)

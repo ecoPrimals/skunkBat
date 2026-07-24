@@ -84,16 +84,23 @@ impl std::fmt::Display for BindMode {
     }
 }
 
+/// Error returned when parsing an unrecognized `PRIMAL_BIND_MODE` value.
+#[derive(Debug, thiserror::Error)]
+#[error("unknown bind mode: {value} (expected: uds-only, tcp-only, fallback)")]
+struct BindModeParseError {
+    value: String,
+}
+
 impl std::str::FromStr for BindMode {
-    type Err = String;
+    type Err = BindModeParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().replace('-', "_").as_str() {
             "uds_only" | "uds" => Ok(Self::UdsOnly),
             "tcp_only" | "tcp" => Ok(Self::TcpOnly),
             "fallback" | "both" => Ok(Self::Fallback),
-            other => Err(format!(
-                "unknown bind mode: {other} (expected: uds-only, tcp-only, fallback)"
-            )),
+            _ => Err(BindModeParseError {
+                value: s.to_owned(),
+            }),
         }
     }
 }

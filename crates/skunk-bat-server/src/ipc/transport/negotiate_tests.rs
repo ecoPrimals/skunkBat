@@ -251,6 +251,73 @@ fn extract_offered_ciphers_fallback_null() {
     assert_eq!(ciphers, vec![CipherSuite::Null]);
 }
 
+// ── Cipher Floor Tests ────────────────────────────────────────────
+
+#[test]
+fn cipher_floor_null_allows_everything() {
+    let offered = vec![CipherSuite::Null];
+    assert_eq!(
+        select_best_cipher_with_floor(&offered, true, None, CipherSuite::Null),
+        CipherSuite::Null,
+        "null floor allows null cipher"
+    );
+}
+
+#[test]
+fn cipher_floor_chacha_rejects_null() {
+    let offered = vec![CipherSuite::Null];
+    assert_eq!(
+        select_best_cipher_with_floor(&offered, true, None, CipherSuite::ChaCha20Poly1305),
+        CipherSuite::Null,
+        "chacha20 floor + only null offered → rejected to null fallback"
+    );
+}
+
+#[test]
+fn cipher_floor_chacha_accepts_chacha() {
+    let offered = vec![CipherSuite::ChaCha20Poly1305];
+    assert_eq!(
+        select_best_cipher_with_floor(&offered, true, None, CipherSuite::ChaCha20Poly1305),
+        CipherSuite::ChaCha20Poly1305,
+        "chacha20 floor + chacha20 offered → accepted"
+    );
+}
+
+#[test]
+fn cipher_floor_hmac_rejects_null() {
+    let offered = vec![CipherSuite::Null];
+    assert_eq!(
+        select_best_cipher_with_floor(&offered, true, None, CipherSuite::HmacPlain),
+        CipherSuite::Null,
+        "hmac floor + only null offered → rejected"
+    );
+}
+
+#[test]
+fn cipher_floor_combined_with_bond_type() {
+    let offered = vec![CipherSuite::ChaCha20Poly1305];
+    assert_eq!(
+        select_best_cipher_with_floor(
+            &offered,
+            true,
+            Some(BondType::Ionic),
+            CipherSuite::ChaCha20Poly1305
+        ),
+        CipherSuite::ChaCha20Poly1305,
+        "both ionic bond and chacha20 floor satisfied"
+    );
+}
+
+#[test]
+fn cipher_floor_no_key_still_returns_null() {
+    let offered = vec![CipherSuite::ChaCha20Poly1305];
+    assert_eq!(
+        select_best_cipher_with_floor(&offered, false, None, CipherSuite::ChaCha20Poly1305),
+        CipherSuite::Null,
+        "no key material → null regardless of floor"
+    );
+}
+
 // ── Key Derivation Tests ──────────────────────────────────────────
 
 #[test]

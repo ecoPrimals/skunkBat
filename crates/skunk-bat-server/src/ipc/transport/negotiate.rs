@@ -349,8 +349,34 @@ fn extract_offered_ciphers(params: &serde_json::Value) -> Vec<CipherSuite> {
     }
 }
 
-/// Select the best cipher from client offers, respecting key availability
-/// and optional bond-type minimum requirements.
+/// Read server-side cipher floor from `SKUNKBAT_CIPHER_FLOOR` env.
+///
+/// Returns `CipherSuite::Null` (no floor) when unset or unrecognized.
+fn server_cipher_floor() -> CipherSuite {
+    std::env::var(skunk_bat_core::env_keys::SKUNKBAT_CIPHER_FLOOR)
+        .ok()
+        .and_then(|v| {
+            let cs: CipherSuite = v.parse().unwrap_or(CipherSuite::Null);
+            if cs == CipherSuite::Null {
+                None
+            } else {
+                Some(cs)
+            }
+        })
+        .unwrap_or(CipherSuite::Null)
+}
+
+/// Select the best cipher from client offers, respecting key availability,
+/// optional bond-type minimum requirements, and server-side cipher floor.
+///
+/// Enforcement order:
+/// 1. No key material → null (can't encrypt without keys)
+/// 2. Select strongest from offered ciphers
+/// 3. Apply bond-type minimum (if supplied by client)
+/// 4. Apply server cipher floor (if configured via `SKUNKBAT_CIPHER_FLOOR`)
+///
+/// When the selected cipher fails to meet either minimum, negotiation
+/// falls back to null — the caller decides whether to proceed or disconnect.
 ///
 /// `HmacPlain` is recognized in the protocol but not yet implemented on
 /// the wire — treated as `Null` until a frame-level HMAC path exists.
@@ -358,6 +384,16 @@ fn select_best_cipher(
     offered: &[CipherSuite],
     has_key: bool,
     bond_type: Option<BondType>,
+) -> CipherSuite {
+    select_best_cipher_with_floor(offered, has_key, bond_type, server_cipher_floor())
+}
+
+/// Inner cipher selection with an explicit floor parameter (testable without env mutation).
+fn select_best_cipher_with_floor(
+    offered: &[CipherSuite],
+    has_key: bool,
+    bond_type: Option<BondType>,
+    floor: CipherSuite,
 ) -> CipherSuite {
     if !has_key {
         return CipherSuite::Null;
@@ -380,6 +416,15 @@ fn select_best_cipher(
             );
             return CipherSuite::Null;
         }
+    }
+
+    if cipher_strength(selected) < cipher_strength(floor) {
+        tracing::warn!(
+            selected = %selected,
+            floor = %floor,
+            "server cipher floor not met — rejecting"
+        );
+        return CipherSuite::Null;
     }
 
     selected

@@ -151,6 +151,10 @@ pub const SKUNKBAT_DOS_LOAD_THRESHOLD: &str = "SKUNKBAT_DOS_LOAD_THRESHOLD";
 /// Process spawn rate (forks/sec) that triggers a `ProcessSpawnAnomaly` threat (default: 50.0).
 pub const SKUNKBAT_SPAWN_RATE_THRESHOLD: &str = "SKUNKBAT_SPAWN_RATE_THRESHOLD";
 
+/// Server-side cipher floor for `btsp.negotiate` — minimum cipher the server will accept
+/// regardless of client `bond_type`. Values: `null` (default), `hmac-plain`, `chacha20-poly1305`.
+pub const SKUNKBAT_CIPHER_FLOOR: &str = "SKUNKBAT_CIPHER_FLOOR";
+
 /// Confidence assigned when lineage verification fails (default: 0.95).
 pub const SKUNKBAT_GENETIC_CONFIDENCE: &str = "SKUNKBAT_GENETIC_CONFIDENCE";
 
