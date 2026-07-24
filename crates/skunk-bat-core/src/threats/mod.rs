@@ -3,7 +3,7 @@
 
 //! Threat detection for skunkBat.
 //!
-//! Six threat categories, each backed by pluggable trait implementations
+//! Seven threat categories, each backed by pluggable trait implementations
 //! discovered at runtime:
 //!
 //! | Category | Trait | Default |
@@ -14,6 +14,7 @@
 //! | Intrusion (signature) | — | built-in |
 //! | Resource (exhaustion) | — | built-in |
 //! | Configuration drift | — | built-in (snapshot comparison) |
+//! | Spawn-rate anomaly | — | built-in (`/proc/stat` fork counter) |
 
 pub mod baseline;
 mod behavioral;
@@ -52,6 +53,8 @@ pub struct ThreatDetector<
     /// Connection paths observed since the last `detect()` call.
     /// Fed by the transport layer via `record_connection_path()`.
     observed_paths: Mutex<Vec<Vec<u8>>>,
+    /// Process spawn rate tracker for crash-loop detection.
+    spawn_tracker: Mutex<crate::platform::SpawnRateTracker>,
     /// Snapshot of config at startup for drift detection.
     config_snapshot: types::ConfigSnapshot,
 }
@@ -114,6 +117,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             baseline_profiler: RwLock::new(baseline_profiler),
             topology_validator,
             observed_paths: Mutex::new(Vec::new()),
+            spawn_tracker: Mutex::new(crate::platform::SpawnRateTracker::new()),
             config_snapshot,
         }
     }
@@ -164,6 +168,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         threats.extend(self.detect_behavioral_anomalies().await?);
         threats.extend(self.detect_intrusions().await?);
         threats.extend(self.detect_resource_exhaustion().await?);
+        threats.extend(self.detect_spawn_anomalies().await?);
         threats.extend(self.detect_topology_threats().await?);
         threats.extend(self.detect_configuration_drift());
 

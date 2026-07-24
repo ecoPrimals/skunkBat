@@ -76,6 +76,17 @@ pub enum ThreatType {
         /// Observed value
         observed: String,
     },
+    /// Anomalous process spawn rate (crash-loop detection).
+    ///
+    /// Fires when the system-wide fork rate exceeds a configurable threshold,
+    /// indicating runaway service restarts (e.g. systemd `Restart=always` on
+    /// a broken binary). See Wave 150x crash-loop divergence.
+    ProcessSpawnAnomaly {
+        /// Measured spawns per second.
+        rate: f64,
+        /// Configured threshold that was exceeded.
+        threshold: f64,
+    },
     /// HTTP-layer anomaly (outer membrane).
     HttpAnomaly {
         /// Anomalous dimension (e.g. `request_rate`, `path_diversity`, `error_rate_4xx`)

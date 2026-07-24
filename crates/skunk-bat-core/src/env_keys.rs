@@ -148,6 +148,9 @@ pub const SKUNKBAT_SIGMA_THRESHOLD: &str = "SKUNKBAT_SIGMA_THRESHOLD";
 /// Normalized system load (0.0–1.0) that triggers a `DoS` threat (default: 0.9).
 pub const SKUNKBAT_DOS_LOAD_THRESHOLD: &str = "SKUNKBAT_DOS_LOAD_THRESHOLD";
 
+/// Process spawn rate (forks/sec) that triggers a `ProcessSpawnAnomaly` threat (default: 50.0).
+pub const SKUNKBAT_SPAWN_RATE_THRESHOLD: &str = "SKUNKBAT_SPAWN_RATE_THRESHOLD";
+
 /// Confidence assigned when lineage verification fails (default: 0.95).
 pub const SKUNKBAT_GENETIC_CONFIDENCE: &str = "SKUNKBAT_GENETIC_CONFIDENCE";
 

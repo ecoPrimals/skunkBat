@@ -8,14 +8,14 @@ observability — all metadata-only, no content inspection by architecture.
 
 | Crate | Role | Type |
 |-------|------|------|
-| `skunk-bat-core` | Threat detection (6 types), defense orchestration, observability, universal adapter | library |
+| `skunk-bat-core` | Threat detection (7 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2/3 (BearDog-delegated handshake + `btsp.negotiate`), Wire Standard L2/L3 | binary |
 | `skunky-ingest` | Live Caddy log tailer feeding HTTP traffic observations into behavioral profiler via `baseline.observe` | binary |
 
 ## Key Concepts
 
-- **6 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion), Configuration Drift
+- **7 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion), Configuration Drift, Process Spawn Anomaly (crash-loop)
 - **Graduated Response**: Monitor, Quarantine, Block — always preserving user authority
 - **Statistical Baselines**: Learns the owner's network normal via `VecDeque` rolling window profiler
 - **Universal Adapter**: Capability-based discovery and announcement via `primal_foundation` traits
@@ -85,10 +85,11 @@ Full spec compliance including:
 
 ## Tests
 
-571 tests passing (core + integrations + server + transport + chaos), all workspace.
+580 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
-intrusion heuristics, riboCipher signal classification, JSON-RPC types all exercised.
+intrusion heuristics, spawn-rate anomaly, riboCipher signal classification, JSON-RPC
+types all exercised.
 Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
 encrypted loop verification, plaintext-after-upgrade rejection, encrypted batch requests,
 and encrypted notification (no-response) verification.
@@ -103,7 +104,7 @@ workspace-wide. `#[expect(reason)]` lint standard — zero `#[allow]` in product
 Zero production `unreachable!()` panics in dispatch (evolved to `METHOD_NOT_FOUND` errors).
 Only 1 `unreachable!()` remains (compute-only future invariant in sync executor).
 
-**571 tests** passing across all workspace crates (4 crates). Max production file 684 lines — no
+**580 tests** passing across all workspace crates (4 crates). Max production file 684 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
 via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
 to env vars with defaults (session TTL, sweep, forwarding, registration).

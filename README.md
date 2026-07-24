@@ -14,9 +14,9 @@ defensive reconnaissance. It detects threats, orchestrates graduated responses,
 and federates threat intelligence across trusted peers — all without inspecting
 packet contents or tracking user behavior.
 
-- **6 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral
+- **7 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral
   (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion),
-  Configuration Drift
+  Configuration Drift, Process Spawn Anomaly (crash-loop detection)
 - **Composable Primitives**: `baseline`, `metadata`, `response`, `lineage`, `health` —
   each independently useful as standalone capabilities
 - **Thymic Selection Model**: Self/non-self discrimination via BearDog lineage (design phase)
@@ -57,7 +57,7 @@ skunkBat/
 
 | Crate | Role | Type |
 |-------|------|------|
-| `skunk-bat-core` | Threat detection (6 types), defense orchestration, observability, universal adapter | library |
+| `skunk-bat-core` | Threat detection (7 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin CLI with `server`, `health`, `scan`, `detect` subcommands | binary |
 | `skunky-ingest` | Live Caddy log tailer feeding traffic observations into behavioral profiler | binary |
@@ -189,6 +189,7 @@ All detection parameters are configurable via `SkunkBatConfig.thresholds`
 |-------|---------|-------------|
 | `sigma_threshold` | 2.5 | Sigma deviation triggering anomaly report |
 | `dos_load_threshold` | 0.9 | System load (0–1) triggering DoS alert |
+| `spawn_rate_threshold` | 50.0 | Process forks/sec triggering crash-loop alert |
 | `intrusion_sensitive_ports` | 22, 23, 3389, 445, 135 | Ports triggering port-scan detection |
 | `intrusion_exfil_volume` | 100,000 | Minimum bytes before exfil heuristic |
 | `intrusion_exfil_ratio` | 10,000 | Traffic/connection ratio threshold |
@@ -196,8 +197,8 @@ All detection parameters are configurable via `SkunkBatConfig.thresholds`
 | `quarantine_high_confidence` | 0.7 | Confidence for quarantine + alert |
 
 Thresholds can also be set via environment variables: `SKUNKBAT_SIGMA_THRESHOLD`,
-`SKUNKBAT_DOS_LOAD_THRESHOLD`, `SKUNKBAT_GENETIC_CONFIDENCE`, `SKUNKBAT_BEHAVIORAL_WINDOW`,
-`SKUNKBAT_BEHAVIORAL_MIN_OBS`, `SKUNKBAT_AUDIT_LOG_CAPACITY`.
+`SKUNKBAT_DOS_LOAD_THRESHOLD`, `SKUNKBAT_SPAWN_RATE_THRESHOLD`, `SKUNKBAT_GENETIC_CONFIDENCE`,
+`SKUNKBAT_BEHAVIORAL_WINDOW`, `SKUNKBAT_BEHAVIORAL_MIN_OBS`, `SKUNKBAT_AUDIT_LOG_CAPACITY`.
 
 ---
 
@@ -230,7 +231,7 @@ No primal names are hardcoded in production code.
 - Zero dispatch `unreachable!()` panics — all evolved to `METHOD_NOT_FOUND` errors
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 571 tests passing (lib + integration + chaos), full workspace
+- 580 tests passing (lib + integration + chaos), full workspace
 - All 30 IPC methods stability-tiered (28 application + 2 transport; Stable; `auth.*` beta)
 - Cross-architecture: `cargo check --target x86_64-pc-windows-gnu` passes clean;
   musl static builds via `.cargo/config.toml` aliases (`build-x64`, `build-arm64`)

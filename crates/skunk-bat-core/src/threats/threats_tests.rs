@@ -727,3 +727,89 @@ async fn test_observe_updates_profiler() {
         .await
         .expect("observe should succeed");
 }
+
+#[test]
+fn test_process_spawn_anomaly_type_creation() {
+    let tt = ThreatType::ProcessSpawnAnomaly {
+        rate: 120.0,
+        threshold: 50.0,
+    };
+    assert!(matches!(tt, ThreatType::ProcessSpawnAnomaly { .. }));
+}
+
+#[test]
+fn test_process_spawn_anomaly_serde_roundtrip() {
+    let tt = ThreatType::ProcessSpawnAnomaly {
+        rate: 75.5,
+        threshold: 50.0,
+    };
+    let json = serde_json::to_string(&tt).expect("serialize");
+    let parsed: ThreatType = serde_json::from_str(&json).expect("deserialize");
+    assert!(
+        matches!(parsed, ThreatType::ProcessSpawnAnomaly { rate, threshold }
+            if (rate - 75.5).abs() < f64::EPSILON && (threshold - 50.0).abs() < f64::EPSILON)
+    );
+}
+
+#[test]
+#[expect(clippy::float_cmp, reason = "exact default comparison in test")]
+fn test_spawn_rate_threshold_defaults() {
+    let t = crate::config::ThreatThresholds::default();
+    assert_eq!(t.spawn_rate_threshold, 50.0);
+    assert_eq!(t.spawn_rate_confidence, 0.85);
+}
+
+#[tokio::test]
+async fn test_detect_spawn_anomaly_below_threshold() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.thresholds.spawn_rate_threshold = 50.0;
+
+    let detector = ThreatDetector::new(&config);
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        !threats
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::ProcessSpawnAnomaly { .. })),
+        "Normal system should not trigger spawn-rate anomaly on first detect (no baseline)"
+    );
+}
+
+#[tokio::test]
+async fn test_detect_spawn_anomaly_disabled() {
+    let config = SkunkBatConfig {
+        features: FeatureFlags {
+            threat_detection: false,
+            ..FeatureFlags::default()
+        },
+        ..test_config()
+    };
+    let detector = ThreatDetector::new(&config);
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        threats.is_empty(),
+        "Disabled detector should produce no threats including spawn-rate"
+    );
+}
+
+#[tokio::test]
+async fn test_spawn_tracker_used_in_detect() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.thresholds.spawn_rate_threshold = 0.0;
+
+    let detector = ThreatDetector::new(&config);
+
+    let _warmup = detector.detect().await.expect("detect");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let threats = detector.detect().await.expect("detect");
+
+    if cfg!(target_os = "linux") {
+        assert!(
+            threats
+                .iter()
+                .any(|t| matches!(t.threat_type, ThreatType::ProcessSpawnAnomaly { .. })),
+            "threshold=0 on Linux should fire (any forks exceed 0)"
+        );
+    }
+}

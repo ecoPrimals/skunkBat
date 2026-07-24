@@ -240,6 +240,54 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
     }
 }
 
+impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
+    /// Detect anomalous process spawn rates (crash-loop indicator).
+    ///
+    /// Reads the system-wide fork counter from `/proc/stat` (Linux) and
+    /// computes spawns/second since the last sample. Sustained rates above
+    /// the configured threshold indicate runaway service restarts —
+    /// see Wave 150x crash-loop divergence (29,081 restarts undetected).
+    #[expect(
+        clippy::unused_async,
+        reason = "async signature for consistency with other detect_* methods"
+    )]
+    pub(super) async fn detect_spawn_anomalies(&self) -> Result<Vec<Threat>, SkunkBatError> {
+        let rate = {
+            let mut tracker = self
+                .spawn_tracker
+                .lock()
+                .map_err(|_| SkunkBatError::Internal("spawn_tracker lock poisoned".into()))?;
+            tracker.measure_rate()
+        };
+
+        if rate > self.thresholds.spawn_rate_threshold {
+            tracing::warn!(
+                rate,
+                threshold = self.thresholds.spawn_rate_threshold,
+                "Anomalous process spawn rate detected"
+            );
+            return Ok(vec![Threat {
+                id: format!("spawn-rate-{}", Self::threat_id_suffix()),
+                threat_type: ThreatType::ProcessSpawnAnomaly {
+                    rate,
+                    threshold: self.thresholds.spawn_rate_threshold,
+                },
+                severity: Severity::High,
+                source: "system".to_owned(),
+                target: "local".to_owned(),
+                detected_at: SystemTime::now(),
+                description: format!(
+                    "Process spawn rate {rate:.1}/s exceeds threshold {:.1}/s — possible crash-loop",
+                    self.thresholds.spawn_rate_threshold
+                ),
+                confidence: self.thresholds.spawn_rate_confidence,
+            }]);
+        }
+
+        Ok(Vec::new())
+    }
+}
+
 fn anomaly_severity(thresholds: &ThreatThresholds, deviation: f64) -> Severity {
     if deviation > thresholds.severity_high_deviation {
         Severity::High

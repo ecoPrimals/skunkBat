@@ -6,6 +6,21 @@ All notable changes to skunkBat are documented here.
 
 ### Added
 
+- **Process spawn-rate anomaly detection** (Wave 150x): New 7th threat category
+  `ProcessSpawnAnomaly` detecting crash-loop services via `/proc/stat` fork
+  counter rate tracking. `SpawnRateTracker` in `platform.rs` samples total
+  forks since boot and computes spawns/second. Configurable threshold
+  (`spawn_rate_threshold`, default 50.0 forks/sec) + confidence
+  (`spawn_rate_confidence`, default 0.85). Env-overridable via
+  `SKUNKBAT_SPAWN_RATE_THRESHOLD`. Flows through existing `security.detect` +
+  `threat.report` IPC methods. Windows-safe (returns 0.0 on non-Linux).
+  Motivated by Wave 150x crash-loop divergence (29,081 systemd restarts undetected).
+- **Deep debt sweep** (Wave 150w): Fix 2 silently dropped `Result`s (quarantine
+  dir creation, probe flush). Unify integration timeout to shared
+  `rpc::integration_timeout_ms()` (5000ms). Extract 6 magic numbers to named
+  constants (audit pagination, BTSP seed min, HTTPS port, federation defaults).
+  Tighten `pub` visibility (`system_load_normalized` → `pub(crate)`,
+  `normal_baseline` → `#[cfg(test)]`).
 - **Tower Atomic bond-type cipher enforcement** (Wave 150t): `BondType`
   (Covalent/Metallic/Ionic) evolved from test-only to production usage in
   `select_best_cipher()`. Ionic bonds reject null cipher, Metallic requires

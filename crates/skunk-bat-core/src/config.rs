@@ -72,6 +72,12 @@ pub struct ThreatThresholds {
     pub quarantine_critical_confidence: f64,
     /// Minimum confidence for automatic quarantine of high-severity threats.
     pub quarantine_high_confidence: f64,
+    /// System-wide process spawn rate (forks/sec) that triggers a
+    /// `ProcessSpawnAnomaly` threat. Crash-loop services typically produce
+    /// sustained rates well above normal background fork activity.
+    pub spawn_rate_threshold: f64,
+    /// Confidence assigned to spawn-rate anomaly detections.
+    pub spawn_rate_confidence: f64,
     /// Rolling window size for behavioral profiler observations.
     pub behavioral_rolling_window: usize,
     /// Minimum observations before baseline is considered established.
@@ -95,6 +101,8 @@ impl Default for ThreatThresholds {
             intrusion_portscan_confidence: 0.75,
             intrusion_exfil_confidence: 0.6,
             degraded_genetic_confidence: 0.5,
+            spawn_rate_threshold: 50.0,
+            spawn_rate_confidence: 0.85,
             topology_confidence: 0.9,
             drift_confidence: 0.85,
             quarantine_critical_confidence: 0.9,
@@ -210,6 +218,9 @@ fn hydrate_thresholds(t: &mut ThreatThresholds) {
     }
     if let Some(v) = try_env_parse::<f64>(crate::env_keys::SKUNKBAT_DOS_LOAD_THRESHOLD) {
         t.dos_load_threshold = v;
+    }
+    if let Some(v) = try_env_parse::<f64>(crate::env_keys::SKUNKBAT_SPAWN_RATE_THRESHOLD) {
+        t.spawn_rate_threshold = v;
     }
     if let Some(v) = try_env_parse::<f64>(crate::env_keys::SKUNKBAT_GENETIC_CONFIDENCE) {
         t.genetic_confidence = v;
