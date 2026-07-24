@@ -101,8 +101,7 @@ mode semantics for local, loopback, and remote callers.
 
 v0.2.18 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard — zero `#[allow]` in production code.
-Zero production `unreachable!()` panics in dispatch (evolved to `METHOD_NOT_FOUND` errors).
-Only 1 `unreachable!()` remains (compute-only future invariant in sync executor).
+Zero production `unreachable!()` panics — all evolved to proper error returns.
 
 **586 tests** passing across all workspace crates (4 crates). Max production file 700 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
@@ -121,8 +120,11 @@ excluded from negotiation (not implemented on wire — falls to null).
 
 **Tower Atomic**: Bond-type cipher enforcement live — `btsp.negotiate` accepts optional
 `bond_type` param (Covalent/Metallic/Ionic) from songBird enrollment flow. Ionic bonds
-reject null cipher (require ChaCha20-Poly1305). Protocol version `1.0` advertised in
-negotiate + capabilities responses. Fallback behavior documented in `btsp.capabilities`.
+reject null cipher (require ChaCha20-Poly1305). Server-side cipher floor policy via
+`SKUNKBAT_CIPHER_FLOOR` env — prevents cipher-downgrade when clients omit `bond_type`.
+Protocol version `1.0` advertised in negotiate + capabilities responses. Fallback
+behavior documented in `btsp.capabilities`. BTSP handshake completion deduplicated into
+`complete_btsp_handshake` helper (shared by TCP + UDS accept loops).
 
 **MethodGate**: Pre-dispatch authorization gate with `Permissive`/`Enforced` modes
 (env `SKUNKBAT_AUTH_MODE`). Origin-based trust: UDS + loopback bypass enforcement;
@@ -131,8 +133,8 @@ params. BTSP-authenticated sessions auto-elevated (`btsp:{session_id}` token).
 `defense.status` protected (exposes quarantine state). Unknown methods classified as
 Protected — gate rejects before `METHOD_NOT_FOUND` under enforcement.
 
-**Detection**: 6-category threat detection (genetic, behavioral, intrusion, resource,
-topology, configuration drift) — all wired into `detect()`. Live observation feed via `baseline.observe` IPC
+**Detection**: 7-category threat detection (genetic, behavioral, intrusion, resource,
+topology, configuration drift, process spawn anomaly) — all wired into `detect()`. Live observation feed via `baseline.observe` IPC
 and `RwLock`-wrapped profiler. Configurable thresholds. Baseline seeded from
 runtime-port-aware observations. Federation broadcast loop monitors audit log for
 `ThreatDetected` events.

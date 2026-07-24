@@ -226,10 +226,10 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - `#[expect(reason)]` lint suppression standard — zero `#[allow]` in production code
 - `cargo deny` advisory/ban/license/source checks pass; `ring` explicitly banned
-- All source files under 800 lines (production max: 684; test files exempt)
+- All source files under 800 lines (production max: 700; test files exempt)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code; zero production `unwrap()`/`expect()`
-- Zero dispatch `unreachable!()` panics — all evolved to `METHOD_NOT_FOUND` errors
+- Zero production `unreachable!()` — all evolved to proper error returns
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
 - 586 tests passing (lib + integration + chaos), full workspace

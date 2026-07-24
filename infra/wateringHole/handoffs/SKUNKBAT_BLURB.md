@@ -2,8 +2,8 @@
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
 **Version**: 0.2.18
-**Date**: Jul 22, 2026
-**Wave**: 150t
+**Date**: Jul 24, 2026
+**Wave**: 150x
 
 ---
 
@@ -11,9 +11,9 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 571 passing (0 failed, 4 crates) |
+| Tests | 586 passing (0 failed, 4 crates) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
-| Max file | 684 lines production (test files exempt from 800L cap) |
+| Max file | 700 lines production (test files exempt from 800L cap) |
 | IPC methods | 30 (28 application + 2 transport) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
@@ -27,16 +27,16 @@
 
 | Crate | Role | Type |
 |-------|------|------|
-| `skunk-bat-core` | Threat detection (6 types), defense, observability, universal adapter | library |
+| `skunk-bat-core` | Threat detection (7 types), defense, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin server (TCP + UDS + BTSP), 30 IPC methods | binary |
 | `skunky-ingest` | Live Caddy log tailer → `baseline.observe` with Cloudflare analytics stub | binary |
 
 ## What's Implemented
 
-- **6-category threat detection**: genetic (lineage), behavioral (statistical), intrusion (signature), resource (exhaustion), topology (layer-hop), configuration drift
+- **7-category threat detection**: genetic (lineage), behavioral (statistical), intrusion (signature), resource (exhaustion), topology (layer-hop), configuration drift, process spawn anomaly (crash-loop)
 - **HTTP anomaly detection**: `HttpObservation` model, HTTP-dimension profiling, `advisory_check_http()` for Tower HTTP Gateway
-- **BTSP Phase 1/2/3**: socket naming, BearDog-delegated handshake (TCP + UDS), `btsp.negotiate` with ChaCha20-Poly1305 AEAD encrypted framing, bond-type cipher enforcement (Covalent/Metallic/Ionic), protocol version `1.0`
+- **BTSP Phase 1/2/3**: socket naming, BearDog-delegated handshake (TCP + UDS), `btsp.negotiate` with ChaCha20-Poly1305 AEAD encrypted framing, bond-type cipher enforcement (Covalent/Metallic/Ionic), server-side cipher floor (`SKUNKBAT_CIPHER_FLOOR`), protocol version `1.0`
 - **riboCipher Tier 1**: signal-first routing (`0xEC` clear signal + protocol type byte)
 - **JH-5 audit log**: 1024-event ring buffer with cursor-based forwarding to provenance/attribution DAGs
 - **Federation broadcast**: monitors audit log for `ThreatDetected` events, broadcasts via Songbird
@@ -104,7 +104,9 @@ Key milestones: Wave 120 (live detection), 123 (MethodGate enforcement), 124 (me
 anomaly detection), 136b (skunky-ingest), 137b (conditional baseline + CF groundwork),
 141a (cross-architecture Phase 1), 142b (Phase 2 TransportEndpoint abstraction + deep debt sweep),
 149b (dispatch safety — unreachable!() → METHOD_NOT_FOUND errors), 150t (Tower Atomic bond-type
-cipher enforcement, platform consolidation, deep debt alloc reduction).
+cipher enforcement, platform consolidation, deep debt alloc reduction), 150w (deep debt — error
+surfacing, timeout unification, named constants), 150x (process spawn anomaly detection, cipher
+floor policy, unreachable!() elimination, BTSP handshake deduplication, BindMode typed error).
 
 ## Cascade Status
 
@@ -122,6 +124,8 @@ Both remotes at parity:
 - Zero `TODO`/`FIXME`/`HACK` in production code
 - Zero `#[allow]` in production — all `#[expect(reason)]` with justification
 - Zero production `unwrap()`/`expect()`, zero `unsafe`
-- Zero `unreachable!()` panics in dispatch (all evolved to `METHOD_NOT_FOUND`)
+- Zero `unreachable!()` in production (all evolved to proper error returns)
+- Zero `clippy::too_many_lines` suppressions (BTSP handshake deduplicated)
+- `BindMode` typed error (`BindModeParseError`) — no `String` error types
 - Cross-platform: Windows cross-check clean, musl static targets configured
-- Dimensional posture: GREEN — all dimensions clear (Wave 150t audit)
+- Dimensional posture: GREEN — all dimensions clear (Wave 150x audit)
