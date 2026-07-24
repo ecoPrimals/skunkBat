@@ -344,12 +344,12 @@ impl<B: BaselineProfiler> ProfilerHandle<'_, B> {
             return Some(Vec::new());
         }
         let future = guard.detect_anomalies(observation);
-        futures_lite_block_on(future).ok()
+        poll_ready(future).and_then(|r| r).ok()
     }
 }
 
-/// Minimal single-future `block_on` for compute-only futures.
-fn futures_lite_block_on<F: std::future::Future>(f: F) -> F::Output {
+/// Poll a compute-only future exactly once, returning an error if it yields `Pending`.
+fn poll_ready<F: std::future::Future>(f: F) -> Result<F::Output, crate::SkunkBatError> {
     use std::pin::pin;
     use std::task::{Context, Poll, Waker};
 
@@ -357,8 +357,10 @@ fn futures_lite_block_on<F: std::future::Future>(f: F) -> F::Output {
     let mut cx = Context::from_waker(waker);
     let mut f = pin!(f);
     match f.as_mut().poll(&mut cx) {
-        Poll::Ready(val) => val,
-        Poll::Pending => unreachable!("compute-only future yielded Pending"),
+        Poll::Ready(val) => Ok(val),
+        Poll::Pending => Err(crate::SkunkBatError::ThreatDetection(
+            "compute-only future yielded Pending unexpectedly".to_owned(),
+        )),
     }
 }
 

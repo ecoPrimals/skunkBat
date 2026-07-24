@@ -13,6 +13,14 @@ All notable changes to skunkBat are documented here.
   function enables safe unit testing without env mutation. 6 new tests.
 - **`BindMode` typed error**: Replaced `type Err = String` with
   `BindModeParseError` (thiserror-derived) for idiomatic Rust error handling.
+
+### Changed
+
+- **Eliminated last `unreachable!()` in production**: `futures_lite_block_on` →
+  `poll_ready` returns `Err(ThreatDetection)` instead of panicking.
+- **Deduplicated BTSP handshake completion**: Extracted `complete_btsp_handshake`
+  helper from `serve_tcp` and `serve_uds`, removing `clippy::too_many_lines`
+  suppression and ~40 lines of duplicated handshake registration logic.
 - **Process spawn-rate anomaly detection** (Wave 150x): New 7th threat category
   `ProcessSpawnAnomaly` detecting crash-loop services via `/proc/stat` fork
   counter rate tracking. `SpawnRateTracker` in `platform.rs` samples total

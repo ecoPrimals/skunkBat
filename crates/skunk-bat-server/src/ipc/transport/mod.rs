@@ -125,11 +125,27 @@ async fn classify_connection<S: tokio::io::AsyncRead + Unpin>(
     }
 }
 
+/// Complete a BTSP handshake and register the session.
+///
+/// Returns the session ID on success. Updates `caller` with the bearer token.
+async fn complete_btsp_handshake<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    stream: &mut S,
+    cfg: &BtspHandshakeConfig,
+    sessions: &BtspSessionRegistry,
+    caller: &mut CallerContext,
+    label: &str,
+) -> Result<String, TransportError> {
+    let result = perform_server_handshake(stream, cfg).await?;
+    tracing::debug!("BTSP authenticated {label}: session={}", result.session_id);
+    let sid = result.session_id.clone();
+    caller.bearer_token = Some(format!("btsp:{}", result.session_id));
+    sessions
+        .insert(result.session_id, result.handshake_key)
+        .await;
+    Ok(sid)
+}
+
 /// Bind TCP and accept connections with riboCipher signal routing.
-#[expect(
-    clippy::too_many_lines,
-    reason = "TCP accept loop with 4 intent branches + BTSP"
-)]
 pub async fn serve_tcp(
     state: Arc<RwLock<App>>,
     sessions: Arc<BtspSessionRegistry>,
@@ -168,28 +184,28 @@ pub async fn serve_tcp(
                 }
             };
 
+            let label = format!("TCP {addr}");
             match intent {
                 ConnectionIntent::NdjsonJsonRpc => {
                     handle_connection(state, sessions, stream, caller, None).await;
                 }
                 ConnectionIntent::BtspHandshake => {
                     let sid = if let Some(ref cfg) = btsp {
-                        match perform_server_handshake(&mut stream, cfg).await {
-                            Ok(result) => {
-                                tracing::debug!(
-                                    "BTSP authenticated TCP {addr}: session={}",
-                                    result.session_id
-                                );
-                                let sid = result.session_id.clone();
-                                caller.bearer_token = Some(format!("btsp:{}", result.session_id));
-                                sessions
-                                    .insert(result.session_id, result.handshake_key)
-                                    .await;
+                        match complete_btsp_handshake(
+                            &mut stream,
+                            cfg,
+                            &sessions,
+                            &mut caller,
+                            &label,
+                        )
+                        .await
+                        {
+                            Ok(sid) => {
                                 record_transport_path(&state, &caller).await;
                                 Some(sid)
                             }
                             Err(e) => {
-                                tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
+                                tracing::warn!("BTSP handshake failed {label}: {e}");
                                 return;
                             }
                         }
@@ -199,42 +215,37 @@ pub async fn serve_tcp(
                     handle_connection(state, sessions, stream, caller, sid).await;
                 }
                 ConnectionIntent::Probe => {
-                    tracing::debug!("riboCipher probe from TCP {addr}");
+                    tracing::debug!("riboCipher probe from {label}");
                     respond_to_probe(&mut stream).await;
                 }
                 ConnectionIntent::Legacy { first_byte } => {
-                    let peeked = PeekedStream {
-                        peeked: Some(first_byte),
-                        inner: stream,
-                    };
                     if first_byte != b'{' {
                         if let Some(ref cfg) = btsp {
                             let mut ps = PeekedStream {
                                 peeked: Some(first_byte),
-                                inner: peeked.inner,
+                                inner: stream,
                             };
-                            match perform_server_handshake(&mut ps, cfg).await {
-                                Ok(result) => {
-                                    tracing::debug!(
-                                        "BTSP authenticated TCP {addr}: session={}",
-                                        result.session_id
-                                    );
-                                    let sid = result.session_id.clone();
-                                    caller.bearer_token =
-                                        Some(format!("btsp:{}", result.session_id));
-                                    sessions
-                                        .insert(result.session_id, result.handshake_key)
-                                        .await;
+                            match complete_btsp_handshake(
+                                &mut ps,
+                                cfg,
+                                &sessions,
+                                &mut caller,
+                                &label,
+                            )
+                            .await
+                            {
+                                Ok(sid) => {
                                     handle_connection(state, sessions, ps, caller, Some(sid)).await;
                                 }
-                                Err(e) => {
-                                    tracing::warn!("BTSP handshake failed TCP {addr}: {e}");
-                                    return;
-                                }
+                                Err(e) => tracing::warn!("BTSP handshake failed {label}: {e}"),
                             }
                         }
                         return;
                     }
+                    let peeked = PeekedStream {
+                        peeked: Some(first_byte),
+                        inner: stream,
+                    };
                     handle_connection(state, sessions, peeked, caller, None).await;
                 }
                 ConnectionIntent::Reject => {}
@@ -307,6 +318,7 @@ pub async fn serve_uds(
             };
 
             let mut caller = CallerContext::unix();
+            let label = "UDS";
 
             match intent {
                 ConnectionIntent::NdjsonJsonRpc => {
@@ -314,21 +326,18 @@ pub async fn serve_uds(
                 }
                 ConnectionIntent::BtspHandshake => {
                     let sid = if let Some(ref cfg) = btsp {
-                        match perform_server_handshake(&mut stream, cfg).await {
-                            Ok(result) => {
-                                tracing::debug!(
-                                    "BTSP authenticated UDS: session={}",
-                                    result.session_id
-                                );
-                                let sid = result.session_id.clone();
-                                caller.bearer_token = Some(format!("btsp:{}", result.session_id));
-                                sessions
-                                    .insert(result.session_id, result.handshake_key)
-                                    .await;
-                                Some(sid)
-                            }
+                        match complete_btsp_handshake(
+                            &mut stream,
+                            cfg,
+                            &sessions,
+                            &mut caller,
+                            label,
+                        )
+                        .await
+                        {
+                            Ok(sid) => Some(sid),
                             Err(e) => {
-                                tracing::warn!("BTSP handshake failed UDS: {e}");
+                                tracing::warn!("BTSP handshake failed {label}: {e}");
                                 return;
                             }
                         }
@@ -338,7 +347,7 @@ pub async fn serve_uds(
                     handle_connection(state, sessions, stream, caller, sid).await;
                 }
                 ConnectionIntent::Probe => {
-                    tracing::debug!("riboCipher probe from UDS");
+                    tracing::debug!("riboCipher probe from {label}");
                     respond_to_probe(&mut stream).await;
                 }
                 ConnectionIntent::Legacy { first_byte } => {
@@ -348,24 +357,19 @@ pub async fn serve_uds(
                                 peeked: Some(first_byte),
                                 inner: stream,
                             };
-                            match perform_server_handshake(&mut ps, cfg).await {
-                                Ok(result) => {
-                                    tracing::debug!(
-                                        "BTSP authenticated UDS: session={}",
-                                        result.session_id
-                                    );
-                                    let sid = result.session_id.clone();
-                                    caller.bearer_token =
-                                        Some(format!("btsp:{}", result.session_id));
-                                    sessions
-                                        .insert(result.session_id, result.handshake_key)
-                                        .await;
+                            match complete_btsp_handshake(
+                                &mut ps,
+                                cfg,
+                                &sessions,
+                                &mut caller,
+                                label,
+                            )
+                            .await
+                            {
+                                Ok(sid) => {
                                     handle_connection(state, sessions, ps, caller, Some(sid)).await;
                                 }
-                                Err(e) => {
-                                    tracing::warn!("BTSP handshake failed UDS: {e}");
-                                    return;
-                                }
+                                Err(e) => tracing::warn!("BTSP handshake failed {label}: {e}"),
                             }
                         }
                         return;
