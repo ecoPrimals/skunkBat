@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Cloudflare Analytics API poller.
 //!
 //! Polls Cloudflare's GraphQL Analytics API for per-IP HTTP metrics

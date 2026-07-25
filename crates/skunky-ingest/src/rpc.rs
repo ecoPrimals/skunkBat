@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! JSON-RPC 2.0 client for skunkBat over TCP.
 //!
 //! Uses riboCipher signal-first accept (`0xEC 0x01`) followed by

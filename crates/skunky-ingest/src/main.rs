@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! skunky-ingest — Live traffic log tailer for skunkBat behavioral detection.
 //!
 //! Tails structured JSON access logs (Caddy format), aggregates per-source-IP

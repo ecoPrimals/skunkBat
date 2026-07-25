@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! File position tracking for crash-safe log tailing.
 //!
 //! Stores the byte offset in a small state file so the tailer can resume

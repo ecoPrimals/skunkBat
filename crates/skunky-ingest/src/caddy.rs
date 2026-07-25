@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
 //! Caddy JSON access log parser.
 //!
 //! Each line in `/var/log/caddy/access.log` is a JSON object with the
