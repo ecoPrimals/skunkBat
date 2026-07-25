@@ -1,9 +1,10 @@
 # skunkBat
 
-Defensive network security primal for sovereign computing environments.
-
-**Version**: 0.2.18
+**External maturity**: deployment-ready
+**Version**: 0.2.18 | **Tests**: 586 | **Max production file**: 700L <!-- metrics: 2026-07-25 -->
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
+
+Defensive network security primal for sovereign computing environments.
 
 ---
 
