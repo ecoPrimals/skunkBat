@@ -179,10 +179,14 @@ pub fn parse_tcp_host_port(addr: &str) -> Option<TransportEndpoint> {
 ///
 /// Encapsulates transport resolution: resolves a [`TransportEndpoint`] from
 /// environment (TCP, UDS) and dispatches calls through `call_endpoint`.
+///
+/// When BTSP strict mode is active (`BEARDOG_UDS_REQUIRE_BTSP=1`), the client
+/// performs a BTSP `ClientHello` handshake before sending JSON-RPC.
 #[derive(Clone, Debug)]
 pub struct CapabilityClient {
     resolved: Option<TransportEndpoint>,
     timeout_ms: u64,
+    btsp_enabled: bool,
 }
 
 impl CapabilityClient {
@@ -190,9 +194,12 @@ impl CapabilityClient {
     #[must_use]
     pub fn new(endpoint: &str, timeout_ms: u64) -> Self {
         let resolved = parse_tcp_host_port(endpoint);
+        let btsp_enabled = crate::btsp_client::btsp_strict_mode_expected()
+            && crate::btsp_client::btsp_handshake_available();
         Self {
             resolved,
             timeout_ms,
+            btsp_enabled,
         }
     }
 
@@ -217,9 +224,13 @@ impl CapabilityClient {
             .and_then(|v| v.parse().ok())
             .unwrap_or(default_timeout_ms);
 
+        let btsp_enabled = crate::btsp_client::btsp_strict_mode_expected()
+            && crate::btsp_client::btsp_handshake_available();
+
         Self {
             resolved,
             timeout_ms,
+            btsp_enabled,
         }
     }
 
@@ -228,6 +239,19 @@ impl CapabilityClient {
     pub const fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = timeout_ms;
         self
+    }
+
+    /// Explicitly enable BTSP handshake (for testing or forced-strict scenarios).
+    #[must_use]
+    pub const fn with_btsp(mut self, enabled: bool) -> Self {
+        self.btsp_enabled = enabled;
+        self
+    }
+
+    /// Whether BTSP handshake is enabled on this client.
+    #[must_use]
+    pub const fn btsp_enabled(&self) -> bool {
+        self.btsp_enabled
     }
 
     /// The resolved transport endpoint (if any).
@@ -273,6 +297,9 @@ impl CapabilityClient {
 
     /// Make a JSON-RPC call using the resolved `TransportEndpoint`.
     ///
+    /// When BTSP strict mode is active, performs a `ClientHello` handshake
+    /// before sending the JSON-RPC request.
+    ///
     /// # Errors
     ///
     /// Returns [`RpcError`] if no endpoint is resolved or the call fails.
@@ -286,7 +313,7 @@ impl CapabilityClient {
             .as_ref()
             .ok_or_else(|| RpcError::Io("no transport endpoint resolved".to_owned()))?;
         let timeout = Duration::from_millis(self.timeout_ms);
-        call_endpoint(endpoint, method, params, timeout).await
+        call_endpoint_with_btsp(endpoint, method, params, timeout, self.btsp_enabled).await
     }
 }
 
@@ -294,6 +321,9 @@ impl CapabilityClient {
 ///
 /// Dispatches to UDS or TCP based on the endpoint variant.
 /// `MeshRelay` is not yet supported (returns an error).
+///
+/// Does NOT perform BTSP handshake. Use [`call_endpoint_with_btsp`] for
+/// BTSP-aware calls.
 ///
 /// # Errors
 ///
@@ -304,16 +334,38 @@ pub async fn call_endpoint(
     params: Option<serde_json::Value>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
+    call_endpoint_with_btsp(endpoint, method, params, timeout, false).await
+}
+
+/// JSON-RPC call via a resolved [`TransportEndpoint`], with optional BTSP handshake.
+///
+/// When `btsp` is `true`, performs a BTSP `ClientHello` 4-step handshake
+/// before sending the JSON-RPC request. Required when bearDog is in strict
+/// mode (`BEARDOG_UDS_REQUIRE_BTSP=1`).
+///
+/// # Errors
+///
+/// Returns [`RpcError`] if the endpoint is unreachable, the BTSP handshake
+/// fails, or the RPC fails.
+pub async fn call_endpoint_with_btsp(
+    endpoint: &TransportEndpoint,
+    method: &str,
+    params: Option<serde_json::Value>,
+    timeout: Duration,
+    btsp: bool,
+) -> Result<serde_json::Value, RpcError> {
     match endpoint {
         #[cfg(unix)]
-        TransportEndpoint::Uds { path } => call_uds(path, method, params, timeout).await,
+        TransportEndpoint::Uds { path } => {
+            call_uds_btsp(path, method, params, timeout, btsp).await
+        }
         #[cfg(not(unix))]
         TransportEndpoint::Uds { path } => Err(RpcError::Io(format!(
             "UDS not available on this platform: {path}"
         ))),
         TransportEndpoint::Tcp { host, port } => {
             let addr = format!("{host}:{port}");
-            call_tcp(&addr, method, params, timeout).await
+            call_tcp_btsp(&addr, method, params, timeout, btsp).await
         }
         TransportEndpoint::MeshRelay {
             peer_id,
@@ -336,12 +388,28 @@ pub async fn call_uds(
     params: Option<serde_json::Value>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
+    call_uds_btsp(socket_path, method, params, timeout, false).await
+}
+
+/// Send a JSON-RPC request over a Unix domain socket, with optional BTSP.
+#[cfg(unix)]
+async fn call_uds_btsp(
+    socket_path: &str,
+    method: &str,
+    params: Option<serde_json::Value>,
+    timeout: Duration,
+    btsp: bool,
+) -> Result<serde_json::Value, RpcError> {
     use tokio::net::UnixStream;
 
-    let stream = tokio::time::timeout(timeout, UnixStream::connect(socket_path))
+    let mut stream = tokio::time::timeout(timeout, UnixStream::connect(socket_path))
         .await
         .map_err(|_| RpcError::Timeout(format!("connecting to {socket_path}")))?
         .map_err(|e| RpcError::Io(format!("connect {socket_path}: {e}")))?;
+
+    if btsp {
+        perform_btsp_handshake(&mut stream).await?;
+    }
 
     call_stream(stream, method, params, timeout).await
 }
@@ -357,14 +425,40 @@ pub async fn call_tcp(
     params: Option<serde_json::Value>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
+    call_tcp_btsp(addr, method, params, timeout, false).await
+}
+
+/// Send a JSON-RPC request over TCP, with optional BTSP.
+async fn call_tcp_btsp(
+    addr: &str,
+    method: &str,
+    params: Option<serde_json::Value>,
+    timeout: Duration,
+    btsp: bool,
+) -> Result<serde_json::Value, RpcError> {
     use tokio::net::TcpStream;
 
-    let stream = tokio::time::timeout(timeout, TcpStream::connect(addr))
+    let mut stream = tokio::time::timeout(timeout, TcpStream::connect(addr))
         .await
         .map_err(|_| RpcError::Timeout(format!("connecting to {addr}")))?
         .map_err(|e| RpcError::Io(format!("connect {addr}: {e}")))?;
 
+    if btsp {
+        perform_btsp_handshake(&mut stream).await?;
+    }
+
     call_stream(stream, method, params, timeout).await
+}
+
+/// Run the BTSP `ClientHello` handshake, mapping errors to [`RpcError`].
+async fn perform_btsp_handshake<S>(stream: &mut S) -> Result<(), RpcError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    crate::btsp_client::perform_client_handshake(stream)
+        .await
+        .map_err(|e| RpcError::Io(format!("BTSP handshake failed: {e}")))?;
+    Ok(())
 }
 
 async fn call_stream<S>(

@@ -57,8 +57,10 @@ clap = { version = "4", features = ["derive"] }
 # Cryptography (BTSP Phase 3 — ChaCha20-Poly1305 encrypted framing)
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
+hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
+getrandom = { version = "0.3", default-features = false, features = ["std"] }
 
 # Virtual workspace integration tests
 [package]

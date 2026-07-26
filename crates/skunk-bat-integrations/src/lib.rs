@@ -27,6 +27,7 @@
 //! ```
 
 pub mod beardog;
+pub mod btsp_client;
 pub mod forwarding;
 pub mod nestgate;
 pub mod rpc;
