@@ -1,7 +1,7 @@
 # skunkBat
 
 **External maturity**: deployment-ready
-**Version**: 0.2.18 | **Tests**: 597 | **Max production file**: 700L <!-- metrics: 2026-07-26 -->
+**Version**: 0.2.18 | **Tests**: 597 | **Max production file**: 515L <!-- metrics: 2026-07-26 -->
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 Defensive network security primal for sovereign computing environments.
@@ -29,6 +29,9 @@ packet contents or tracking user behavior.
   with auto-upgrade to `ChaCha20-Poly1305` encrypted framing, bond-type cipher
   enforcement (Covalent/Metallic/Ionic), server-side cipher floor policy
   (`SKUNKBAT_CIPHER_FLOOR`), protocol version `1.0`
+- **BTSP ClientHello**: Consumer-side 4-step handshake for bearDog strict mode
+  (`BEARDOG_UDS_REQUIRE_BTSP=1`) — all outbound RPC (lineage, federation, discovery)
+  authenticates via HMAC-SHA256 challenge-response before JSON-RPC
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -227,13 +230,14 @@ No primal names are hardcoded in production code.
 - Clippy pedantic + nursery, zero warnings (`-D warnings`)
 - `#[expect(reason)]` lint suppression standard — zero `#[allow]` in production code
 - `cargo deny` advisory/ban/license/source checks pass; `ring` explicitly banned
-- All source files under 800 lines (production max: 700; test files exempt)
+- All source files under 800 lines (production max: 515L; test files exempt)
 - SPDX `AGPL-3.0-or-later` headers on all source files
 - Zero `TODO`/`FIXME`/`HACK` in production code; zero production `unwrap()`/`expect()`
 - Zero production `unreachable!()` — all evolved to proper error returns
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
-- Pure Rust — zero cross-repo path deps, no C deps, `rand` eliminated (OsRng via RustCrypto)
-- 586 tests passing (lib + integration + chaos), full workspace
+- Pure Rust — zero cross-repo path deps, no C deps, zero duplicate dependencies,
+  `rand` eliminated (OsRng via RustCrypto)
+- 597 tests passing (lib + integration + chaos), full workspace
 - All 30 IPC methods stability-tiered (28 application + 2 transport; Stable; `auth.*` beta)
 - Cross-architecture: `cargo check --target x86_64-pc-windows-gnu` passes clean;
   musl static builds via `.cargo/config.toml` aliases (`build-x64`, `build-arm64`)

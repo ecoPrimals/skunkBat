@@ -6,6 +6,13 @@ All notable changes to skunkBat are documented here.
 
 ### Added
 
+- **BTSP ClientHello handshake** (Wave 151b): Consumer-side 4-step BTSP
+  handshake for bearDog strict mode (`BEARDOG_UDS_REQUIRE_BTSP=1`). Wired
+  into `CapabilityClient` — all outbound RPC (lineage, federation, discovery)
+  authenticates via HMAC-SHA256 challenge-response. Auto-detects strict mode
+  + family seed availability. Works on UDS and TCP. 11 new tests including
+  full mock-server handshake with HMAC verification. Reference: songBird
+  `btsp_client.rs`.
 - **Server-side cipher floor policy** (Wave 150x pen-test response): New
   `SKUNKBAT_CIPHER_FLOOR` env var sets server minimum cipher regardless of
   client `bond_type`. Prevents cipher-downgrade attacks where clients omit
@@ -16,6 +23,8 @@ All notable changes to skunkBat are documented here.
 
 ### Changed
 
+- **Dependency deduplication** (Wave 151b): `getrandom` 0.3→0.2, unifying with
+  RustCrypto transitive dependency. `cargo tree -d` shows zero duplicates.
 - **Eliminated last `unreachable!()` in production**: `futures_lite_block_on` →
   `poll_ready` returns `Err(ThreatDetection)` instead of panicking.
 - **Deduplicated BTSP handshake completion**: Extracted `complete_btsp_handshake`

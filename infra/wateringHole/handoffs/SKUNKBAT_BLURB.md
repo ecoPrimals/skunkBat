@@ -2,8 +2,8 @@
 
 **Role**: Defensive network security primal (Tower Atomic — perimeter defense, WAN anomaly detection)
 **Version**: 0.2.18
-**Date**: Jul 24, 2026
-**Wave**: 150x
+**Date**: Jul 26, 2026
+**Wave**: 151b
 
 ---
 
@@ -11,9 +11,9 @@
 
 | Metric | Value |
 |--------|-------|
-| Tests | 586 passing (0 failed, 4 crates) |
+| Tests | 597 passing (0 failed, 4 crates) |
 | Clippy | 0 warnings (pedantic + nursery, `-D warnings`) |
-| Max file | 700 lines production (test files exempt from 800L cap) |
+| Max file | 515 lines production (test files exempt from 800L cap) |
 | IPC methods | 30 (28 application + 2 transport) |
 | Unsafe code | `forbid(unsafe_code)` workspace-wide |
 | Edition | 2024 |
@@ -21,14 +21,14 @@
 | TODOs in prod | 0 |
 | Production unwrap/expect | 0 |
 | Cross-arch | `x86_64-pc-windows-gnu` check passes clean |
-| Dependencies | 12 workspace deps, all pure Rust, zero C FFI |
+| Dependencies | all pure Rust, zero C FFI, zero duplicate deps |
 
 ## Workspace
 
 | Crate | Role | Type |
 |-------|------|------|
 | `skunk-bat-core` | Threat detection (7 types), defense, observability, universal adapter | library |
-| `skunk-bat-integrations` | JSON-RPC client, BearDog lineage, ToadStool discovery, Songbird federation | library |
+| `skunk-bat-integrations` | JSON-RPC client, BearDog lineage, ToadStool discovery, Songbird federation, BTSP ClientHello | library |
 | `skunk-bat-server` | UniBin server (TCP + UDS + BTSP), 30 IPC methods | binary |
 | `skunky-ingest` | Live Caddy log tailer → `baseline.observe` with Cloudflare analytics stub | binary |
 
@@ -44,6 +44,7 @@
 - **Wire Standard L2/L3**: `capabilities.list` + `identity.get`
 - **Live observation feed**: `baseline.observe` IPC + `skunky-ingest` Caddy log tailer
 - **Conditional baseline**: `SKUNKBAT_SKIP_SYNTHETIC_BASELINE` for live-traffic-only profiling
+- **BTSP ClientHello** (Wave 151b): consumer-side 4-step handshake for bearDog strict mode (`BEARDOG_UDS_REQUIRE_BTSP=1`); all outbound RPC authenticates via HMAC-SHA256 challenge-response; auto-detects strict mode + seed availability; works on UDS and TCP
 - **Cross-architecture (Phase 2)**: `TransportEndpoint` trait dispatch in all high-level IPC; `#[cfg]` only in low-level UDS accept/signal primitives; Windows cross-check clean
 - **All timeouts env-configurable**: provider call, handshake, federation poll/batch, content, session TTL/sweep, forwarding, registration
 - **Zero `#[allow]` in production**: all suppressions use `#[expect(reason)]` with documented justification
@@ -106,7 +107,8 @@ anomaly detection), 136b (skunky-ingest), 137b (conditional baseline + CF ground
 149b (dispatch safety — unreachable!() → METHOD_NOT_FOUND errors), 150t (Tower Atomic bond-type
 cipher enforcement, platform consolidation, deep debt alloc reduction), 150w (deep debt — error
 surfacing, timeout unification, named constants), 150x (process spawn anomaly detection, cipher
-floor policy, unreachable!() elimination, BTSP handshake deduplication, BindMode typed error).
+floor policy, unreachable!() elimination, BTSP handshake deduplication, BindMode typed error),
+151b (BTSP ClientHello for bearDog strict mode, deep debt zero-baseline audit, getrandom dedup).
 
 ## Cascade Status
 
@@ -128,4 +130,6 @@ Both remotes at parity:
 - Zero `clippy::too_many_lines` suppressions (BTSP handshake deduplicated)
 - `BindMode` typed error (`BindModeParseError`) — no `String` error types
 - Cross-platform: Windows cross-check clean, musl static targets configured
-- Dimensional posture: GREEN — all dimensions clear (Wave 150x audit)
+- Zero duplicate dependencies (`cargo tree -d` clean)
+- Dimensional posture: GREEN — all dimensions clear (Wave 151b audit)
+- **PUBLIC** on GitHub — publication self-review passed (W150x)

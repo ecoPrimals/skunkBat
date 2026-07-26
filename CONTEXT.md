@@ -85,7 +85,7 @@ Full spec compliance including:
 
 ## Tests
 
-586 tests passing (core + integrations + server + transport + chaos), all workspace.
+597 tests passing (core + integrations + server + transport + chaos), all workspace.
 Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
 exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
 intrusion heuristics, spawn-rate anomaly, riboCipher signal classification, JSON-RPC
@@ -103,11 +103,12 @@ v0.2.18 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid
 workspace-wide. `#[expect(reason)]` lint standard — zero `#[allow]` in production code.
 Zero production `unreachable!()` panics — all evolved to proper error returns.
 
-**586 tests** passing across all workspace crates (4 crates). Max production file 700 lines — no
+**597 tests** passing across all workspace crates (4 crates). Max production file 515 lines — no
 production source exceeds the 800-line cap (test files exempt). All thresholds configurable
 via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
 to env vars with defaults (session TTL, sweep, forwarding, registration).
-Zero cross-repo path dependencies. Pure Rust crypto stack (chacha20poly1305, hkdf, sha2).
+Zero cross-repo path dependencies. Zero duplicate dependencies. Pure Rust crypto stack
+(chacha20poly1305, hkdf, hmac, sha2, getrandom — all unified versions).
 `async-trait` eliminated and banned — native RPITIT throughout.
 
 **IPC**: JSON-RPC 2.0 over TCP + UDS with BTSP Phase 1/2/3. BearDog-delegated handshake,
@@ -153,6 +154,10 @@ Defense attestation with `ActionType`-specific audit events at `Warn` severity.
 RuntimeVerifier injected at startup — server uses SkunkBat::with_verifier(config, RuntimeVerifier::from_env()). One-shot CLI commands (health, scan, detect) use local default. Self-registration with discovery (`ipc.register`).
 BTSP WAN timeouts (10s provider call, 30s handshake — both env-configurable). Graceful shutdown via `BackgroundTasks`.
 riboCipher probes respond with health JSON + close.
+**BTSP ClientHello** (Wave 151b): Consumer-side 4-step handshake for bearDog strict mode.
+All outbound RPC (lineage verification, federation, discovery) authenticates via
+HMAC-SHA256(FAMILY_SEED, challenge) before sending JSON-RPC. Auto-detects strict mode
+(`BEARDOG_UDS_REQUIRE_BTSP=1`) + seed availability. Works on both UDS and TCP.
 
 **Cross-Architecture (Phase 2)**: `TransportEndpoint` trait dispatch replaces raw UDS
 everywhere except low-level server accept loops. Registration, BTSP provider calls,
