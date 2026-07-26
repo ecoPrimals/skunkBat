@@ -158,7 +158,7 @@ where
 {
     // Generate ephemeral key material (32 random bytes)
     let mut ephemeral_key = [0u8; 32];
-    getrandom::fill(&mut ephemeral_key).map_err(|_| BtspClientError::Hmac)?;
+    getrandom::getrandom(&mut ephemeral_key).map_err(|_| BtspClientError::Hmac)?;
 
     // Step 1: Send ClientHello
     let hello = ClientHello {

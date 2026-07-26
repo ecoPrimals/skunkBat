@@ -60,7 +60,7 @@ hkdf = "0.12"
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
-getrandom = { version = "0.3", default-features = false, features = ["std"] }
+getrandom = { version = "0.2", default-features = false, features = ["std"] }
 
 # Virtual workspace integration tests
 [package]
