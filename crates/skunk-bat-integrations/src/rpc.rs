@@ -356,9 +356,7 @@ pub async fn call_endpoint_with_btsp(
 ) -> Result<serde_json::Value, RpcError> {
     match endpoint {
         #[cfg(unix)]
-        TransportEndpoint::Uds { path } => {
-            call_uds_btsp(path, method, params, timeout, btsp).await
-        }
+        TransportEndpoint::Uds { path } => call_uds_btsp(path, method, params, timeout, btsp).await,
         #[cfg(not(unix))]
         TransportEndpoint::Uds { path } => Err(RpcError::Io(format!(
             "UDS not available on this platform: {path}"

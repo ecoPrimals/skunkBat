@@ -28,7 +28,7 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, warn};
+use tracing::debug;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -102,18 +102,15 @@ pub enum BtspClientError {
 
 /// Resolve the raw family seed from environment.
 ///
-/// Checks (in priority order): `FAMILY_SEED`, `BEARDOG_FAMILY_SEED`,
+/// Checks (in priority order): `BTSP_FAMILY_SEED`, `FAMILY_SEED`,
 /// `BIOMEOS_FAMILY_SEED`.
 fn resolve_family_seed_raw() -> Option<String> {
-    std::env::var("FAMILY_SEED")
-        .or_else(|_| {
-            std::env::var("BEARDOG_FAMILY_SEED").inspect(|_| {
-                warn!("BEARDOG_FAMILY_SEED is deprecated — use FAMILY_SEED");
-            })
-        })
+    std::env::var("BTSP_FAMILY_SEED")
+        .or_else(|_| std::env::var(skunk_bat_core::env_keys::FAMILY_SEED))
         .or_else(|_| std::env::var("BIOMEOS_FAMILY_SEED"))
         .ok()
         .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
 }
 
 /// Check whether BTSP strict mode is expected (bearDog requires handshake).
@@ -159,7 +156,6 @@ pub(crate) async fn perform_client_handshake_with_seed<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-
     // Generate ephemeral key material (32 random bytes)
     let mut ephemeral_key = [0u8; 32];
     getrandom::fill(&mut ephemeral_key).map_err(|_| BtspClientError::Hmac)?;

@@ -58,9 +58,17 @@ pub async fn provider_call(
     method: &str,
     params: Value,
 ) -> Result<Value, TransportError> {
-    skunk_bat_integrations::rpc::call_endpoint(endpoint, method, Some(params), PROVIDER_TIMEOUT)
-        .await
-        .map_err(|e| TransportError::Provider(format!("{endpoint:?}: {e}")))
+    let btsp = skunk_bat_integrations::btsp_client::btsp_strict_mode_expected()
+        && skunk_bat_integrations::btsp_client::btsp_handshake_available();
+    skunk_bat_integrations::rpc::call_endpoint_with_btsp(
+        endpoint,
+        method,
+        Some(params),
+        PROVIDER_TIMEOUT,
+        btsp,
+    )
+    .await
+    .map_err(|e| TransportError::Provider(format!("{endpoint:?}: {e}")))
 }
 
 // ── Handshake Key Derivation ──────────────────────────────────────────
