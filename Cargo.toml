@@ -16,6 +16,8 @@ edition = "2024"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/ecoPrimals/skunkBat"
 authors = ["ecoPrimals Project"]
+homepage = "https://sporeprint.primals.eco"
+documentation = "https://sporeprint.primals.eco/lab/"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
