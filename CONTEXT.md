@@ -119,7 +119,9 @@ riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compl
 `defense.{quarantine,release}`, `response.evaluate`). `hmac-plain` cipher recognized but
 excluded from negotiation (not implemented on wire — falls to null).
 
-**Tower Atomic**: Bond-type cipher enforcement live — `btsp.negotiate` accepts optional
+**Tower Atomic**: Frame crypto (encrypt/decrypt/key derivation) extracted from
+`negotiate.rs` into dedicated `frame.rs` module (Wave 155b domain split).
+Bond-type cipher enforcement live — `btsp.negotiate` accepts optional
 `bond_type` param (Covalent/Metallic/Ionic) from songBird enrollment flow. Ionic bonds
 reject null cipher (require ChaCha20-Poly1305). Server-side cipher floor policy via
 `SKUNKBAT_CIPHER_FLOOR` env — prevents cipher-downgrade when clients omit `bond_type`.

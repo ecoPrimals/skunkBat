@@ -29,6 +29,7 @@
 mod btsp;
 mod config;
 mod error;
+pub mod frame;
 pub mod negotiate;
 mod peek;
 

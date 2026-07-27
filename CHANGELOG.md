@@ -23,6 +23,11 @@ All notable changes to skunkBat are documented here.
 
 ### Changed
 
+- **Frame crypto extraction** (Wave 155b): Extracted `SessionKeys`,
+  `derive_session_keys`, `encrypt_frame`, `decrypt_frame` from `negotiate.rs`
+  into dedicated `frame.rs` module. Clean domain split: negotiation logic
+  (cipher selection, session registry) vs pure crypto frame operations.
+  `negotiate.rs` 571→447 lines.
 - **Dependency deduplication** (Wave 151b): `getrandom` 0.3→0.2, unifying with
   RustCrypto transitive dependency. `cargo tree -d` shows zero duplicates.
 - **Eliminated last `unreachable!()` in production**: `futures_lite_block_on` →

@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
 use super::*;
+use super::super::frame::NONCE_SIZE;
 
 #[test]
 fn cipher_suite_roundtrip() {
