@@ -816,3 +816,185 @@ async fn test_spawn_tracker_used_in_detect() {
         );
     }
 }
+
+// ── ConnectivityAnomaly tests (k-derm / peptidoglycan layer) ────────────
+
+#[tokio::test]
+async fn test_connectivity_no_probes_no_threat() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    let detector = ThreatDetector::new(&config);
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        !threats
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::ConnectivityAnomaly { .. })),
+        "No probes recorded should not fire"
+    );
+}
+
+#[tokio::test]
+async fn test_connectivity_below_threshold_no_threat() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.thresholds.connectivity_failure_threshold = 0.5;
+    let detector = ThreatDetector::new(&config);
+
+    for _ in 0..5 {
+        detector.record_connectivity_probe(true);
+    }
+    detector.record_connectivity_probe(false);
+
+    let threats = detector.detect().await.expect("detect");
+    assert!(
+        !threats
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::ConnectivityAnomaly { .. })),
+        "1/6 failures (16%) should not exceed 50% threshold"
+    );
+}
+
+#[tokio::test]
+async fn test_connectivity_above_threshold_fires() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.thresholds.connectivity_failure_threshold = 0.3;
+    config.thresholds.connectivity_confidence = 0.77;
+    let detector = ThreatDetector::new(&config);
+
+    detector.record_connectivity_probe(true);
+    for _ in 0..4 {
+        detector.record_connectivity_probe(false);
+    }
+
+    let threats = detector.detect().await.expect("detect");
+    let conn_threats: Vec<_> = threats
+        .iter()
+        .filter(|t| matches!(t.threat_type, ThreatType::ConnectivityAnomaly { .. }))
+        .collect();
+
+    assert_eq!(conn_threats.len(), 1, "Should fire exactly one threat");
+    let t = &conn_threats[0];
+    assert_eq!(t.source, "infrastructure");
+    assert!(
+        (t.confidence - 0.77).abs() < f64::EPSILON,
+        "Confidence should match config"
+    );
+    if let ThreatType::ConnectivityAnomaly {
+        failures,
+        successes,
+        ..
+    } = &t.threat_type
+    {
+        assert_eq!(*failures, 4);
+        assert_eq!(*successes, 1);
+    }
+}
+
+#[tokio::test]
+async fn test_connectivity_critical_severity_above_80pct() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.thresholds.connectivity_failure_threshold = 0.3;
+    let detector = ThreatDetector::new(&config);
+
+    for _ in 0..5 {
+        detector.record_connectivity_probe(false);
+    }
+
+    let threats = detector.detect().await.expect("detect");
+    let t = threats
+        .iter()
+        .find(|t| matches!(t.threat_type, ThreatType::ConnectivityAnomaly { .. }))
+        .expect("should fire");
+    assert_eq!(
+        t.severity,
+        Severity::Critical,
+        "100% failure rate should be Critical"
+    );
+}
+
+#[tokio::test]
+async fn test_connectivity_high_severity_below_80pct() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.thresholds.connectivity_failure_threshold = 0.3;
+    let detector = ThreatDetector::new(&config);
+
+    detector.record_connectivity_probe(true);
+    detector.record_connectivity_probe(true);
+    detector.record_connectivity_probe(false);
+    detector.record_connectivity_probe(false);
+
+    let threats = detector.detect().await.expect("detect");
+    let t = threats
+        .iter()
+        .find(|t| matches!(t.threat_type, ThreatType::ConnectivityAnomaly { .. }))
+        .expect("50% > 30% should fire");
+    assert_eq!(
+        t.severity,
+        Severity::High,
+        "50% failure rate should be High, not Critical"
+    );
+}
+
+#[tokio::test]
+async fn test_connectivity_window_eviction() {
+    let mut config = test_config();
+    config.lineage_id = None;
+    config.thresholds.connectivity_failure_threshold = 0.5;
+    config.thresholds.connectivity_window_size = 5;
+    let detector = ThreatDetector::new(&config);
+
+    for _ in 0..5 {
+        detector.record_connectivity_probe(false);
+    }
+
+    let threats1 = detector.detect().await.expect("detect");
+    assert!(
+        threats1
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::ConnectivityAnomaly { .. })),
+        "All failures should fire"
+    );
+
+    for _ in 0..5 {
+        detector.record_connectivity_probe(true);
+    }
+
+    let threats2 = detector.detect().await.expect("detect");
+    assert!(
+        !threats2
+            .iter()
+            .any(|t| matches!(t.threat_type, ThreatType::ConnectivityAnomaly { .. })),
+        "After window fills with successes, should not fire"
+    );
+}
+
+#[tokio::test]
+async fn test_connectivity_disabled_detector_no_threat() {
+    let config = SkunkBatConfig {
+        features: FeatureFlags {
+            threat_detection: false,
+            ..FeatureFlags::default()
+        },
+        ..test_config()
+    };
+    let detector = ThreatDetector::new(&config);
+
+    for _ in 0..5 {
+        detector.record_connectivity_probe(false);
+    }
+
+    let threats = detector.detect().await.expect("detect");
+    assert!(threats.is_empty(), "Disabled detector should produce nothing");
+}
+
+#[test]
+#[expect(clippy::float_cmp, reason = "exact default comparison in test")]
+fn test_connectivity_threshold_defaults() {
+    let t = crate::config::ThreatThresholds::default();
+    assert_eq!(t.connectivity_failure_threshold, 0.5);
+    assert_eq!(t.connectivity_confidence, 0.8);
+    assert_eq!(t.connectivity_window_size, 20);
+}

@@ -189,3 +189,10 @@ pub const SKUNKBAT_HANDSHAKE_DEADLINE: &str = "SKUNKBAT_HANDSHAKE_DEADLINE";
 /// Anomaly detection will activate after `behavioral_min_observations`
 /// real observations arrive.
 pub const SKUNKBAT_SKIP_SYNTHETIC_BASELINE: &str = "SKUNKBAT_SKIP_SYNTHETIC_BASELINE";
+
+// ── Connectivity Anomaly Detection ──────────────────────────────
+
+/// Outbound RPC failure rate (0.0–1.0) threshold for connectivity
+/// anomaly detection (default: 0.5). When failure rate in the sliding
+/// window exceeds this, a `ConnectivityAnomaly` threat is emitted.
+pub const SKUNKBAT_CONNECTIVITY_THRESHOLD: &str = "SKUNKBAT_CONNECTIVITY_THRESHOLD";

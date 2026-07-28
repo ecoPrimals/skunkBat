@@ -8,14 +8,14 @@ observability — all metadata-only, no content inspection by architecture.
 
 | Crate | Role | Type |
 |-------|------|------|
-| `skunk-bat-core` | Threat detection (7 types), defense orchestration, observability, universal adapter | library |
+| `skunk-bat-core` | Threat detection (9 types), defense orchestration, observability, universal adapter | library |
 | `skunk-bat-integrations` | JSON-RPC 2.0 client, BearDog lineage, ToadStool discovery, Songbird federation | library |
 | `skunk-bat-server` | UniBin server: TCP + UDS JSON-RPC, BTSP Phase 1/2/3 (BearDog-delegated handshake + `btsp.negotiate`), Wire Standard L2/L3 | binary |
 | `skunky-ingest` | Live Caddy log tailer feeding HTTP traffic observations into behavioral profiler via `baseline.observe` | binary |
 
 ## Key Concepts
 
-- **7 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion), Configuration Drift, Process Spawn Anomaly (crash-loop)
+- **9 Threat Types**: Genetic (lineage), Topology (layer-hopping), Behavioral (statistical anomaly), Intrusion (signatures), Resource (DoS/exhaustion), Configuration Drift, Process Spawn Anomaly (crash-loop), HTTP Anomaly (outer membrane), Connectivity Anomaly (k-derm / peptidoglycan)
 - **Graduated Response**: Monitor, Quarantine, Block — always preserving user authority
 - **Statistical Baselines**: Learns the owner's network normal via `VecDeque` rolling window profiler
 - **Universal Adapter**: Capability-based discovery and announcement via `primal_foundation` traits

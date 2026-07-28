@@ -78,6 +78,14 @@ pub struct ThreatThresholds {
     pub spawn_rate_threshold: f64,
     /// Confidence assigned to spawn-rate anomaly detections.
     pub spawn_rate_confidence: f64,
+    /// Outbound RPC failure rate (0.0–1.0) that triggers a
+    /// `ConnectivityAnomaly` threat. Detects k-derm layer failures:
+    /// rate-limit drops, DNS failures, peer unreachability.
+    pub connectivity_failure_threshold: f64,
+    /// Confidence assigned to connectivity anomaly detections.
+    pub connectivity_confidence: f64,
+    /// Sliding window size for connectivity probe tracking.
+    pub connectivity_window_size: usize,
     /// Rolling window size for behavioral profiler observations.
     pub behavioral_rolling_window: usize,
     /// Minimum observations before baseline is considered established.
@@ -103,6 +111,9 @@ impl Default for ThreatThresholds {
             degraded_genetic_confidence: 0.5,
             spawn_rate_threshold: 50.0,
             spawn_rate_confidence: 0.85,
+            connectivity_failure_threshold: 0.5,
+            connectivity_confidence: 0.8,
+            connectivity_window_size: 20,
             topology_confidence: 0.9,
             drift_confidence: 0.85,
             quarantine_critical_confidence: 0.9,
@@ -233,6 +244,9 @@ fn hydrate_thresholds(t: &mut ThreatThresholds) {
     }
     if let Some(v) = try_env_parse::<usize>(crate::env_keys::SKUNKBAT_AUDIT_LOG_CAPACITY) {
         t.audit_log_capacity = v;
+    }
+    if let Some(v) = try_env_parse::<f64>(crate::env_keys::SKUNKBAT_CONNECTIVITY_THRESHOLD) {
+        t.connectivity_failure_threshold = v;
     }
 }
 

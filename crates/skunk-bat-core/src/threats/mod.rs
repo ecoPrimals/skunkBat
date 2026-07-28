@@ -3,7 +3,7 @@
 
 //! Threat detection for skunkBat.
 //!
-//! Seven threat categories, each backed by pluggable trait implementations
+//! Nine threat categories, each backed by pluggable trait implementations
 //! discovered at runtime:
 //!
 //! | Category | Trait | Default |
@@ -15,6 +15,8 @@
 //! | Resource (exhaustion) | — | built-in |
 //! | Configuration drift | — | built-in (snapshot comparison) |
 //! | Spawn-rate anomaly | — | built-in (`/proc/stat` fork counter) |
+//! | HTTP anomaly | — | built-in (outer membrane) |
+//! | Connectivity anomaly | — | built-in (k-derm / peptidoglycan layer) |
 
 pub mod baseline;
 mod behavioral;
@@ -35,7 +37,7 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 
-/// Threat detector — orchestrates all six detection categories.
+/// Threat detector — orchestrates all nine detection categories.
 ///
 /// Generic over verifier and profiler types — no dyn dispatch.
 /// Use [`ThreatDetector::new`] for default types, or
@@ -55,6 +57,8 @@ pub struct ThreatDetector<
     observed_paths: Mutex<Vec<Vec<u8>>>,
     /// Process spawn rate tracker for crash-loop detection.
     spawn_tracker: Mutex<crate::platform::SpawnRateTracker>,
+    /// Outbound RPC connectivity tracker for k-derm anomaly detection.
+    connectivity_tracker: Mutex<crate::platform::ConnectivityTracker>,
     /// Snapshot of config at startup for drift detection.
     config_snapshot: types::ConfigSnapshot,
 }
@@ -118,6 +122,9 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             topology_validator,
             observed_paths: Mutex::new(Vec::new()),
             spawn_tracker: Mutex::new(crate::platform::SpawnRateTracker::new()),
+            connectivity_tracker: Mutex::new(crate::platform::ConnectivityTracker::new(
+                config.thresholds.connectivity_window_size,
+            )),
             config_snapshot,
         }
     }
@@ -169,6 +176,7 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
         threats.extend(self.detect_intrusions().await?);
         threats.extend(self.detect_resource_exhaustion().await?);
         threats.extend(self.detect_spawn_anomalies().await?);
+        threats.extend(self.detect_connectivity_anomalies());
         threats.extend(self.detect_topology_threats().await?);
         threats.extend(self.detect_configuration_drift());
 
@@ -194,6 +202,16 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
             .await
             .update(observation)
             .await
+    }
+
+    /// Record the outcome of an outbound RPC probe for connectivity tracking.
+    ///
+    /// Called by integration clients after each RPC attempt. A sustained
+    /// high failure rate triggers `ConnectivityAnomaly` on the next `detect()`.
+    pub fn record_connectivity_probe(&self, success: bool) {
+        if let Ok(mut tracker) = self.connectivity_tracker.lock() {
+            tracker.record(success);
+        }
     }
 
     /// Record an observed connection path for topology validation.

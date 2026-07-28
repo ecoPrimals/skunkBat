@@ -164,6 +164,75 @@ fn read_total_forks() -> u64 {
     0
 }
 
+/// Tracks outbound RPC success/failure for connectivity anomaly detection.
+///
+/// Maintains a fixed-size ring buffer of recent probe results. When the
+/// failure rate in the window exceeds a threshold, it signals a
+/// peptidoglycan/k-derm layer failure (rate-limit drops, DNS failures,
+/// network partitions). Motivated by Wave 155d golgiBody incident.
+pub(crate) struct ConnectivityTracker {
+    results: std::collections::VecDeque<bool>,
+    window_size: usize,
+}
+
+impl ConnectivityTracker {
+    pub(crate) fn new(window_size: usize) -> Self {
+        Self {
+            results: std::collections::VecDeque::with_capacity(window_size),
+            window_size,
+        }
+    }
+
+    /// Record an RPC probe outcome (`true` = success, `false` = failure).
+    pub(crate) fn record(&mut self, success: bool) {
+        if self.results.len() >= self.window_size {
+            self.results.pop_front();
+        }
+        self.results.push_back(success);
+    }
+
+    /// Current failure rate (0.0–1.0). Returns 0.0 if no probes recorded.
+    pub(crate) fn failure_rate(&self) -> f64 {
+        if self.results.is_empty() {
+            return 0.0;
+        }
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window counts fit in f64 mantissa"
+        )]
+        let total = self.results.len() as f64;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "failure counts fit in f64 mantissa"
+        )]
+        let failures = self.results.iter().filter(|&&s| !s).count() as f64;
+        failures / total
+    }
+
+    /// Number of failures in the current window (capped at `u32::MAX`).
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "window size is bounded by config (default 20), never exceeds u32"
+    )]
+    pub(crate) fn failure_count(&self) -> u32 {
+        self.results.iter().filter(|&&s| !s).count() as u32
+    }
+
+    /// Number of successes in the current window (capped at `u32::MAX`).
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "window size is bounded by config (default 20), never exceeds u32"
+    )]
+    pub(crate) fn success_count(&self) -> u32 {
+        self.results.iter().filter(|&&s| s).count() as u32
+    }
+
+    /// Whether enough probes have been recorded to make a determination.
+    pub(crate) fn is_established(&self) -> bool {
+        self.results.len() >= 3
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +273,50 @@ mod tests {
     #[test]
     fn read_total_forks_nonzero() {
         assert!(read_total_forks() > 0, "/proc/stat should report forks");
+    }
+
+    #[test]
+    fn connectivity_tracker_empty_returns_zero() {
+        let tracker = ConnectivityTracker::new(10);
+        assert!(tracker.failure_rate() == 0.0);
+        assert!(!tracker.is_established());
+    }
+
+    #[test]
+    fn connectivity_tracker_all_success() {
+        let mut tracker = ConnectivityTracker::new(10);
+        for _ in 0..5 {
+            tracker.record(true);
+        }
+        assert!(tracker.failure_rate() == 0.0);
+        assert_eq!(tracker.failure_count(), 0);
+        assert_eq!(tracker.success_count(), 5);
+        assert!(tracker.is_established());
+    }
+
+    #[test]
+    fn connectivity_tracker_mixed() {
+        let mut tracker = ConnectivityTracker::new(10);
+        tracker.record(true);
+        tracker.record(false);
+        tracker.record(true);
+        tracker.record(false);
+        assert!((tracker.failure_rate() - 0.5).abs() < f64::EPSILON);
+        assert_eq!(tracker.failure_count(), 2);
+        assert_eq!(tracker.success_count(), 2);
+    }
+
+    #[test]
+    fn connectivity_tracker_window_eviction() {
+        let mut tracker = ConnectivityTracker::new(3);
+        tracker.record(false);
+        tracker.record(false);
+        tracker.record(false);
+        assert!(tracker.failure_rate() == 1.0);
+
+        tracker.record(true);
+        tracker.record(true);
+        tracker.record(true);
+        assert!(tracker.failure_rate() == 0.0, "old failures should be evicted");
     }
 }

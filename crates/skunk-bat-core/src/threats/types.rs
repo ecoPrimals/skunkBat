@@ -96,6 +96,22 @@ pub enum ThreatType {
         /// Source IP address
         source_ip: String,
     },
+    /// Connectivity anomaly (peptidoglycan / k-derm layer).
+    ///
+    /// Fires when outbound RPC failure rate exceeds a configurable threshold,
+    /// indicating infrastructure-layer failures: rate-limit drops, DNS failures,
+    /// peer unreachability, or network partitions. Motivated by Wave 155d
+    /// peptidoglycan incident (silent iptables DROP on golgiBody).
+    ConnectivityAnomaly {
+        /// Number of recent failures in the observation window.
+        failures: u32,
+        /// Number of recent successes in the observation window.
+        successes: u32,
+        /// Failure rate as a fraction (0.0–1.0).
+        failure_rate: f64,
+        /// Configured threshold that was exceeded.
+        threshold: f64,
+    },
 }
 
 /// Threat severity.

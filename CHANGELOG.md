@@ -6,6 +6,14 @@ All notable changes to skunkBat are documented here.
 
 ### Added
 
+- **Connectivity anomaly detection** (Wave 155d k-derm incident response):
+  New 9th threat category `ConnectivityAnomaly` for detecting infrastructure
+  layer failures (rate-limit drops, DNS failures, peer unreachability, network
+  partitions). `ConnectivityTracker` maintains a sliding window of outbound RPC
+  probe results. Configurable via `SKUNKBAT_CONNECTIVITY_THRESHOLD` (default
+  0.5). Severity escalation: >80% failure rate = Critical, otherwise High.
+  12 new tests (4 tracker unit + 8 integration). Motivated by golgiBody
+  peptidoglycan incident (silent iptables DROP).
 - **BTSP ClientHello handshake** (Wave 151b): Consumer-side 4-step BTSP
   handshake for bearDog strict mode (`BEARDOG_UDS_REQUIRE_BTSP=1`). Wired
   into `CapabilityClient` — all outbound RPC (lineage, federation, discovery)

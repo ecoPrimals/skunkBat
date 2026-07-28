@@ -288,6 +288,65 @@ impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
     }
 }
 
+impl<L: LineageVerifier, B: BaselineProfiler> ThreatDetector<L, B> {
+    /// Detect connectivity anomalies in the k-derm / peptidoglycan layer.
+    ///
+    /// Checks the outbound RPC failure rate against the configured threshold.
+    /// A sustained high failure rate indicates infrastructure-layer problems:
+    /// rate-limit drops, DNS failures, peer unreachability, or network partitions.
+    /// Motivated by Wave 155d golgiBody peptidoglycan incident.
+    pub(super) fn detect_connectivity_anomalies(&self) -> Vec<Threat> {
+        let Ok(tracker) = self.connectivity_tracker.lock() else {
+            return Vec::new();
+        };
+
+        if !tracker.is_established() {
+            return Vec::new();
+        }
+
+        let rate = tracker.failure_rate();
+        if rate <= self.thresholds.connectivity_failure_threshold {
+            return Vec::new();
+        }
+
+        let failures = tracker.failure_count();
+        let successes = tracker.success_count();
+        drop(tracker);
+
+        tracing::warn!(
+            failure_rate = rate,
+            failures,
+            successes,
+            threshold = self.thresholds.connectivity_failure_threshold,
+            "Connectivity anomaly: outbound RPC failure rate exceeds threshold"
+        );
+        vec![Threat {
+            id: format!("connectivity-{}", Self::threat_id_suffix()),
+            threat_type: ThreatType::ConnectivityAnomaly {
+                failures,
+                successes,
+                failure_rate: rate,
+                threshold: self.thresholds.connectivity_failure_threshold,
+            },
+            severity: if rate > 0.8 {
+                Severity::Critical
+            } else {
+                Severity::High
+            },
+            source: "infrastructure".to_owned(),
+            target: "outbound-rpc".to_owned(),
+            detected_at: SystemTime::now(),
+            description: format!(
+                "Outbound RPC failure rate {rate:.0}% ({failures} failures / {} total) \
+                 exceeds threshold {:.0}% — possible k-derm layer failure",
+                failures + successes,
+                self.thresholds.connectivity_failure_threshold * 100.0,
+            ),
+            confidence: self.thresholds.connectivity_confidence,
+        }]
+    }
+}
+
 fn anomaly_severity(thresholds: &ThreatThresholds, deviation: f64) -> Severity {
     if deviation > thresholds.severity_high_deviation {
         Severity::High

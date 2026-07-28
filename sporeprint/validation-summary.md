@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection (7 categories), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, TransportEndpoint Phase 2 abstraction, Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, BTSP ClientHello for bearDog strict mode. 597 tests, 30 IPC methods."
-date = 2026-07-26
+description = "Defense meta-primal — metadata-only threat detection (9 categories), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, TransportEndpoint Phase 2 abstraction, Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode. 609 tests, 30 IPC methods."
+date = 2026-07-28
 
 [taxonomies]
 primals = ["skunkbat"]
@@ -13,8 +13,8 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 597 passing (4 crates)
-- **Source**: max 515 lines production code (test files exempt from 800L cap)
+- **Tests**: 609 passing (4 crates)
+- **Source**: max 792 lines production code (test files exempt from 800L cap)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)
@@ -27,7 +27,7 @@ springs = []
 | Capability | Description |
 |-----------|-------------|
 | `defense` | Graduated response (Monitor, Quarantine, Block) |
-| `threat` | 7-type detection (Genetic, Behavioral, Intrusion, Resource, Topology, Config Drift, Process Spawn Anomaly) |
+| `threat` | 9-type detection (Genetic, Behavioral, Intrusion, Resource, Topology, Config Drift, Process Spawn Anomaly, HTTP Anomaly, Connectivity Anomaly) |
 | `metadata` | Content-free network pattern analysis |
 | `lineage` | BearDog-delegated lineage verification |
 | `baseline` | Statistical profiler with multi-dimensional anomaly scoring |
