@@ -317,6 +317,9 @@ mod tests {
         tracker.record(true);
         tracker.record(true);
         tracker.record(true);
-        assert!(tracker.failure_rate() == 0.0, "old failures should be evicted");
+        assert!(
+            tracker.failure_rate() == 0.0,
+            "old failures should be evicted"
+        );
     }
 }

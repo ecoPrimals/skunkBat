@@ -4,7 +4,7 @@
 //! BTSP (Biotic Transport Security Protocol) — wire framing, provider
 //! client, and server-side handshake (Phase 2).
 //!
-//! Configuration lives in [`super::config`]; UID helpers in [`super::sys`].
+//! Configuration lives in [`super::config`]; UID helpers in [`skunk_bat_core::platform`].
 
 use super::error::TransportError;
 use serde_json::Value;

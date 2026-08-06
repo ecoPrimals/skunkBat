@@ -16,6 +16,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+tarpc = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "test-util"] }

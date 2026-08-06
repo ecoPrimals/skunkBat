@@ -19,6 +19,7 @@ mod jsonrpc;
 mod method_gate;
 mod registration;
 mod server;
+mod tarpc_uds;
 pub mod transport;
 
 use skunk_bat_core::PrimalLifecycle;
@@ -175,11 +176,46 @@ pub async fn serve(
         )))
     };
 
-    tracing::info!("skunkBat IPC ready (TCP: {}, UDS: {})", !no_tcp, !no_uds,);
+    // C2 dual-socket: tarpc binary UDS alongside JSON-RPC
+    let tarpc_shutdown = if no_uds {
+        None
+    } else {
+        let tarpc_path = socket_path.as_ref().map_or_else(
+            || {
+                let btsp = transport::BtspConfig::from_env().ok();
+                let jsonrpc = btsp.map_or_else(
+                    || std::path::PathBuf::from("/tmp/biomeos/skunkbat.sock"),
+                    |c| std::path::PathBuf::from(c.socket_path()),
+                );
+                skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(&jsonrpc)
+            },
+            |p| skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(std::path::Path::new(p)),
+        );
+
+        let server = tarpc_uds::TarpcUdsServer::new(Arc::clone(&state), tarpc_path);
+        let shutdown = server.shutdown_sender();
+        tokio::spawn(async move {
+            if let Err(e) = server.serve().await {
+                tracing::error!("tarpc UDS server error: {e}");
+            }
+        });
+        Some(shutdown)
+    };
+
+    tracing::info!(
+        "skunkBat IPC ready (TCP: {}, UDS: {}, tarpc: {})",
+        !no_tcp,
+        !no_uds,
+        tarpc_shutdown.is_some(),
+    );
 
     let bg = spawn_background(&state, &sessions, socket_path.as_ref(), port).await;
 
     wait_for_shutdown(tcp_handle, uds_handle).await?;
+
+    if let Some(ref tx) = tarpc_shutdown {
+        let _ = tx.send(true);
+    }
 
     bg.abort_all();
 
@@ -192,12 +228,14 @@ pub async fn serve(
 
     if let Some(ref path) = socket_path {
         tokio::fs::remove_file(path).await.ok();
-        let symlink = std::path::Path::new(path)
-            .parent()
-            .map(|p| p.join("security.sock"));
+        let jsonrpc_path = std::path::Path::new(path);
+        let symlink = jsonrpc_path.parent().map(|p| p.join("security.sock"));
         if let Some(s) = symlink {
             tokio::fs::remove_file(s).await.ok();
         }
+        // Clean tarpc socket
+        let tarpc_path = skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(jsonrpc_path);
+        tokio::fs::remove_file(tarpc_path).await.ok();
         tracing::info!("cleaned up socket files");
     }
 

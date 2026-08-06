@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-use super::*;
 use super::super::frame::NONCE_SIZE;
+use super::*;
 
 #[test]
 fn cipher_suite_roundtrip() {

@@ -48,6 +48,7 @@ pub mod observability;
 pub mod platform;
 pub mod primal_foundation;
 pub mod reconnaissance;
+pub mod tarpc_service;
 pub mod threats;
 pub mod universal_adapter;
 

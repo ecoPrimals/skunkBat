@@ -987,7 +987,10 @@ async fn test_connectivity_disabled_detector_no_threat() {
     }
 
     let threats = detector.detect().await.expect("detect");
-    assert!(threats.is_empty(), "Disabled detector should produce nothing");
+    assert!(
+        threats.is_empty(),
+        "Disabled detector should produce nothing"
+    );
 }
 
 #[test]
