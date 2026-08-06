@@ -307,6 +307,34 @@ impl TarpcUdsServer {
     }
 }
 
+/// Serve tarpc on a pre-connected stream (G65 negotiated or direct).
+///
+/// Used by the G65 protocol negotiation path: after the handshake selects tarpc,
+/// this function wraps the stream in bincode framing and serves the `SkunkBatRpc`
+/// trait on it until the client disconnects.
+pub async fn serve_tarpc_stream<S>(state: Arc<RwLock<App>>, stream: S)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
+{
+    let handler = SkunkBatRpcHandler {
+        state: Arc::clone(&state),
+    };
+
+    let transport = tarpc::serde_transport::new(
+        tokio_util::codec::length_delimited::Builder::new()
+            .max_frame_length(usize::MAX)
+            .new_framed(stream),
+        Bincode::default(),
+    );
+
+    tarpc::server::BaseChannel::with_defaults(transport)
+        .execute(handler.serve())
+        .for_each(|response| async move {
+            response.await;
+        })
+        .await;
+}
+
 #[cfg(test)]
 #[path = "tarpc_uds_tests.rs"]
 mod tests;

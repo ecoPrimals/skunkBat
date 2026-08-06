@@ -114,8 +114,8 @@ fn capabilities_response() -> serde_json::Value {
         ],
         "consumed_capabilities": CONSUMED_CAPABILITIES,
         "protocol": ["jsonrpc-2.0", "tarpc"],
-        "transport": ["uds", "tcp"],
-        "tarpc_socket": "skunkbat.tarpc.sock"
+        "protocol_negotiation": "G65",
+        "transport": ["uds", "tcp"]
     })
 }
 
@@ -349,6 +349,7 @@ fn dispatch_identity(id: serde_json::Value) -> Response {
             "domain": PRIMAL_DOMAIN,
             "license": PRIMAL_LICENSE,
             "protocol": ["jsonrpc-2.0", "tarpc"],
+            "protocol_negotiation": "G65",
             "transport": ["uds", "tcp"]
         }),
     )

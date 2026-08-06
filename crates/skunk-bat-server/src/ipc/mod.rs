@@ -17,6 +17,11 @@ mod dispatch_composable;
 mod dispatch_security;
 mod jsonrpc;
 mod method_gate;
+#[allow(
+    dead_code,
+    reason = "client-side API (to_wire, from_wire, negotiate_client) used in tests"
+)]
+mod protocol_negotiation;
 mod registration;
 mod server;
 mod tarpc_uds;

@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-//! tarpc service definitions for skunkBat (G64 Cephalization — C2 dual-socket).
+//! tarpc service definitions for skunkBat (G65 Cephalization — protocol negotiation).
 //!
 //! Defines the binary-protocol counterpart to the JSON-RPC methods served on
-//! `skunkbat.sock`.  The tarpc service listens on `skunkbat.tarpc.sock` and
-//! provides the same semantic operations with binary framing (bincode) for
-//! sub-ms intra-gate composition.
+//! `skunkbat.sock`. G65 protocol negotiation selects tarpc or JSON-RPC at
+//! connection time on a single socket, eliminating the C2 dual-socket pattern.
 //!
-//! ## Dual-Protocol Architecture
+//! ## Protocol Architecture
 //!
-//! | Socket | Protocol | Purpose |
-//! |--------|----------|---------|
-//! | `skunkbat.sock` | JSON-RPC 2.0 | Discovery, diagnostics, browser/REST |
-//! | `skunkbat.tarpc.sock` | tarpc + bincode | Primal-to-primal composition |
+//! | Phase | Socket | Protocol | Selection |
+//! |-------|--------|----------|-----------|
+//! | C2 (legacy) | `skunkbat.tarpc.sock` | tarpc + bincode | Direct |
+//! | G65 | `skunkbat.sock` | tarpc or JSON-RPC | `PROTOCOLS:` negotiation |
 
 use serde::{Deserialize, Serialize};
 

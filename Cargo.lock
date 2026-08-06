@@ -1003,6 +1003,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-serde",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

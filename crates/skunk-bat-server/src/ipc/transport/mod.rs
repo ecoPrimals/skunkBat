@@ -48,6 +48,7 @@ use tokio::sync::RwLock;
 
 use super::App;
 use super::method_gate::CallerContext;
+use super::protocol_negotiation::{self, IpcProtocol};
 use super::server::handle_connection;
 
 /// riboCipher signal prefix bytes (Wave 111+ standard).
@@ -71,6 +72,8 @@ enum ConnectionIntent {
     BtspHandshake,
     /// Lightweight health probe — respond and close.
     Probe,
+    /// G65 protocol negotiation — first byte `P` consumed, rest of `PROTOCOLS:` line pending.
+    ProtocolNegotiation,
     /// Legacy unsignalled connection — first byte must be replayed.
     Legacy { first_byte: u8 },
     /// Connection should be rejected (unknown tier / protocol).
@@ -117,6 +120,10 @@ async fn classify_connection<S: tokio::io::AsyncRead + Unpin>(
             );
             Ok(ConnectionIntent::Reject)
         }
+        b'P' => {
+            tracing::debug!("G65 protocol negotiation candidate (first byte 'P')");
+            Ok(ConnectionIntent::ProtocolNegotiation)
+        }
         other => {
             tracing::warn!("DEPRECATED: unsignalled connection (first byte 0x{other:02x})");
             Ok(ConnectionIntent::Legacy {
@@ -146,7 +153,33 @@ async fn complete_btsp_handshake<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
     Ok(sid)
 }
 
+/// Handle G65 protocol negotiation on a stream where `P` was already consumed.
+///
+/// Negotiates the protocol and routes to tarpc or JSON-RPC accordingly.
+async fn handle_g65<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static>(
+    mut stream: S,
+    state: Arc<RwLock<App>>,
+    sessions: Arc<BtspSessionRegistry>,
+    caller: CallerContext,
+    label: &str,
+) {
+    let supported = IpcProtocol::all_supported();
+    match protocol_negotiation::negotiate_server_after_p(&mut stream, &supported).await {
+        Ok(IpcProtocol::Tarpc) => {
+            tracing::info!("G65 → tarpc on {label}");
+            super::tarpc_uds::serve_tarpc_stream(state, stream).await;
+        }
+        Ok(IpcProtocol::JsonRpc) | Err(_) => {
+            handle_connection(state, sessions, stream, caller, None).await;
+        }
+    }
+}
+
 /// Bind TCP and accept connections with riboCipher signal routing.
+#[expect(
+    clippy::too_many_lines,
+    reason = "accept loop with protocol-dispatch arms"
+)]
 pub async fn serve_tcp(
     state: Arc<RwLock<App>>,
     sessions: Arc<BtspSessionRegistry>,
@@ -218,6 +251,9 @@ pub async fn serve_tcp(
                 ConnectionIntent::Probe => {
                     tracing::debug!("riboCipher probe from {label}");
                     respond_to_probe(&mut stream).await;
+                }
+                ConnectionIntent::ProtocolNegotiation => {
+                    handle_g65(stream, state, sessions, caller, &label).await;
                 }
                 ConnectionIntent::Legacy { first_byte } => {
                     if first_byte != b'{' {
@@ -350,6 +386,9 @@ pub async fn serve_uds(
                 ConnectionIntent::Probe => {
                     tracing::debug!("riboCipher probe from {label}");
                     respond_to_probe(&mut stream).await;
+                }
+                ConnectionIntent::ProtocolNegotiation => {
+                    handle_g65(stream, state, sessions, caller, label).await;
                 }
                 ConnectionIntent::Legacy { first_byte } => {
                     if first_byte != b'{' {
@@ -505,6 +544,13 @@ mod tests {
         let mut s = cursor_stream(&[0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
         let intent = classify_connection(&mut s).await.unwrap();
         assert!(matches!(intent, ConnectionIntent::Reject));
+    }
+
+    #[tokio::test]
+    async fn classify_g65_negotiation() {
+        let mut s = cursor_stream(b"PROTOCOLS: tarpc,jsonrpc\n");
+        let intent = classify_connection(&mut s).await.unwrap();
+        assert!(matches!(intent, ConnectionIntent::ProtocolNegotiation));
     }
 
     #[tokio::test]
