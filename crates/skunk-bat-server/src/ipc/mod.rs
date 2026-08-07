@@ -245,26 +245,28 @@ pub async fn serve(
 }
 
 /// Create capability-domain symlink: `security.sock` → `skunkbat[-{fid}].sock`
-#[cfg(unix)]
+///
+/// Uses G68 [`platform_link`](skunk_bat_core::platform_substrate::platform_link)
+/// instead of raw `std::os::unix::fs::symlink` — works on all platforms.
 fn create_capability_symlink(socket_path: &str) {
     let socket_name = std::path::Path::new(socket_path).file_name().map_or_else(
         || "skunkbat.sock".to_owned(),
         |n| n.to_string_lossy().into_owned(),
     );
     let symlink_path = std::path::Path::new(socket_path).parent().map_or_else(
-        || "security.sock".to_owned(),
-        |p| p.join("security.sock").to_string_lossy().into_owned(),
+        || std::path::PathBuf::from("security.sock"),
+        |p| p.join("security.sock"),
     );
 
     std::fs::remove_file(&symlink_path).ok();
-    match std::os::unix::fs::symlink(&socket_name, &symlink_path) {
+    match skunk_bat_core::platform_substrate::platform_link(
+        std::path::Path::new(&socket_name),
+        &symlink_path,
+    ) {
         Ok(()) => tracing::info!("Capability symlink: security.sock -> {socket_name}"),
         Err(e) => tracing::warn!("Failed to create capability symlink: {e}"),
     }
 }
-
-#[cfg(not(unix))]
-fn create_capability_symlink(_socket_path: &str) {}
 
 /// Spawn the C2 dual-socket tarpc UDS server (Unix only).
 ///

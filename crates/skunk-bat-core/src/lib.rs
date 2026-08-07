@@ -46,6 +46,7 @@ pub mod env_keys;
 pub mod error;
 pub mod observability;
 pub mod platform;
+pub mod platform_substrate;
 pub mod primal_foundation;
 pub mod reconnaissance;
 pub mod tarpc_service;
