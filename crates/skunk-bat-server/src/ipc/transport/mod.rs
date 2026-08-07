@@ -1,49 +1,45 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-//! Transport layer — TCP and Unix domain socket listeners.
+//! Transport layer — G66 transport abstraction + riboCipher routing.
 //!
-//! Implements BTSP Phase 1 (socket naming with `FAMILY_ID` awareness),
-//! Phase 2 (`BearDog`-delegated handshake on both TCP and UDS), and
-//! Primal IPC Protocol v3.1 (filesystem sockets in `$BIOMEOS_SOCKET_DIR`).
+//! ## G66 Transport Abstraction
 //!
-//! Protocol detection uses riboCipher signal-first accept (Wave 111+).
-//! The server reads the first byte to classify the connection:
+//! [`TransportStream`] and [`TransportListener`] eliminate silicon deism:
+//! all `#[cfg(unix)]` for stream/listener variants lives here, not in
+//! business logic. IPC modules operate on transport-agnostic types.
+//!
+//! ## Protocol Detection (riboCipher)
 //!
 //! | First byte | Action |
 //! |------------|--------|
+//! | `P` (0x50) | G65 protocol negotiation (`PROTOCOLS: ...`) |
 //! | `0xEC`     | Clear riboCipher — read 2nd byte for protocol type |
 //! | `0xED`     | Mito-obfuscated riboCipher — not yet implemented, reject |
 //! | `0xEE`     | Nuclear-sealed riboCipher — not yet implemented, reject |
 //! | other      | Legacy (deprecated) — log warning, fall back to old peek logic |
-//!
-//! Protocol types (after `0xEC`):
-//!
-//! | Byte   | Protocol        |
-//! |--------|-----------------|
-//! | `0x00` | Probe           |
-//! | `0x01` | NDJSON JSON-RPC |
-//! | `0x02` | BTSP binary     |
-//! | `0x03` | BTSP JSON-line  |
 
 mod btsp;
 mod config;
 mod error;
 pub mod frame;
+pub mod listener;
 pub mod negotiate;
 mod peek;
+pub mod stream;
 
 pub use error::TransportError;
 
 pub use btsp::{read_frame, write_frame};
 pub use config::{BtspConfig, BtspHandshakeConfig};
+pub use listener::{TransportListener, bind_transport};
 pub use negotiate::SessionRegistry;
+pub use stream::TransportStream;
 
 use btsp::perform_server_handshake;
 use negotiate::SessionRegistry as BtspSessionRegistry;
 use peek::PeekedStream;
 use std::sync::Arc;
-use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
 use super::App;
@@ -175,50 +171,55 @@ async fn handle_g65<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Se
     }
 }
 
-/// Bind TCP and accept connections with riboCipher signal routing.
-#[expect(
-    clippy::too_many_lines,
-    reason = "accept loop with protocol-dispatch arms"
-)]
-pub async fn serve_tcp(
+/// Construct a [`CallerContext`] from a [`TransportStream`]'s metadata.
+fn caller_from_stream(stream: &TransportStream) -> CallerContext {
+    match stream {
+        #[cfg(unix)]
+        TransportStream::Unix(_) => CallerContext::unix(),
+        TransportStream::Tcp(s) => match s.peer_addr() {
+            Ok(addr) if addr.ip().is_loopback() => CallerContext::loopback(),
+            Ok(addr) => CallerContext::remote_with_addr(addr.to_string()),
+            Err(_) => CallerContext::remote_with_addr("unknown".to_owned()),
+        },
+    }
+}
+
+/// Unified accept loop — transport-agnostic (G66).
+///
+/// Accepts connections on any [`TransportListener`], classifies via
+/// riboCipher signal + G65 negotiation, and dispatches to the appropriate
+/// handler.
+pub async fn serve_listener(
+    listener: TransportListener,
     state: Arc<RwLock<App>>,
     sessions: Arc<BtspSessionRegistry>,
-    addr: String,
-    port: u16,
+    btsp_config: Option<Arc<BtspHandshakeConfig>>,
 ) -> Result<(), TransportError> {
-    let listener = TcpListener::bind((&*addr, port)).await?;
-    tracing::info!("TCP JSON-RPC listening on {addr}:{port}");
-
-    let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
-    if let Some(ref cfg) = btsp_config {
-        tracing::info!(
-            "BTSP Phase 2 active on TCP: provider={:?}",
-            cfg.provider_endpoint
-        );
-    }
+    tracing::info!(
+        transport = listener.transport_name(),
+        "IPC listener ready (G66)"
+    );
 
     loop {
-        let (mut stream, addr) = listener.accept().await?;
-        tracing::debug!("TCP connection from {addr}");
+        let mut stream = listener.accept().await?;
+        let label = stream.peer_label();
+        tracing::debug!("{label} connection accepted");
+
         let state = Arc::clone(&state);
         let btsp = btsp_config.clone();
         let sessions = Arc::clone(&sessions);
-        tokio::spawn(async move {
-            let mut caller = if addr.ip().is_loopback() {
-                CallerContext::loopback()
-            } else {
-                CallerContext::remote_with_addr(addr.to_string())
-            };
 
+        tokio::spawn(async move {
             let intent = match classify_connection(&mut stream).await {
                 Ok(i) => i,
                 Err(e) => {
-                    tracing::debug!("TCP {addr}: failed to read signal: {e}");
+                    tracing::debug!("{label}: failed to read signal: {e}");
                     return;
                 }
             };
 
-            let label = format!("TCP {addr}");
+            let mut caller = caller_from_stream(&stream);
+
             match intent {
                 ConnectionIntent::NdjsonJsonRpc => {
                     handle_connection(state, sessions, stream, caller, None).await;
@@ -291,150 +292,6 @@ pub async fn serve_tcp(
     }
 }
 
-/// Set up the UDS listener: create directory, clean stale socket, bind, create symlink.
-#[cfg(unix)]
-async fn setup_uds_listener()
--> Result<(tokio::net::UnixListener, Option<Arc<BtspHandshakeConfig>>), TransportError> {
-    let btsp = BtspConfig::from_env()?;
-    btsp.log_mode();
-
-    let socket_path = btsp.socket_path();
-
-    if let Some(parent) = std::path::Path::new(&socket_path).parent()
-        && let Err(e) = tokio::fs::create_dir_all(parent).await
-    {
-        tracing::warn!(
-            "Failed to create UDS socket directory {}: {e}",
-            parent.display()
-        );
-    }
-
-    if let Err(e) = tokio::fs::remove_file(&socket_path).await
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!("Failed to remove stale UDS socket {socket_path}: {e}");
-    }
-
-    let listener = tokio::net::UnixListener::bind(&socket_path)?;
-    tracing::info!("UDS JSON-RPC listening on {socket_path}");
-
-    create_capability_symlink(&btsp);
-
-    let btsp_config = BtspHandshakeConfig::from_env().map(Arc::new);
-    if let Some(ref cfg) = btsp_config {
-        tracing::info!(
-            "BTSP Phase 2 active on UDS (riboCipher signal): provider={:?}",
-            cfg.provider_endpoint
-        );
-    }
-
-    Ok((listener, btsp_config))
-}
-
-/// Bind UDS and accept connections per BTSP Phase 1 naming + riboCipher routing.
-#[cfg(unix)]
-pub async fn serve_uds(
-    state: Arc<RwLock<App>>,
-    sessions: Arc<BtspSessionRegistry>,
-) -> Result<(), TransportError> {
-    let (listener, btsp_config) = setup_uds_listener().await?;
-
-    loop {
-        let (mut stream, _addr) = listener.accept().await?;
-        tracing::debug!("UDS connection accepted");
-        let state = Arc::clone(&state);
-        let btsp = btsp_config.clone();
-        let sessions = Arc::clone(&sessions);
-        tokio::spawn(async move {
-            let intent = match classify_connection(&mut stream).await {
-                Ok(i) => i,
-                Err(e) => {
-                    tracing::debug!("UDS: failed to read signal: {e}");
-                    return;
-                }
-            };
-
-            let mut caller = CallerContext::unix();
-            let label = "UDS";
-
-            match intent {
-                ConnectionIntent::NdjsonJsonRpc => {
-                    handle_connection(state, sessions, stream, caller, None).await;
-                }
-                ConnectionIntent::BtspHandshake => {
-                    let sid = if let Some(ref cfg) = btsp {
-                        match complete_btsp_handshake(
-                            &mut stream,
-                            cfg,
-                            &sessions,
-                            &mut caller,
-                            label,
-                        )
-                        .await
-                        {
-                            Ok(sid) => Some(sid),
-                            Err(e) => {
-                                tracing::warn!("BTSP handshake failed {label}: {e}");
-                                return;
-                            }
-                        }
-                    } else {
-                        None
-                    };
-                    handle_connection(state, sessions, stream, caller, sid).await;
-                }
-                ConnectionIntent::Probe => {
-                    tracing::debug!("riboCipher probe from {label}");
-                    respond_to_probe(&mut stream).await;
-                }
-                ConnectionIntent::ProtocolNegotiation => {
-                    handle_g65(stream, state, sessions, caller, label).await;
-                }
-                ConnectionIntent::Legacy { first_byte } => {
-                    if first_byte != b'{' {
-                        if let Some(ref cfg) = btsp {
-                            let mut ps = PeekedStream {
-                                peeked: Some(first_byte),
-                                inner: stream,
-                            };
-                            match complete_btsp_handshake(
-                                &mut ps,
-                                cfg,
-                                &sessions,
-                                &mut caller,
-                                label,
-                            )
-                            .await
-                            {
-                                Ok(sid) => {
-                                    handle_connection(state, sessions, ps, caller, Some(sid)).await;
-                                }
-                                Err(e) => tracing::warn!("BTSP handshake failed {label}: {e}"),
-                            }
-                        }
-                        return;
-                    }
-                    let peeked = PeekedStream {
-                        peeked: Some(first_byte),
-                        inner: stream,
-                    };
-                    handle_connection(state, sessions, peeked, caller, None).await;
-                }
-                ConnectionIntent::Reject => {}
-            }
-        });
-    }
-}
-
-#[cfg(not(unix))]
-pub async fn serve_uds(
-    _state: Arc<RwLock<App>>,
-    _sessions: Arc<BtspSessionRegistry>,
-) -> Result<(), TransportError> {
-    tracing::warn!("Unix domain sockets not available on this platform");
-    std::future::pending().await
-}
-
 /// Respond to a riboCipher probe with a minimal JSON health payload, then close.
 ///
 /// Probes are used by `ToadStool` and other discovery agents to check liveness
@@ -469,24 +326,6 @@ async fn record_transport_path(state: &Arc<RwLock<App>>, caller: &CallerContext)
         ConnectionOrigin::Remote => vec![2, 3],
     };
     state.read().await.record_connection_path(path);
-}
-
-/// Create capability-domain symlink: `security.sock` → `skunkbat[-{fid}].sock`
-#[cfg(unix)]
-fn create_capability_symlink(btsp: &BtspConfig) {
-    let symlink_path = btsp.capability_symlink_path();
-    let socket_name = std::path::Path::new(&btsp.socket_path())
-        .file_name()
-        .map_or_else(
-            || "skunkbat.sock".to_owned(),
-            |n| n.to_string_lossy().into_owned(),
-        );
-
-    std::fs::remove_file(&symlink_path).ok();
-    match std::os::unix::fs::symlink(&socket_name, &symlink_path) {
-        Ok(()) => tracing::info!("Capability symlink: security.sock -> {socket_name}"),
-        Err(e) => tracing::warn!("Failed to create capability symlink: {e}"),
-    }
 }
 
 #[cfg(test)]

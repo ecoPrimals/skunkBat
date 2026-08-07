@@ -29,6 +29,7 @@ pub mod transport;
 
 use skunk_bat_core::PrimalLifecycle;
 use skunk_bat_core::SkunkBat;
+use skunk_bat_integrations::TransportEndpoint;
 use skunk_bat_integrations::forwarding::{self, ForwardingConfig};
 use skunk_bat_integrations::verifier::RuntimeVerifier;
 use std::sync::Arc;
@@ -139,7 +140,9 @@ async fn spawn_background(
 
 /// Start IPC listeners and serve until shutdown signal.
 ///
-/// Traps `SIGINT`/`SIGTERM` for graceful lifecycle stop and UDS socket cleanup.
+/// Uses G66 transport abstraction: binds [`transport::TransportListener`]s from
+/// [`TransportEndpoint`]s, then runs unified accept loops.
+/// Traps `SIGINT`/`SIGTERM` for graceful lifecycle stop and socket cleanup.
 pub async fn serve(
     skunkbat: App,
     addr: String,
@@ -151,6 +154,11 @@ pub async fn serve(
     let state = Arc::new(RwLock::new(skunkbat));
     let sessions = Arc::new(SessionRegistry::new());
 
+    let btsp_config = transport::BtspHandshakeConfig::from_env().map(Arc::new);
+    if let Some(ref cfg) = btsp_config {
+        tracing::info!("BTSP Phase 2 active: provider={:?}", cfg.provider_endpoint);
+    }
+
     let socket_path = if no_uds {
         None
     } else if let Some(path) = socket_override {
@@ -161,27 +169,39 @@ pub async fn serve(
             .map(|c| c.socket_path())
     };
 
+    // G66: bind listeners from TransportEndpoints
     let tcp_handle = if no_tcp {
         None
     } else {
-        Some(tokio::spawn(transport::serve_tcp(
+        let ep = TransportEndpoint::Tcp { host: addr, port };
+        let listener = transport::bind_transport(&ep).await?;
+        tracing::info!("TCP listening on 0.0.0.0:{port}");
+        Some(tokio::spawn(transport::serve_listener(
+            listener,
             Arc::clone(&state),
             Arc::clone(&sessions),
-            addr,
-            port,
+            btsp_config.clone(),
         )))
     };
 
     let uds_handle = if no_uds {
         None
-    } else {
-        Some(tokio::spawn(transport::serve_uds(
+    } else if let Some(ref path) = socket_path {
+        let ep = TransportEndpoint::Uds { path: path.clone() };
+        let listener = transport::bind_transport(&ep).await?;
+        tracing::info!("UDS listening on {path}");
+        create_capability_symlink(path);
+        Some(tokio::spawn(transport::serve_listener(
+            listener,
             Arc::clone(&state),
             Arc::clone(&sessions),
+            btsp_config.clone(),
         )))
+    } else {
+        None
     };
 
-    // C2 dual-socket: tarpc binary UDS alongside JSON-RPC
+    // C2 dual-socket: tarpc binary UDS alongside JSON-RPC (retained as fallback)
     let tarpc_shutdown = if no_uds {
         None
     } else {
@@ -208,7 +228,7 @@ pub async fn serve(
     };
 
     tracing::info!(
-        "skunkBat IPC ready (TCP: {}, UDS: {}, tarpc: {})",
+        "skunkBat IPC ready (TCP: {}, UDS: {}, tarpc: {}, G66: transport-agnostic)",
         !no_tcp,
         !no_uds,
         tarpc_shutdown.is_some(),
@@ -238,7 +258,6 @@ pub async fn serve(
         if let Some(s) = symlink {
             tokio::fs::remove_file(s).await.ok();
         }
-        // Clean tarpc socket
         let tarpc_path = skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(jsonrpc_path);
         tokio::fs::remove_file(tarpc_path).await.ok();
         tracing::info!("cleaned up socket files");
@@ -246,6 +265,28 @@ pub async fn serve(
 
     Ok(())
 }
+
+/// Create capability-domain symlink: `security.sock` → `skunkbat[-{fid}].sock`
+#[cfg(unix)]
+fn create_capability_symlink(socket_path: &str) {
+    let socket_name = std::path::Path::new(socket_path).file_name().map_or_else(
+        || "skunkbat.sock".to_owned(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let symlink_path = std::path::Path::new(socket_path).parent().map_or_else(
+        || "security.sock".to_owned(),
+        |p| p.join("security.sock").to_string_lossy().into_owned(),
+    );
+
+    std::fs::remove_file(&symlink_path).ok();
+    match std::os::unix::fs::symlink(&socket_name, &symlink_path) {
+        Ok(()) => tracing::info!("Capability symlink: security.sock -> {socket_name}"),
+        Err(e) => tracing::warn!("Failed to create capability symlink: {e}"),
+    }
+}
+
+#[cfg(not(unix))]
+fn create_capability_symlink(_socket_path: &str) {}
 
 #[cfg(unix)]
 async fn wait_for_shutdown(

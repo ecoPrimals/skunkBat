@@ -1,6 +1,6 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection (9 categories), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, TransportEndpoint Phase 2 abstraction, Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode, G65 protocol negotiation (single-socket tarpc/JSON-RPC). 643 tests, 30+11 IPC methods."
+description = "Defense meta-primal — metadata-only threat detection (9 categories), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, G66 transport abstraction (TransportStream + TransportListener + bind_transport), Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode, G65 protocol negotiation (single-socket tarpc/JSON-RPC). 648 tests, 30+11 IPC methods."
 date = 2026-08-06
 
 [taxonomies]
@@ -13,15 +13,15 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 643 passing (4 crates)
+- **Tests**: 648 passing (4 crates)
 - **Source**: max 792 lines production code (test files exempt from 800L cap)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
 - **Pure Rust**: `forbid(unsafe_code)` workspace-wide, `rand` eliminated (OsRng via RustCrypto)
 - **riboCipher**: Tier 1 (clear signal) implemented — `0xEC` + protocol type routing
 - **ThreatThresholds**: All detection constants configurable, no magic numbers
-- **Cephalization**: **G65 protocol negotiation shipped** — single-socket `PROTOCOLS:` handshake selects tarpc or JSON-RPC at connection time (tarpc 0.37 + bincode); C2 dual-socket retained as fallback
-- **Cross-arch (Phase 2)**: `TransportEndpoint` dispatch in all high-level IPC; `#[cfg]` only in low-level primitives; `cargo check --target x86_64-pc-windows-gnu` clean; musl static targets via `.cargo/config.toml`
+- **Cephalization**: G65 protocol negotiation + **G66 transport abstraction shipped** — `TransportStream` + `TransportListener` + `bind_transport()` eliminate silicon deism; unified `serve_listener()` replaces separate TCP/UDS accept loops; `#[cfg(unix)]` confined to transport layer only
+- **Cross-arch**: `TransportEndpoint` dispatch in all IPC; `TransportStream`/`TransportListener` abstract UDS vs TCP; `#[cfg(unix)]` only in `transport/stream.rs`, `transport/listener.rs`, and platform utilities; musl static targets via `.cargo/config.toml`
 
 ## Capabilities
 
