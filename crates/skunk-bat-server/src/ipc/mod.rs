@@ -201,31 +201,9 @@ pub async fn serve(
         None
     };
 
-    // C2 dual-socket: tarpc binary UDS alongside JSON-RPC (retained as fallback)
-    let tarpc_shutdown = if no_uds {
-        None
-    } else {
-        let tarpc_path = socket_path.as_ref().map_or_else(
-            || {
-                let btsp = transport::BtspConfig::from_env().ok();
-                let jsonrpc = btsp.map_or_else(
-                    || std::path::PathBuf::from("/tmp/biomeos/skunkbat.sock"),
-                    |c| std::path::PathBuf::from(c.socket_path()),
-                );
-                skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(&jsonrpc)
-            },
-            |p| skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(std::path::Path::new(p)),
-        );
-
-        let server = tarpc_uds::TarpcUdsServer::new(Arc::clone(&state), tarpc_path);
-        let shutdown = server.shutdown_sender();
-        tokio::spawn(async move {
-            if let Err(e) = server.serve().await {
-                tracing::error!("tarpc UDS server error: {e}");
-            }
-        });
-        Some(shutdown)
-    };
+    // C2 dual-socket: tarpc binary UDS alongside JSON-RPC (Unix only — retained as fallback).
+    // On non-Unix, G65 protocol negotiation on TransportStream handles tarpc.
+    let tarpc_shutdown = spawn_tarpc_dual_socket(no_uds, socket_path.as_ref(), &state);
 
     tracing::info!(
         "skunkBat IPC ready (TCP: {}, UDS: {}, tarpc: {}, G66: transport-agnostic)",
@@ -287,6 +265,50 @@ fn create_capability_symlink(socket_path: &str) {
 
 #[cfg(not(unix))]
 fn create_capability_symlink(_socket_path: &str) {}
+
+/// Spawn the C2 dual-socket tarpc UDS server (Unix only).
+///
+/// On non-Unix, returns `None` — tarpc is served via G65 protocol negotiation
+/// on `TransportStream` instead.
+#[cfg(unix)]
+fn spawn_tarpc_dual_socket(
+    no_uds: bool,
+    socket_path: Option<&String>,
+    state: &Arc<RwLock<App>>,
+) -> Option<tokio::sync::watch::Sender<bool>> {
+    if no_uds {
+        return None;
+    }
+    let tarpc_path = socket_path.map_or_else(
+        || {
+            let btsp = transport::BtspConfig::from_env().ok();
+            let jsonrpc = btsp.map_or_else(
+                || std::path::PathBuf::from("/tmp/biomeos/skunkbat.sock"),
+                |c| std::path::PathBuf::from(c.socket_path()),
+            );
+            skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(&jsonrpc)
+        },
+        |p| skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(std::path::Path::new(p)),
+    );
+
+    let server = tarpc_uds::TarpcUdsServer::new(Arc::clone(state), tarpc_path);
+    let shutdown = server.shutdown_sender();
+    tokio::spawn(async move {
+        if let Err(e) = server.serve().await {
+            tracing::error!("tarpc UDS server error: {e}");
+        }
+    });
+    Some(shutdown)
+}
+
+#[cfg(not(unix))]
+fn spawn_tarpc_dual_socket(
+    _no_uds: bool,
+    _socket_path: Option<&String>,
+    _state: &Arc<RwLock<App>>,
+) -> Option<tokio::sync::watch::Sender<bool>> {
+    None
+}
 
 #[cfg(unix)]
 async fn wait_for_shutdown(

@@ -21,7 +21,7 @@ springs = []
 - **riboCipher**: Tier 1 (clear signal) implemented — `0xEC` + protocol type routing
 - **ThreatThresholds**: All detection constants configurable, no magic numbers
 - **Cephalization**: G65 protocol negotiation + **G66 transport abstraction shipped** — `TransportStream` + `TransportListener` + `bind_transport()` eliminate silicon deism; unified `serve_listener()` replaces separate TCP/UDS accept loops; `#[cfg(unix)]` confined to transport layer only
-- **Cross-arch**: `TransportEndpoint` dispatch in all IPC; `TransportStream`/`TransportListener` abstract UDS vs TCP; `#[cfg(unix)]` only in `transport/stream.rs`, `transport/listener.rs`, and platform utilities; musl static targets via `.cargo/config.toml`
+- **Cross-arch**: **`cargo check --target x86_64-pc-windows-gnu` CLEAN** — zero warnings, zero errors. `TransportEndpoint` dispatch in all IPC; `TransportStream`/`TransportListener` abstract UDS vs TCP; tarpc C2 dual-socket `#[cfg(unix)]`; musl static targets via `.cargo/config.toml`
 
 ## Capabilities
 

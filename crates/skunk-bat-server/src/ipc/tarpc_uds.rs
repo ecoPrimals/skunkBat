@@ -13,13 +13,20 @@ use skunk_bat_core::tarpc_service::{
     SkunkBatRpc, TarpcCapability, TarpcDefenseStatus, TarpcHealthResponse, TarpcIdentityResponse,
     TarpcSecurityMetrics, TarpcThreat,
 };
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tarpc::server::{self, Channel};
+use tarpc::server::Channel;
 use tarpc::tokio_serde::formats::Bincode;
-use tokio::sync::{RwLock, watch};
-use tracing::{debug, info, warn};
+use tokio::sync::RwLock;
+use tracing::warn;
+
+#[cfg(unix)]
+use {
+    std::path::{Path, PathBuf},
+    std::sync::atomic::{AtomicBool, Ordering},
+    tarpc::server,
+    tokio::sync::watch,
+    tracing::{debug, info},
+};
 
 const PRIMAL_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -169,7 +176,11 @@ impl SkunkBatRpc for SkunkBatRpcHandler {
     }
 }
 
-/// tarpc binary UDS server lifecycle.
+/// tarpc binary UDS server lifecycle (C2 dual-socket — Unix only).
+///
+/// On non-Unix platforms, G65 protocol negotiation on `TransportStream`
+/// via [`serve_tarpc_stream`] is the tarpc entry point instead.
+#[cfg(unix)]
 pub struct TarpcUdsServer {
     state: Arc<RwLock<App>>,
     socket_path: PathBuf,
@@ -179,6 +190,7 @@ pub struct TarpcUdsServer {
     ready_notify: Arc<tokio::sync::Notify>,
 }
 
+#[cfg(unix)]
 #[expect(
     dead_code,
     reason = "lifecycle API — used in tests; production wiring uses serve() + shutdown_sender()"
@@ -335,6 +347,6 @@ where
         .await;
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "tarpc_uds_tests.rs"]
 mod tests;
