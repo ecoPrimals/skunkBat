@@ -20,8 +20,7 @@ use skunk_bat_integrations::rpc::{self, TransportEndpoint};
 
 /// Capabilities registered for discovery — only advertise domains with live IPC.
 ///
-/// `metadata` and `lineage` are spec-designed composable primitives
-/// but have no IPC methods yet. They will be added here when shipped.
+/// `lineage` is a spec-designed composable primitive but has no IPC methods yet.
 const CAPABILITIES: &[&str] = &[
     "security",
     "health",
@@ -33,6 +32,7 @@ const CAPABILITIES: &[&str] = &[
     "lifecycle",
     "method_gate",
     "btsp",
+    "metadata",
 ];
 
 fn registration_timeout() -> Duration {

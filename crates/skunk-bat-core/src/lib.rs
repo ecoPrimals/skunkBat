@@ -44,6 +44,7 @@ pub mod config;
 pub mod defense;
 pub mod env_keys;
 pub mod error;
+pub mod gossip_analysis;
 pub mod observability;
 pub mod platform;
 pub mod platform_substrate;

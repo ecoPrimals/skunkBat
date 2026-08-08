@@ -46,6 +46,7 @@ const METHODS: &[&str] = &[
     "auth.check",
     "auth.mode",
     "auth.peer_info",
+    "metadata.analyze",
 ];
 
 /// Transport-layer methods handled by the connection handler before dispatch.
@@ -64,6 +65,8 @@ const CONSUMED_CAPABILITIES: &[&str] = &[
     "capabilities.list",
     "federation.broadcast",
     "discovery.find_by_capability",
+    "gossip.inject",
+    "gossip.query",
 ];
 
 /// Serialize a fallible operation result into a JSON-RPC response.
@@ -109,6 +112,7 @@ fn capabilities_response() -> serde_json::Value {
             { "type": "threat", "methods": ["report"] },
             { "type": "method_gate", "methods": ["status"] },
             { "type": "auth", "methods": ["check", "mode", "peer_info"] },
+            { "type": "metadata", "methods": ["analyze"] },
             { "type": "lifecycle", "methods": ["state", "status", "capabilities"] },
             { "type": "btsp", "methods": ["negotiate", "capabilities"] },
         ],
@@ -191,6 +195,9 @@ pub(super) async fn dispatch(
         }
         "method_gate.status" => dispatch_method_gate_status(id, gate),
         "threat.report" => super::dispatch_security::dispatch_threat_report(state, id).await,
+        "metadata.analyze" => {
+            super::dispatch_metadata::dispatch_metadata_analyze(state, id, request.params).await
+        }
         "btsp.capabilities" => dispatch_btsp_capabilities(id),
         _ => Response::error(
             id,

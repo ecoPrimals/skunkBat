@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection (9 categories), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, G66 transport abstraction (TransportStream + TransportListener + bind_transport), G68 platform substrate (PlatformAccess + platform_link), Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode, G65 protocol negotiation (single-socket tarpc/JSON-RPC). 656 tests, 30+11 IPC methods."
-date = 2026-08-07
+description = "Defense meta-primal — metadata-only threat detection (9 categories), gossip entry pre-accept validation (vine-bat loop), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, G66 transport abstraction (TransportStream + TransportListener + bind_transport), G68 platform substrate (PlatformAccess + platform_link), Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode, G65 protocol negotiation (single-socket tarpc/JSON-RPC). 672 tests, 31+11 IPC methods."
+date = 2026-08-08
 
 [taxonomies]
 primals = ["skunkbat"]
@@ -13,7 +13,7 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 656 passing (4 crates)
+- **Tests**: 672 passing (4 crates)
 - **Source**: max 792 lines production code (test files exempt from 800L cap)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned
@@ -29,7 +29,7 @@ springs = []
 |-----------|-------------|
 | `defense` | Graduated response (Monitor, Quarantine, Block) |
 | `threat` | 9-type detection (Genetic, Behavioral, Intrusion, Resource, Topology, Config Drift, Process Spawn Anomaly, HTTP Anomaly, Connectivity Anomaly) |
-| `metadata` | Content-free network pattern analysis |
+| `metadata` | Gossip entry analysis (vine-bat loop) + content-free network pattern analysis |
 | `lineage` | BearDog-delegated lineage verification |
 | `baseline` | Statistical profiler with multi-dimensional anomaly scoring |
 | `health` | Standard health triad (liveness, readiness, check) |
@@ -38,13 +38,14 @@ springs = []
 
 ## Methods
 
-### JSON-RPC (30 — 28 application + 2 transport; `auth.*` beta)
+### JSON-RPC (31 — 29 application + 2 transport; `auth.*` beta)
 
 - `health.liveness`, `health.readiness`, `health.check`
 - `security.scan`, `security.detect`, `security.advisory`, `security.respond`, `security.metrics`, `security.audit_log`
 - `baseline.observe`, `baseline.query`, `baseline.anomaly`, `baseline.reset`
 - `defense.status`, `defense.quarantine`, `defense.release`
 - `response.evaluate`
+- `metadata.analyze` — gossip entry pre-accept validation (vine-bat loop with swarmVine)
 - `method_gate.status`, `threat.report`
 - `capabilities.list`, `identity.get`
 - `lifecycle.status`, `lifecycle.state`, `lifecycle.capabilities`
@@ -74,6 +75,7 @@ skunkBat is the **security observability backbone** for all compositions:
 - rhizoCrypt (DAG event forwarding)
 - sweetGrass (braid attribution)
 - bearDog (lineage verification)
+- swarmVine (gossip pre-accept validation — vine-bat loop)
 
 ## Degradation
 
