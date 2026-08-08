@@ -64,13 +64,10 @@ enum BindMode {
 
 impl BindMode {
     fn from_env() -> Self {
-        match std::env::var(skunk_bat_core::env_keys::PRIMAL_BIND_MODE) {
-            Ok(v) if v.eq_ignore_ascii_case("tcp_only") || v.eq_ignore_ascii_case("tcp-only") => {
-                Self::TcpOnly
-            }
-            Ok(v) if v.eq_ignore_ascii_case("fallback") => Self::Fallback,
-            _ => Self::UdsOnly,
-        }
+        std::env::var(skunk_bat_core::env_keys::PRIMAL_BIND_MODE)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(Self::UdsOnly)
     }
 }
 
