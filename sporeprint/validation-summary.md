@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection (9 categories), gossip entry pre-accept validation (vine-bat loop), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, G66 transport abstraction (TransportStream + TransportListener + bind_transport), G68 platform substrate (PlatformAccess + platform_link), Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode, G65 protocol negotiation (single-socket tarpc/JSON-RPC). 672 tests, 31+11 IPC methods."
-date = 2026-08-08
+description = "Defense meta-primal — metadata-only threat detection (9 categories), gossip entry pre-accept validation (vine-bat loop), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, G66 transport abstraction (TransportStream + TransportListener + bind_transport), G68 platform substrate (PlatformAccess + platform_link), Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode, G65 protocol negotiation (single-socket tarpc/JSON-RPC). Vertebrate self-audit: programmatic RPC surface verification. 675 tests, 31+11 IPC methods."
+date = 2026-08-09
 
 [taxonomies]
 primals = ["skunkbat"]
@@ -13,7 +13,7 @@ springs = []
 - **Gate**: CLEAR (13/13 structural gate)
 - **Phase**: 3 (BTSP Phase 3 AEAD encrypted framing)
 - **Edition**: 2024
-- **Tests**: 672 passing (4 crates)
+- **Tests**: 675 passing (4 crates)
 - **Source**: max 792 lines production code (test files exempt from 800L cap)
 - **Clippy**: 0 warnings (`pedantic` + `nursery`, `-D warnings`)
 - **deny.toml**: ring, openssl, native-tls, aws-lc-sys all banned

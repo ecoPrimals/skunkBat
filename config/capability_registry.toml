@@ -10,7 +10,8 @@ name = "skunkbat"
 version = "0.2.18"
 description = "Defensive network security — metadata-only threat detection, graduated response, security observability"
 license = "AGPL-3.0-or-later"
-protocol = "jsonrpc-2.0"
+protocol = ["jsonrpc-2.0", "tarpc"]
+protocol_negotiation = "G65"
 transport = ["uds", "tcp"]
 
 [domains.health]
@@ -65,9 +66,13 @@ methods = ["report"]
 description = "BTSP Phase 3 transport encryption"
 methods = ["negotiate", "capabilities"]
 
+[domains.metadata]
+description = "Gossip entry pre-accept validation (vine-bat loop with swarmVine)"
+methods = ["analyze"]
+
 # Capabilities consumed from other primals (runtime-discovered, not hardcoded)
 [consumed]
-capabilities = ["lineage-verification", "federation", "discovery"]
+capabilities = ["lineage-verification", "federation", "discovery", "gossip"]
 methods = [
     "btsp.server.verify",
     "lineage.verify",
@@ -75,6 +80,8 @@ methods = [
     "capabilities.list",
     "federation.broadcast",
     "discovery.find_by_capability",
+    "gossip.inject",
+    "gossip.query",
 ]
 
 # Per-operation metadata for biomeOS dispatch graph
@@ -221,6 +228,12 @@ stability = "stable"
 depends_on = ["security.detect"]
 cost = "medium"
 stability = "stable"
+
+[operations."metadata.analyze"]
+depends_on = []
+cost = "low"
+stability = "stable"
+description = "Pre-accept validation for swarmVine gossip entries (vine-bat loop)"
 
 [operations."btsp.negotiate"]
 depends_on = []

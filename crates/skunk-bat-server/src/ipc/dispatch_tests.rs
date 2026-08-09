@@ -397,3 +397,74 @@ async fn capabilities_list_includes_transport_methods() {
         "capabilities.list must advertise application methods"
     );
 }
+
+/// Vertebrate self-audit: every method in METHODS has a real handler that does
+/// not return `METHOD_NOT_FOUND`, and unknown methods DO return it.
+/// Prevents the "bearDog bug" (silent health fallback for unimplemented methods).
+#[tokio::test]
+async fn self_audit_every_method_has_real_handler() {
+    let state = make_state();
+    let gate = make_gate();
+    let caller = make_caller();
+
+    for method in METHODS {
+        let resp = dispatch(&state, &gate, &caller, make_request(method)).await;
+        assert!(
+            resp.error
+                .as_ref()
+                .is_none_or(|e| e.code != jsonrpc::METHOD_NOT_FOUND),
+            "method '{method}' is in METHODS but returns METHOD_NOT_FOUND — phantom API"
+        );
+    }
+}
+
+#[tokio::test]
+async fn self_audit_unknown_method_rejected() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("nonexistent.method"),
+    )
+    .await;
+    let err = resp.error.expect("unknown method must be rejected");
+    assert_eq!(
+        err.code,
+        jsonrpc::METHOD_NOT_FOUND,
+        "unknown method must return METHOD_NOT_FOUND, not a health response"
+    );
+}
+
+#[tokio::test]
+async fn self_audit_capabilities_list_matches_methods() {
+    let state = make_state();
+    let resp = dispatch(
+        &state,
+        &make_gate(),
+        &make_caller(),
+        make_request("capabilities.list"),
+    )
+    .await;
+    let result = resp.result.expect("capabilities should succeed");
+    let advertised: Vec<&str> = result["methods"]
+        .as_array()
+        .expect("methods array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+
+    let all_methods: Vec<&str> = METHODS.iter().chain(TRANSPORT_METHODS).copied().collect();
+    for method in &all_methods {
+        assert!(
+            advertised.contains(method),
+            "method '{method}' in METHODS/TRANSPORT_METHODS but NOT in capabilities.list"
+        );
+    }
+    for method in &advertised {
+        assert!(
+            all_methods.contains(method),
+            "method '{method}' in capabilities.list but NOT in METHODS/TRANSPORT_METHODS"
+        );
+    }
+}
