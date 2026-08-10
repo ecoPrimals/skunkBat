@@ -109,7 +109,7 @@ struct RpcResponseError {
 const DEFAULT_INTEGRATION_TIMEOUT_MS: u64 = 5000;
 
 /// Read integration RPC timeout from `SKUNKBAT_INTEGRATION_TIMEOUT_MS` env var,
-/// falling back to [`DEFAULT_INTEGRATION_TIMEOUT_MS`].
+/// falling back to `DEFAULT_INTEGRATION_TIMEOUT_MS` (5000 ms).
 #[must_use]
 pub fn integration_timeout_ms() -> u64 {
     std::env::var(skunk_bat_core::env_keys::SKUNKBAT_INTEGRATION_TIMEOUT_MS)

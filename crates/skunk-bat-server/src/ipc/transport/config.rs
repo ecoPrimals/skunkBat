@@ -108,6 +108,14 @@ impl BtspConfig {
     }
 }
 
+/// Default UDS socket path when [`BtspConfig`] is unavailable.
+///
+/// Uses the same `resolve_socket_dir()` logic — no hardcoded `/tmp` path.
+#[cfg(unix)]
+pub fn default_socket_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("{}/skunkbat.sock", resolve_socket_dir()))
+}
+
 /// Configuration for BTSP server-side handshake (Phase 2).
 ///
 /// When present, every accepted connection must complete a BTSP handshake

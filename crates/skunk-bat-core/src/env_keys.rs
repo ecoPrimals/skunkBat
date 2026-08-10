@@ -179,6 +179,21 @@ pub const SKUNKBAT_CONTENT_TIMEOUT: &str = "SKUNKBAT_CONTENT_TIMEOUT";
 /// BTSP handshake deadline in seconds (default: 30).
 pub const SKUNKBAT_HANDSHAKE_DEADLINE: &str = "SKUNKBAT_HANDSHAKE_DEADLINE";
 
+// ── BTSP Client Integration ──────────────────────────────────
+
+/// BTSP family seed (overrides [`FAMILY_SEED`] for explicit BTSP scoping).
+pub const BTSP_FAMILY_SEED: &str = "BTSP_FAMILY_SEED";
+
+/// biomeOS-sourced family seed (lowest-priority fallback after [`BTSP_FAMILY_SEED`]
+/// and [`FAMILY_SEED`]).
+pub const BIOMEOS_FAMILY_SEED: &str = "BIOMEOS_FAMILY_SEED";
+
+/// When `1`, bearDog UDS connections require BTSP handshake (strict mode).
+pub const BEARDOG_UDS_REQUIRE_BTSP: &str = "BEARDOG_UDS_REQUIRE_BTSP";
+
+/// When `1`, all outbound connections attempt BTSP handshake (strict mode).
+pub const BTSP_STRICT_MODE: &str = "BTSP_STRICT_MODE";
+
 // ── Baseline Control ──────────────────────────────────────────
 
 /// Skip synthetic baseline seeding at startup (`1` or `true`).

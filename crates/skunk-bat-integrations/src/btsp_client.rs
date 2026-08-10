@@ -105,9 +105,10 @@ pub enum BtspClientError {
 /// Checks (in priority order): `BTSP_FAMILY_SEED`, `FAMILY_SEED`,
 /// `BIOMEOS_FAMILY_SEED`.
 fn resolve_family_seed_raw() -> Option<String> {
-    std::env::var("BTSP_FAMILY_SEED")
-        .or_else(|_| std::env::var(skunk_bat_core::env_keys::FAMILY_SEED))
-        .or_else(|_| std::env::var("BIOMEOS_FAMILY_SEED"))
+    use skunk_bat_core::env_keys;
+    std::env::var(env_keys::BTSP_FAMILY_SEED)
+        .or_else(|_| std::env::var(env_keys::FAMILY_SEED))
+        .or_else(|_| std::env::var(env_keys::BIOMEOS_FAMILY_SEED))
         .ok()
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.trim().to_string())
@@ -118,8 +119,9 @@ fn resolve_family_seed_raw() -> Option<String> {
 /// Returns `true` if `BEARDOG_UDS_REQUIRE_BTSP=1` or `BTSP_STRICT_MODE=1`.
 #[must_use]
 pub fn btsp_strict_mode_expected() -> bool {
-    std::env::var("BEARDOG_UDS_REQUIRE_BTSP")
-        .or_else(|_| std::env::var("BTSP_STRICT_MODE"))
+    use skunk_bat_core::env_keys;
+    std::env::var(env_keys::BEARDOG_UDS_REQUIRE_BTSP)
+        .or_else(|_| std::env::var(env_keys::BTSP_STRICT_MODE))
         .is_ok_and(|v| v.trim() == "1")
 }
 

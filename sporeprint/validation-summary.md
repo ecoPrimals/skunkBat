@@ -1,7 +1,7 @@
 +++
 title = "skunkBat Validation Summary"
-description = "Defense meta-primal — metadata-only threat detection (9 categories), gossip entry pre-accept validation (vine-bat loop), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, G66 transport abstraction (TransportStream + TransportListener + bind_transport), G68 platform substrate (PlatformAccess + platform_link), Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode, G65 protocol negotiation (single-socket tarpc/JSON-RPC). Vertebrate self-audit: programmatic RPC surface verification. 675 tests, 31+11 IPC methods."
-date = 2026-08-09
+description = "Defense meta-primal — metadata-only threat detection (9 categories), gossip entry pre-accept validation (vine-bat loop), lineage verification, composable anomaly primitives, Tower HTTP advisory, live Caddy log ingestion, G66 transport abstraction (TransportStream + TransportListener + bind_transport), G68 platform substrate (PlatformAccess + platform_link), Tower Atomic bond-type cipher enforcement + cipher floor policy, process spawn anomaly detection, connectivity anomaly detection (k-derm), BTSP ClientHello for bearDog strict mode, G65 protocol negotiation (single-socket tarpc/JSON-RPC). Vertebrate self-audit: programmatic RPC surface verification. Deep debt sweep: env var centralization, hardcoded socket path elimination, doc-link fixes, cross-arch cfg hygiene. 675 tests, 31+11 IPC methods."
+date = 2026-08-10
 
 [taxonomies]
 primals = ["skunkbat"]

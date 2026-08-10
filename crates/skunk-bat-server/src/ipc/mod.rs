@@ -284,9 +284,8 @@ fn spawn_tarpc_dual_socket(
     }
     let tarpc_path = socket_path.map_or_else(
         || {
-            let btsp = transport::BtspConfig::from_env().ok();
-            let jsonrpc = btsp.map_or_else(
-                || std::path::PathBuf::from("/tmp/biomeos/skunkbat.sock"),
+            let jsonrpc = transport::BtspConfig::from_env().map_or_else(
+                |_| transport::default_socket_path(),
                 |c| std::path::PathBuf::from(c.socket_path()),
             );
             skunk_bat_core::tarpc_service::tarpc_socket_from_jsonrpc(&jsonrpc)

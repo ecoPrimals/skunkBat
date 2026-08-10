@@ -31,6 +31,8 @@ pub mod stream;
 pub use error::TransportError;
 
 pub use btsp::{read_frame, write_frame};
+#[cfg(unix)]
+pub use config::default_socket_path;
 pub use config::{BtspConfig, BtspHandshakeConfig};
 pub use listener::{TransportListener, bind_transport};
 pub use negotiate::SessionRegistry;
