@@ -1,7 +1,7 @@
 # skunkBat
 
 **External maturity**: deployment-ready
-**Version**: 0.2.18 | **Tests**: 609 | **Max production file**: 792L <!-- metrics: 2026-07-28 -->
+**Version**: 0.2.18 | **Tests**: 673 | **Max production file**: 792L <!-- metrics: 2026-08-10 -->
 **License**: AGPL-3.0-or-later (scyBorg triple-copyleft)
 
 Defensive network security primal for sovereign computing environments.
@@ -25,14 +25,16 @@ packet contents or tracking user behavior.
 - **Graduated Defense**: Monitor, Quarantine, Block — user authority preserved
 - **Statistical Baselines**: Learns YOUR network normal, not universal heuristics
 - **JSON-RPC 2.0**: Full spec — single, batch, and notification support
-- **BTSP Phase 1/2/3**: Socket naming, BearDog-delegated handshake on TCP + UDS,
-  first-byte peek for biomeOS composition bypass, `btsp.negotiate` cipher negotiation
-  with auto-upgrade to `ChaCha20-Poly1305` encrypted framing, bond-type cipher
-  enforcement (Covalent/Metallic/Ionic), server-side cipher floor policy
-  (`SKUNKBAT_CIPHER_FLOOR`), protocol version `1.0`
-- **BTSP ClientHello**: Consumer-side 4-step handshake for bearDog strict mode
-  (`BEARDOG_UDS_REQUIRE_BTSP=1`) — all outbound RPC (lineage, federation, discovery)
-  authenticates via HMAC-SHA256 challenge-response before JSON-RPC
+- **BTSP Protocol Standard**: Server-side handshake (delegated auth to provider),
+  client-side HMAC-SHA256 challenge-response, `btsp.negotiate` cipher negotiation
+  with `ChaCha20-Poly1305` AEAD encrypted framing, bond-type cipher enforcement
+  (Covalent/Metallic/Ionic), server-side cipher floor policy (`SKUNKBAT_CIPHER_FLOOR`)
+- **G65 Protocol Negotiation**: Single-socket tarpc/JSON-RPC negotiation
+- **G66 Transport Abstraction**: `TransportStream` + `TransportListener` + `bind_transport()` —
+  silicon-neutral IPC (UDS on Linux, TCP on Windows)
+- **G68 Platform Substrate**: `PlatformAccess` + `platform_link()` — filesystem-level
+  silicon neutrality
+- **Gossip Validation**: `metadata.analyze` pre-accept validation for swarmVine gossip entries
 - **Wire Standard L2/L3**: `capabilities.list` and `identity.get` compliant
 - **Privacy by Architecture**: Content inspection is structurally impossible
 
@@ -179,8 +181,7 @@ export SKUNKBAT_LINEAGE_ID=my-family          # Genetic verification (enables Be
 export SKUNKBAT_TOPOLOGY_PATH=1,2,3           # Expected layer traversal path
 export SKUNKBAT_INTEGRATION_TIMEOUT_MS=3000   # Integration RPC timeout (ms)
 export SKUNKBAT_DATA_DIR=./data                # Quarantine persistence directory
-export SKUNKBAT_FEDERATION_POLL_SECS=10       # Federation broadcast poll interval
-export SKUNKBAT_FEDERATION_BATCH_SIZE=50      # Federation max events per poll
+export PRIMAL_BIND_MODE=uds-only              # uds-only|tcp-only|fallback
 export SKUNKBAT_CONTENT_TIMEOUT=5             # NestGate content RPC timeout (secs)
 export SKUNKBAT_HANDSHAKE_DEADLINE=30         # BTSP handshake deadline (secs)
 export SKUNKBAT_SKIP_SYNTHETIC_BASELINE=false # Skip synthetic baseline seeding
@@ -240,8 +241,8 @@ No primal names are hardcoded in production code.
 - `ThreatThresholds` struct — all detection constants configurable, no magic numbers
 - Pure Rust — zero cross-repo path deps, no C deps, zero duplicate dependencies,
   `rand` eliminated (OsRng via RustCrypto)
-- 609 tests passing (lib + integration + chaos), full workspace
-- All 30 IPC methods stability-tiered (28 application + 2 transport; Stable; `auth.*` beta)
+- 673 tests passing (lib + integration + chaos), full workspace
+- 31 JSON-RPC + 11 tarpc methods (42 total IPC surface)
 - Cross-architecture: `cargo check --target x86_64-pc-windows-gnu` passes clean;
   musl static builds via `.cargo/config.toml` aliases (`build-x64`, `build-arm64`)
 - CI: GitHub Actions with fmt/clippy/doc/deny/test gates (`actions/checkout@v5`)

@@ -28,7 +28,9 @@ observability — all metadata-only, no content inspection by architecture.
 - **BTSP Phase 2**: BearDog-delegated handshake on **both TCP and UDS** with riboCipher signal-first routing (`0xEC` clear signal → protocol type, `{` → legacy NDJSON bypass with deprecation warning)
 - **BTSP Phase 3**: `btsp.negotiate` server handler with encrypted frame upgrade — session registry, cipher selection, HKDF key derivation, `ChaCha20-Poly1305` AEAD framing wired into connection loop (`[4B len][12B nonce][ct+tag]`)
 - **Wire Standard**: `capabilities.list` (L2) and `identity.get` (L3) methods
-- **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `auth.*`, `baseline.*`, `defense.*`, `btsp.*`
+- **G65 Protocol Negotiation**: Single-socket tarpc/JSON-RPC (`PROTOCOLS:` text line handshake)
+- **Domain Methods**: `health.*`, `security.*`, `lifecycle.*`, `capabilities.*`, `identity.*`, `auth.*`, `baseline.*`, `defense.*`, `btsp.*`, `metadata.*`
+- **tarpc (11 methods)**: C2 dual-socket, bincode over UDS
 - **Capability Symlinks**: `security.sock` domain symlink created on bind
 
 ## Ecosystem Integration
@@ -85,39 +87,24 @@ Full spec compliance including:
 
 ## Tests
 
-597 tests passing (core + integrations + server + transport + chaos), all workspace.
-Includes 9 chaos/fault-injection tests (rapid lifecycle, concurrent load, resource
-exhaustion, partial degradation). Behavioral profiler, genetic/topology verifiers,
-intrusion heuristics, spawn-rate anomaly, riboCipher signal classification, JSON-RPC
-types all exercised.
-Full end-to-end test for NDJSON→encrypted frame upgrade path including multi-message
-encrypted loop verification, plaintext-after-upgrade rejection, encrypted batch requests,
-and encrypted notification (no-response) verification.
-Wave 123: MethodGate enforcement validation — 26 new tests covering origin-based trust,
-quarantine enforcement, bearer token extraction, BTSP session elevation, and permissive/enforced
-mode semantics for local, loopback, and remote callers.
+673 tests passing (core + integrations + server + transport + chaos), all workspace.
+Includes chaos/fault-injection tests, BTSP handshake mocks, G65 protocol negotiation,
+gossip analysis, self-audit (RPC surface vs registry), and encrypted frame upgrade.
 
 ## Status
 
 v0.2.18 — Edition 2024, clippy pedantic+nursery clean (zero warnings), `forbid(unsafe_code)`
 workspace-wide. `#[expect(reason)]` lint standard — zero `#[allow]` in production code.
-Zero production `unreachable!()` panics — all evolved to proper error returns.
 
-**597 tests** passing across all workspace crates (4 crates). Max production file 515 lines — no
-production source exceeds the 800-line cap (test files exempt). All thresholds configurable
-via `ThreatThresholds` — zero magic numbers. All server operational timeouts externalized
-to env vars with defaults (session TTL, sweep, forwarding, registration).
-Zero cross-repo path dependencies. Zero duplicate dependencies. Pure Rust crypto stack
-(chacha20poly1305, hkdf, hmac, sha2, getrandom — all unified versions).
+**673 tests** passing across all workspace crates (4 crates). Max production file 792 lines — no
+production source exceeds the 800-line cap (test files exempt). `cargo check --target x86_64-pc-windows-gnu`
+passes clean.
+Pure Rust crypto stack (chacha20poly1305, hkdf, hmac, sha2, getrandom — all unified versions).
 `async-trait` eliminated and banned — native RPITIT throughout.
 
-**IPC**: JSON-RPC 2.0 over TCP + UDS with BTSP Phase 1/2/3. BearDog-delegated handshake,
-`btsp.negotiate` with session registry, `ChaCha20-Poly1305` AEAD encrypted framing.
-riboCipher signal-first routing (`0xEC` clear signal). Wire Standard L2/L3 compliance.
-30 IPC methods (28 application + 2 transport) — `security.advisory` for Tower HTTP Gateway (Wave 132c),
-6 composable primitives shipped in v0.2.17 (`baseline.{query,anomaly,reset}`,
-`defense.{quarantine,release}`, `response.evaluate`). `hmac-plain` cipher recognized but
-excluded from negotiation (not implemented on wire — falls to null).
+**IPC**: 42 methods (31 JSON-RPC + 11 tarpc). G65 protocol negotiation on single socket.
+G66 transport abstraction (`TransportStream` / `TransportListener`). BTSP Protocol Standard
+server + client. riboCipher signal-first routing. Wire Standard L2/L3 compliance.
 
 **Tower Atomic**: Frame crypto (encrypt/decrypt/key derivation) extracted from
 `negotiate.rs` into dedicated `frame.rs` module (Wave 155b domain split).
@@ -136,11 +123,10 @@ params. BTSP-authenticated sessions auto-elevated (`btsp:{session_id}` token).
 `defense.status` protected (exposes quarantine state). Unknown methods classified as
 Protected — gate rejects before `METHOD_NOT_FOUND` under enforcement.
 
-**Detection**: 7-category threat detection (genetic, behavioral, intrusion, resource,
-topology, configuration drift, process spawn anomaly) — all wired into `detect()`. Live observation feed via `baseline.observe` IPC
-and `RwLock`-wrapped profiler. Configurable thresholds. Baseline seeded from
-runtime-port-aware observations. Federation broadcast loop monitors audit log for
-`ThreatDetected` events.
+**Detection**: 9-category threat detection (genetic, behavioral, intrusion, resource,
+topology, configuration drift, process spawn anomaly, HTTP anomaly, connectivity anomaly)
+— all wired into `detect()`. Live observation feed via `baseline.observe` IPC.
+Configurable thresholds. Gossip entry pre-accept validation (`metadata.analyze`).
 
 **Defense**: Auto-response policy from config. Quarantined sources rejected at dispatch
 gate (`PERMISSION_DENIED`) with host extraction (port-stripped). Health probes exempt
@@ -161,13 +147,9 @@ All outbound RPC (lineage verification, federation, discovery) authenticates via
 HMAC-SHA256(FAMILY_SEED, challenge) before sending JSON-RPC. Auto-detects strict mode
 (`BEARDOG_UDS_REQUIRE_BTSP=1`) + seed availability. Works on both UDS and TCP.
 
-**Cross-Architecture (Phase 2)**: `TransportEndpoint` trait dispatch replaces raw UDS
-everywhere except low-level server accept loops. Registration, BTSP provider calls,
-`CapabilityClient`, `ContentProtector`, and forwarding all use `call_endpoint()` —
-no `#[cfg]` in high-level IPC logic. Remaining `#[cfg(unix)]` guards: `serve_uds`,
-`call_uds` (low-level primitive), `setup_uds_listener`, `create_capability_symlink`,
-Unix signals (`SIGTERM`). `cargo check --target x86_64-pc-windows-gnu`
-passes clean. musl static build aliases in `.cargo/config.toml` (`build-x64`, `build-arm64`).
+**Cross-Architecture**: G66 `TransportStream`/`TransportListener`/`bind_transport()` replaces
+raw UDS. G68 `PlatformAccess`/`platform_link()` for filesystem ops. `#[cfg(unix)]` confined
+to transport layer and signal handling. `cargo check --target x86_64-pc-windows-gnu` passes clean.
 
 **skunky-ingest**: Live Caddy JSON access log tailer feeding per-source-IP HTTP metrics
 into `baseline.observe` via TCP JSON-RPC. Aggregates connection rate, traffic volume,
