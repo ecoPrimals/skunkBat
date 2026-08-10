@@ -109,7 +109,8 @@ Key milestones: Wave 120 (live detection), 123 (MethodGate enforcement), 132c (T
 155d (connectivity anomaly — 9th threat category), 156s (G66 transport abstraction),
 156v (G68 platform substrate), 157a (G65 protocol negotiation + tarpc C2 dual-socket +
 metadata.analyze + self-audit), 157e (vertebrate evolution — role boundaries, overstep cleanup,
-env var centralization, socket path elimination).
+env var centralization, socket path elimination), 157g (G72 Dependency Pandemic — tokio trim,
+cargo update 12 patches, zero dead deps confirmed).
 
 ## Cascade Status
 
@@ -128,6 +129,7 @@ Both remotes at parity:
 - Zero `#[allow]` in production — all `#[expect(reason)]` with justification
 - Zero production `unwrap()`/`expect()`, zero `unsafe`
 - Cross-platform: Windows cross-check clean, musl static targets configured
-- Zero duplicate dependencies (`cargo tree -d` clean)
+- Zero duplicate dependencies we control (`cargo tree -d`: only transitive tarpc→opentelemetry chain)
+- G72 compliant: tokio `"process"` trimmed to dev-only, zero dead deps, 12 patches applied
 - Role boundaries documented: what skunkBat owns vs delegates (BTSP, discovery, federation)
 - **PUBLIC** on GitHub — publication self-review passed
