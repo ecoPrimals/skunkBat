@@ -136,7 +136,9 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         cli.cf_poll_secs,
     );
     if cf_config.is_some() {
-        tracing::info!("Cloudflare analytics credentials present — HTTP/GraphQL client not yet implemented");
+        tracing::info!(
+            "Cloudflare analytics credentials present — HTTP/GraphQL client not yet implemented"
+        );
     }
 
     let (mut reader, start_offset) = open_log(&cli).await?;

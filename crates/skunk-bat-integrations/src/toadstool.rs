@@ -144,7 +144,6 @@ impl DiscoveryClient {
             }
         }
     }
-
 }
 
 /// Capability-based primal discovery backed by an external registry.

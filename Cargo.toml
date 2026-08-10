@@ -37,7 +37,7 @@ strip = true
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.40", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "time", "fs", "process", "signal"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "time", "fs", "signal"] }
 
 # Byte buffers
 bytes = "1.8"
@@ -108,3 +108,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["process"] }
