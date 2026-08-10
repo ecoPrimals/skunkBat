@@ -3,14 +3,24 @@
 
 //! JH-5 Phase 3: Cross-primal audit event forwarding.
 //!
-//! Forwards security events from the local `AuditLog` to:
-//! - **provenance** DAG via `dag.event.append` (tamper-evident audit history)
-//! - **attribution** braids via `braid.create` (provenance attribution)
+//! ## Role Boundary
 //!
-//! Uses capability-based discovery — no hardcoded primal endpoints.
-//! Forwarding is best-effort: if a target is unreachable the cursor
-//! stops advancing at the last successfully forwarded event, so
-//! unforwarded events are retried on the next poll cycle.
+//! skunkBat **owns** audit trail forwarding — it is the producer of security
+//! events and responsible for ensuring they reach downstream consumers.
+//! This is not orchestration overstep; it is the security primal's contract:
+//! audit events must propagate to the provenance DAG and attribution braids.
+//!
+//! Forwards security events from the local `AuditLog` to:
+//! - **provenance** capability via `dag.event.append` (tamper-evident audit history)
+//! - **attribution** capability via `braid.create` (provenance attribution)
+//!
+//! Targets are discovered via capability sockets at runtime — no hardcoded
+//! primal names. If rhizoCrypt serves `provenance` today and another primal
+//! serves it tomorrow, forwarding adapts automatically.
+//!
+//! Forwarding is best-effort with cursor-based retry: if a target is
+//! unreachable the cursor stops advancing at the last successfully forwarded
+//! event, so unforwarded events are retried on the next poll cycle.
 
 use std::time::Duration;
 

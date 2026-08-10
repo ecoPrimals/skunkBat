@@ -144,77 +144,6 @@ impl DiscoveryClient {
             }
         }
     }
-
-    /// Discover local primals by scanning the BIOMEOS socket directory.
-    ///
-    /// Probes each `.sock` file (skipping symlinks) with
-    /// `capabilities.list` to learn what each primal provides.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if local discovery fails.
-    pub async fn discover_local(&self) -> Result<Vec<DiscoveredPrimal>, SkunkBatError> {
-        tracing::debug!("Discovering local primals via socket dir");
-
-        let dir = crate::rpc::socket_dir();
-        let dir_path = std::path::Path::new(&dir);
-        if !dir_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let Ok(entries) = std::fs::read_dir(dir_path) else {
-            return Ok(Vec::new());
-        };
-
-        #[cfg(unix)]
-        let discovered = {
-            let timeout = self.transport.timeout();
-            let mut found = Vec::new();
-
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("sock") {
-                    continue;
-                }
-                if path.symlink_metadata().ok().is_some_and(|m| m.is_symlink()) {
-                    continue;
-                }
-
-                let path_str = path.to_string_lossy().into_owned();
-
-                if let Ok(value) =
-                    crate::rpc::call_uds(&path_str, "capabilities.list", None, timeout).await
-                {
-                    let service_id = value["primal"].as_str().unwrap_or("unknown").to_owned();
-                    let version = value["version"].as_str().unwrap_or("0.0.0").to_owned();
-                    let capabilities = value["provided_capabilities"]
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|c| c["type"].as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                    found.push(DiscoveredPrimal {
-                        service_id,
-                        capabilities,
-                        endpoint: path_str,
-                        version,
-                    });
-                }
-            }
-            found
-        };
-
-        #[cfg(not(unix))]
-        let discovered = {
-            let _ = entries;
-            Vec::new()
-        };
-
-        Ok(discovered)
-    }
 }
 
 /// Capability-based primal discovery backed by an external registry.
@@ -343,13 +272,6 @@ mod tests {
         let result = client.discover_by_capability("lineage-verification").await;
         assert!(result.is_ok());
         assert!(result.expect("ok").is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_discover_local_empty() {
-        let client = DiscoveryClient::from_env();
-        let result = client.discover_local().await;
-        assert!(result.is_ok());
     }
 
     #[test]

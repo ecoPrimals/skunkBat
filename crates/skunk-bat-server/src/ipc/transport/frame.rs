@@ -34,7 +34,7 @@ const MIN_ENCRYPTED_FRAME: usize = NONCE_SIZE + 16;
 
 /// Derive bidirectional session keys from the handshake key and nonces.
 ///
-/// Per BTSP Protocol Standard (`BearDog` reference implementation):
+/// Per BTSP Protocol Standard (convergent evolution — every participant derives identically):
 /// ```text
 /// HKDF-SHA256(
 ///   ikm = handshake_key,

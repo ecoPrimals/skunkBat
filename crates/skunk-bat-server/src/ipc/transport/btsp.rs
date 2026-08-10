@@ -4,6 +4,22 @@
 //! BTSP (Biotic Transport Security Protocol) — wire framing, provider
 //! client, and server-side handshake (Phase 2).
 //!
+//! ## Role Boundary
+//!
+//! skunkBat **accepts** BTSP-authenticated connections (server role) and
+//! **delegates credential verification** to the BTSP authority (bearDog)
+//! via `btsp.server.session_create` / `btsp.server.session_verify` RPCs.
+//!
+//! What lives here (protocol compliance):
+//! - Wire framing (`read_frame` / `write_frame`)
+//! - BTSP Protocol Standard key derivation (HKDF-SHA256)
+//! - Server handshake orchestration (wire I/O + provider delegation)
+//!
+//! What is delegated:
+//! - Credential storage and verification → bearDog
+//! - Session policy → bearDog
+//! - Cipher suite evolution → BTSP Protocol Standard
+//!
 //! Configuration lives in [`super::config`]; UID helpers in [`skunk_bat_core::platform`].
 
 use super::error::TransportError;
@@ -73,10 +89,11 @@ pub async fn provider_call(
 
 // ── Handshake Key Derivation ──────────────────────────────────────────
 
-/// Derive the handshake key from the family seed.
+/// Derive the handshake key from the family seed per BTSP Protocol Standard.
 ///
-/// Matches `BearDog`'s `derive_handshake_key`:
-/// `HKDF-SHA256(ikm=family_seed, salt="btsp-v1", info="handshake")` → 32 bytes
+/// `HKDF-SHA256(ikm=family_seed, salt="btsp-v1", info="handshake")` → 32 bytes.
+/// Every BTSP participant uses this derivation — convergent evolution, not
+/// duplication of any single primal.
 ///
 /// Returns `None` if `FAMILY_SEED` is not set or too short.
 pub fn derive_handshake_key_from_env() -> Option<Vec<u8>> {
@@ -107,7 +124,7 @@ pub fn derive_handshake_key_from_env() -> Option<Vec<u8>> {
 
 /// Accumulated state during the BTSP handshake exchange.
 ///
-/// Field names align with `BearDog`'s `btsp.server.*` RPC types:
+/// Field names align with the BTSP authority's `btsp.server.*` RPC types:
 /// - `session_token` from `SessionCreateResponse` (opaque server-side ref)
 /// - `session_id` from `SessionVerifyResponse` (hex, set after verify)
 pub struct HandshakeState {

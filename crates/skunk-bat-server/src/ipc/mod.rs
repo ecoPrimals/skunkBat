@@ -46,7 +46,6 @@ struct BackgroundTasks {
     register: JoinHandle<()>,
     announce: JoinHandle<()>,
     forwarding: JoinHandle<()>,
-    federation: JoinHandle<()>,
     session_sweep: JoinHandle<()>,
 }
 
@@ -55,7 +54,6 @@ impl BackgroundTasks {
         self.register.abort();
         self.announce.abort();
         self.forwarding.abort();
-        self.federation.abort();
         self.session_sweep.abort();
     }
 }
@@ -106,14 +104,8 @@ async fn spawn_background(
 
     let audit_log = state.read().await.audit_log().clone();
     let forwarding = tokio::spawn(forwarding::run_forwarding_loop(
-        audit_log.clone(),
-        ForwardingConfig::from_env(),
-    ));
-
-    let federation_client = skunk_bat_integrations::songbird::FederationClient::from_env();
-    let federation = tokio::spawn(skunk_bat_integrations::songbird::run_federation_loop(
         audit_log,
-        federation_client,
+        ForwardingConfig::from_env(),
     ));
 
     let sweep_sessions = Arc::clone(sessions);
@@ -134,7 +126,6 @@ async fn spawn_background(
         register,
         announce,
         forwarding,
-        federation,
         session_sweep,
     }
 }

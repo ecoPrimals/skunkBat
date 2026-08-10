@@ -166,7 +166,7 @@ everywhere except low-level server accept loops. Registration, BTSP provider cal
 `CapabilityClient`, `ContentProtector`, and forwarding all use `call_endpoint()` —
 no `#[cfg]` in high-level IPC logic. Remaining `#[cfg(unix)]` guards: `serve_uds`,
 `call_uds` (low-level primitive), `setup_uds_listener`, `create_capability_symlink`,
-`discover_local`, Unix signals (`SIGTERM`). `cargo check --target x86_64-pc-windows-gnu`
+Unix signals (`SIGTERM`). `cargo check --target x86_64-pc-windows-gnu`
 passes clean. musl static build aliases in `.cargo/config.toml` (`build-x64`, `build-arm64`).
 
 **skunky-ingest**: Live Caddy JSON access log tailer feeding per-source-IP HTTP metrics

@@ -1,15 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-//! BTSP client-side handshake for connecting to bearDog in strict mode.
+//! BTSP client-side handshake — authenticates to BTSP-enforcing providers.
 //!
-//! When `BEARDOG_UDS_REQUIRE_BTSP=1` is set, bearDog rejects plain JSON-RPC
-//! with `-32600`. This module implements the consumer-side of the 4-step BTSP
-//! handshake so skunkBat can authenticate before sending requests.
+//! ## Role Boundary
 //!
-//! The challenge response uses LOCAL `HMAC-SHA256` with the family seed — this
-//! avoids the chicken-and-egg of needing bearDog to compute HMAC for the
-//! handshake that authenticates us TO bearDog.
+//! skunkBat is a BTSP **consumer** (client role). When the BTSP authority
+//! requires authenticated connections, this module performs the 4-step
+//! handshake using the shared family seed. This is BTSP Protocol Standard
+//! compliance — every BTSP consumer implements the same wire protocol.
+//!
+//! What lives here:
+//! - Client-side wire protocol (`ClientHello` → `ServerHello` → `ChallengeResponse` → Complete)
+//! - HMAC-SHA256 challenge response (computed locally from family seed)
+//!
+//! What is delegated:
+//! - Session creation and verification → BTSP authority (provider)
+//! - Cipher suite policy → provider
 //!
 //! ## Wire Format (NDJSON — newline-delimited)
 //!
@@ -19,8 +26,6 @@
 //! 3. Send  ChallengeResponse { response, preferred_cipher }
 //! 4. Read  HandshakeComplete { cipher, session_id }
 //! ```
-//!
-//! Reference: `songBird/crates/songbird-crypto-provider/src/btsp_client.rs`
 
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
