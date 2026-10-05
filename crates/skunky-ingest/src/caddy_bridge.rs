@@ -204,6 +204,12 @@ impl CaddyBridge {
         self.tracked_ips.len()
     }
 
+    /// Path to the Caddyfile being managed.
+    #[must_use]
+    pub fn caddyfile_path(&self) -> &Path {
+        &self.config.caddyfile_path
+    }
+
     fn expire_stale_ips(&mut self) {
         let ttl = Duration::from_secs(self.config.ip_ttl_secs);
         let now = SystemTime::now();

@@ -16,6 +16,7 @@ mod cloudflare;
 mod cursor;
 mod error;
 pub mod fleet;
+pub mod lysogeny;
 mod rpc;
 
 use error::IngestError;
@@ -210,6 +211,37 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         None
     };
 
+    // Lysogeny sentinel — watches for foreign integration into self
+    let self_ips_for_lysogeny = if cli.caddy_bridge {
+        caddy_bridge::load_self_ips(&cli.self_ips_file)
+    } else {
+        std::collections::HashSet::new()
+    };
+    let mut lysogeny_sentinel = if cli.caddy_bridge {
+        let genome_files = vec![
+            (
+                cli.caddyfile_path.clone(),
+                Some((
+                    "~~FLEET_PRESSURE_START~~".to_string(),
+                    "~~FLEET_PRESSURE_END~~".to_string(),
+                )),
+            ),
+            (cli.self_ips_file.clone(), None),
+        ];
+        let sentinel = lysogeny::LysogenySentinel::new(lysogeny::LysogenyConfig {
+            genome_files,
+            self_ips: self_ips_for_lysogeny,
+            check_interval_secs: 60,
+            behavioral_window_secs: cli.window_secs,
+        });
+        tracing::info!(
+            "🧬 lysogeny sentinel active — genome integrity + self-behavioral + process watchdog"
+        );
+        Some(sentinel)
+    } else {
+        None
+    };
+
     let poll_interval = Duration::from_millis(cli.poll_ms);
 
     let mut line_buf = String::new();
@@ -244,6 +276,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     &mut aggregator,
                     fleet_agg.as_mut(),
                     caddy_bridge.as_mut(),
+                    lysogeny_sentinel.as_mut(),
                     &mut rpc,
                     &mut state,
                     cli.dry_run,
@@ -258,6 +291,29 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                         offset = state.byte_offset,
                         "progress checkpoint"
                     );
+
+                    // Lysogeny sentinel periodic tick
+                    if let Some(ref mut sentinel) = lysogeny_sentinel {
+                        let alerts = sentinel.tick();
+                        for alert in &alerts {
+                            match alert.severity {
+                                lysogeny::Severity::Critical => {
+                                    tracing::error!(
+                                        kind = ?alert.kind,
+                                        "🧬🔴 LYSOGENY CRITICAL: {}",
+                                        alert.message,
+                                    );
+                                }
+                                lysogeny::Severity::Warning => {
+                                    tracing::warn!(
+                                        kind = ?alert.kind,
+                                        "🧬🟡 LYSOGENY WARNING: {}",
+                                        alert.message,
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
             _ = &mut shutdown => {
@@ -312,6 +368,7 @@ async fn process_line(
     aggregator: &mut aggregator::Aggregator,
     fleet_agg: Option<&mut fleet::FleetAggregator>,
     bridge: Option<&mut caddy_bridge::CaddyBridge>,
+    mut sentinel: Option<&mut lysogeny::LysogenySentinel>,
     rpc: &mut rpc::RpcClient,
     state: &mut TailState,
     dry_run: bool,
@@ -327,6 +384,11 @@ async fn process_line(
     };
 
     state.lines_read += 1;
+
+    // Feed to lysogeny sentinel for self-behavioral tracking
+    if let Some(s) = sentinel.as_mut() {
+        s.observe(&entry);
+    }
 
     // Per-IP aggregation
     let observations = aggregator.ingest(&entry);
@@ -428,6 +490,11 @@ async fn process_line(
                                     tracked = bridge.tracked_count(),
                                     "🦨 Caddy updated — fleet posture applied"
                                 );
+                                // Notify lysogeny sentinel that WE wrote the Caddyfile
+                                // so it doesn't flag our own write as a genome mutation
+                                if let Some(s) = sentinel.as_mut() {
+                                    s.notify_self_write(&bridge.caddyfile_path());
+                                }
                             }
                             Ok(false) => {}
                             Err(e) => {
