@@ -18,6 +18,7 @@ mod error;
 pub mod fleet;
 pub mod lysogeny;
 mod rpc;
+pub mod scatter_server;
 
 use error::IngestError;
 
@@ -98,6 +99,24 @@ struct Cli {
     /// will never be added to fleet block lists.
     #[arg(long, default_value = "/etc/membrane/self-ips.txt")]
     self_ips_file: PathBuf,
+
+    /// Enable scatter (opsonization) server — serves poisoned content
+    /// to fleet requests routed by Caddy's content_gate.
+    #[arg(long, default_value_t = false)]
+    scatter_server: bool,
+
+    /// Scatter server listen port.
+    #[arg(long, default_value_t = 9753)]
+    scatter_port: u16,
+
+    /// Scatter seed for deterministic poison content.
+    #[arg(long, default_value_t = 0xdead_beef_cafe_babe)]
+    scatter_seed: u64,
+
+    /// Fraction of detected requests that receive scatter content (0.0-1.0).
+    /// Remaining requests get connection abort.
+    #[arg(long, default_value_t = 0.3)]
+    scatter_ratio: f32,
 }
 
 #[tokio::main]
@@ -241,6 +260,16 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     } else {
         None
     };
+
+    // Scatter (opsonization) server — serves poison content to fleet
+    if cli.scatter_server {
+        let scatter_config = scatter_server::ScatterConfig {
+            listen_addr: std::net::SocketAddr::from(([127, 0, 0, 1], cli.scatter_port)),
+            seed: cli.scatter_seed,
+            poison_ratio: cli.scatter_ratio,
+        };
+        tokio::spawn(scatter_server::run(scatter_config));
+    }
 
     let poll_interval = Duration::from_millis(cli.poll_ms);
 
