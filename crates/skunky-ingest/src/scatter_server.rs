@@ -211,11 +211,11 @@ static NOT_FOUND_PAGE: &str = r#"<!DOCTYPE html>
 
 /// Deterministic hash for a path — same path always gets the same decision.
 fn path_deterministic_hash(path: &str, seed: u64) -> u64 {
-    let mut h = seed;
-    for byte in path.bytes() {
-        h = h.wrapping_mul(0x517c_c1b7_2722_0a95).wrapping_add(u64::from(byte));
-    }
-    h ^ (h >> 32)
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    seed.hash(&mut hasher);
+    path.hash(&mut hasher);
+    hasher.finish()
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -717,6 +717,33 @@ mod tests {
         conf.update(1.0);
         let r = conf.effective_ratio(base);
         assert!((r - 0.8).abs() < 0.01, "expected 0.8, got {r}");
+    }
+
+    #[test]
+    fn hash_distribution_uniform_for_fleet_paths() {
+        let seed = 0xdead_beef_cafe_babe_u64;
+        let ratio = 0.42_f32;
+        let mut poison = 0;
+        let total = 1000;
+
+        for i in 0..total {
+            let path = format!(
+                "/ecoPrimals/wateringHole/src/commit/{:040x}/handlers/main.rs",
+                i * 0x1234_5678_9abc_def0_u128
+            );
+            let h = path_deterministic_hash(&path, seed);
+            if (h % 100) < (ratio * 100.0) as u64 {
+                poison += 1;
+            }
+        }
+
+        let pct = poison as f64 / total as f64;
+        assert!(
+            pct > 0.32 && pct < 0.52,
+            "poison ratio {:.1}% should be near 42% (was {})",
+            pct * 100.0,
+            poison
+        );
     }
 
     #[test]
