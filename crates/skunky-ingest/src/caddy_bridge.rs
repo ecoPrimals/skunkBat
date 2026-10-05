@@ -25,6 +25,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
+use cellmembrane_types::fleet::DefensePosture;
+
 /// Configuration for the Caddy bridge.
 #[derive(Debug, Clone)]
 pub struct CaddyBridgeConfig {
@@ -52,10 +54,11 @@ impl Default for CaddyBridgeConfig {
     }
 }
 
-/// Tracked fleet IP with expiry.
+/// Tracked fleet IP with expiry and defense posture.
 #[derive(Debug, Clone)]
 struct TrackedIp {
     last_seen: SystemTime,
+    posture: DefensePosture,
 }
 
 /// Caddy bridge state.
@@ -76,16 +79,26 @@ impl CaddyBridge {
         }
     }
 
-    /// Add fleet IPs that matched an antibody.
+    /// Add fleet IPs that matched an antibody with a specific defense posture.
     ///
-    /// Called when `fleet.match` returns matching antibody IDs.
-    pub fn add_fleet_ips(&mut self, ips: &[String]) {
+    /// Called when `fleet.match` returns matching antibody IDs. The posture
+    /// determines what Caddy directive is written (403/429/scatter/abort).
+    /// Escalates posture if the same IP is already tracked at a lower level.
+    pub fn add_fleet_ips(&mut self, ips: &[String], posture: DefensePosture) {
         let now = SystemTime::now();
         for ip in ips {
             self.tracked_ips
                 .entry(ip.clone())
-                .and_modify(|t| t.last_seen = now)
-                .or_insert(TrackedIp { last_seen: now });
+                .and_modify(|t| {
+                    t.last_seen = now;
+                    if posture > t.posture {
+                        t.posture = posture;
+                    }
+                })
+                .or_insert(TrackedIp {
+                    last_seen: now,
+                    posture,
+                });
         }
     }
 
@@ -107,7 +120,7 @@ impl CaddyBridge {
             return Ok(false);
         }
 
-        self.write_caddyfile(&active_ips)?;
+        self.write_caddyfile()?;
         self.reload_caddy()?;
         self.last_written = active_ips;
 
@@ -137,7 +150,73 @@ impl CaddyBridge {
         });
     }
 
-    fn write_caddyfile(&self, ips: &[String]) -> Result<(), std::io::Error> {
+    /// Group tracked IPs by their defense posture.
+    fn ips_by_posture(&self) -> HashMap<DefensePosture, Vec<String>> {
+        let mut groups: HashMap<DefensePosture, Vec<String>> = HashMap::new();
+        for (ip, tracked) in &self.tracked_ips {
+            // Observe means no directive — skip
+            if tracked.posture == DefensePosture::Observe {
+                continue;
+            }
+            groups
+                .entry(tracked.posture)
+                .or_default()
+                .push(ip.clone());
+        }
+        for ips in groups.values_mut() {
+            ips.sort();
+        }
+        groups
+    }
+
+    /// Generate Caddy directives for a specific posture + IP set.
+    fn posture_directive(posture: DefensePosture, ips: &[String]) -> String {
+        if ips.is_empty() {
+            return String::new();
+        }
+        let ip_list = ips.join(" ");
+        match posture {
+            DefensePosture::Observe => String::new(),
+
+            DefensePosture::WarnRoute => format!(
+                "    @fleet_warn remote_ip {ip_list}\n\
+                 \x20   route @fleet_warn {{\n\
+                 \x20       respond 403 {{\n\
+                 \x20           body \"Fleet behavior detected. Use github.com/ecoPrimals for automated access.\"\n\
+                 \x20           close\n\
+                 \x20       }}\n\
+                 \x20   }}\n"
+            ),
+
+            DefensePosture::SlowDegrade => format!(
+                "    @fleet_tarpit remote_ip {ip_list}\n\
+                 \x20   route @fleet_tarpit {{\n\
+                 \x20       header Retry-After \"3600\"\n\
+                 \x20       header X-Fleet-Status \"throttled\"\n\
+                 \x20       respond 429 {{\n\
+                 \x20           body \"Rate limited. Service unavailable for automated access.\"\n\
+                 \x20           close\n\
+                 \x20       }}\n\
+                 \x20   }}\n"
+            ),
+
+            DefensePosture::Scatter => format!(
+                "    @fleet_scatter remote_ip {ip_list}\n\
+                 \x20   route @fleet_scatter {{\n\
+                 \x20       reverse_proxy localhost:9753\n\
+                 \x20   }}\n"
+            ),
+
+            DefensePosture::Vanish => format!(
+                "    @fleet_vanish remote_ip {ip_list}\n\
+                 \x20   route @fleet_vanish {{\n\
+                 \x20       abort\n\
+                 \x20   }}\n"
+            ),
+        }
+    }
+
+    fn write_caddyfile(&self) -> Result<(), std::io::Error> {
         let content = std::fs::read_to_string(&self.config.caddyfile_path)?;
 
         let start_idx = content.find(&self.config.start_marker);
@@ -153,16 +232,25 @@ impl CaddyBridge {
             ));
         };
 
-        let start_line_end = content[start..].find('\n').map_or(content.len(), |i| start + i + 1);
+        let start_line_end = content[start..]
+            .find('\n')
+            .map_or(content.len(), |i| start + i + 1);
 
-        let ip_block = if ips.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "    @fleet_pressure_ip remote_ip {}\n    route @fleet_pressure_ip {{\n        respond 403 {{\n            body \"Fleet behavior detected. Use github.com/ecoPrimals for automated access.\"\n            close\n        }}\n    }}\n",
-                ips.join(" ")
-            )
-        };
+        let groups = self.ips_by_posture();
+
+        // Build directive blocks in escalation order (most aggressive first —
+        // Caddy evaluates matchers top-to-bottom, first match wins)
+        let mut ip_block = String::new();
+        for posture in [
+            DefensePosture::Vanish,
+            DefensePosture::Scatter,
+            DefensePosture::SlowDegrade,
+            DefensePosture::WarnRoute,
+        ] {
+            if let Some(ips) = groups.get(&posture) {
+                ip_block.push_str(&Self::posture_directive(posture, ips));
+            }
+        }
 
         let new_content = format!(
             "{}{}{}",
@@ -173,10 +261,16 @@ impl CaddyBridge {
 
         std::fs::write(&self.config.caddyfile_path, new_content)?;
 
+        let total: usize = groups.values().map(Vec::len).sum();
+        let summary: Vec<String> = groups
+            .iter()
+            .map(|(p, ips)| format!("{p}:{}", ips.len()))
+            .collect();
         tracing::info!(
-            ips = ips.len(),
+            total,
+            postures = %summary.join(" "),
             path = %self.config.caddyfile_path.display(),
-            "Caddyfile updated with fleet IPs"
+            "Caddyfile updated with posture-aware fleet directives"
         );
 
         Ok(())
@@ -222,6 +316,16 @@ mod tests {
         .join("\n")
     }
 
+    fn test_config(caddyfile: PathBuf) -> CaddyBridgeConfig {
+        CaddyBridgeConfig {
+            caddyfile_path: caddyfile,
+            caddy_reload_cmd: "true".to_string(),
+            ip_ttl_secs: 3600,
+            start_marker: "~~FLEET_PRESSURE_START~~".to_string(),
+            end_marker: "~~FLEET_PRESSURE_END~~".to_string(),
+        }
+    }
+
     #[test]
     fn add_and_track_ips() {
         let config = CaddyBridgeConfig {
@@ -232,15 +336,34 @@ mod tests {
         };
         let mut bridge = CaddyBridge::new(config);
 
-        bridge.add_fleet_ips(&[
-            "57.141.20.1".to_string(),
-            "57.141.20.2".to_string(),
-        ]);
+        bridge.add_fleet_ips(
+            &["57.141.20.1".to_string(), "57.141.20.2".to_string()],
+            DefensePosture::WarnRoute,
+        );
 
         assert_eq!(bridge.tracked_count(), 2);
         let ips = bridge.active_ips();
         assert!(ips.contains(&"57.141.20.1".to_string()));
         assert!(ips.contains(&"57.141.20.2".to_string()));
+    }
+
+    #[test]
+    fn posture_escalation_on_same_ip() {
+        let mut bridge = CaddyBridge::new(CaddyBridgeConfig {
+            caddyfile_path: PathBuf::from("/tmp/nonexistent"),
+            caddy_reload_cmd: "true".to_string(),
+            ..Default::default()
+        });
+
+        bridge.add_fleet_ips(&["1.2.3.4".to_string()], DefensePosture::WarnRoute);
+        assert_eq!(bridge.tracked_ips["1.2.3.4"].posture, DefensePosture::WarnRoute);
+
+        bridge.add_fleet_ips(&["1.2.3.4".to_string()], DefensePosture::Scatter);
+        assert_eq!(bridge.tracked_ips["1.2.3.4"].posture, DefensePosture::Scatter);
+
+        // Lower posture should NOT de-escalate
+        bridge.add_fleet_ips(&["1.2.3.4".to_string()], DefensePosture::WarnRoute);
+        assert_eq!(bridge.tracked_ips["1.2.3.4"].posture, DefensePosture::Scatter);
     }
 
     #[test]
@@ -253,7 +376,7 @@ mod tests {
         };
         let mut bridge = CaddyBridge::new(config);
 
-        bridge.add_fleet_ips(&["1.2.3.4".to_string()]);
+        bridge.add_fleet_ips(&["1.2.3.4".to_string()], DefensePosture::WarnRoute);
         std::thread::sleep(Duration::from_millis(10));
         bridge.expire_stale_ips();
 
@@ -261,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn write_caddyfile_injects_ips() {
+    fn write_warn_route_directive() {
         let dir = tempfile::tempdir().unwrap();
         let caddyfile = dir.path().join("Caddyfile");
         {
@@ -269,24 +392,99 @@ mod tests {
             f.write_all(test_caddyfile_content().as_bytes()).unwrap();
         }
 
-        let config = CaddyBridgeConfig {
-            caddyfile_path: caddyfile.clone(),
-            caddy_reload_cmd: "true".to_string(),
-            ip_ttl_secs: 3600,
-            start_marker: "~~FLEET_PRESSURE_START~~".to_string(),
-            end_marker: "~~FLEET_PRESSURE_END~~".to_string(),
-        };
-
-        let bridge = CaddyBridge::new(config);
-        bridge
-            .write_caddyfile(&["57.141.20.1".to_string(), "57.141.20.2".to_string()])
-            .unwrap();
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        bridge.add_fleet_ips(
+            &["57.141.20.1".to_string(), "57.141.20.2".to_string()],
+            DefensePosture::WarnRoute,
+        );
+        bridge.write_caddyfile().unwrap();
 
         let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("@fleet_warn"));
         assert!(content.contains("57.141.20.1"));
-        assert!(content.contains("57.141.20.2"));
-        assert!(content.contains("@fleet_pressure_ip"));
+        assert!(content.contains("respond 403"));
         assert!(content.contains("~~FLEET_PRESSURE_END~~"));
+    }
+
+    #[test]
+    fn write_tarpit_directive() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::SlowDegrade);
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("@fleet_tarpit"));
+        assert!(content.contains("respond 429"));
+        assert!(content.contains("Retry-After"));
+    }
+
+    #[test]
+    fn write_scatter_directive() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        bridge.add_fleet_ips(&["10.0.0.2".to_string()], DefensePosture::Scatter);
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("@fleet_scatter"));
+        assert!(content.contains("reverse_proxy localhost:9753"));
+    }
+
+    #[test]
+    fn write_vanish_directive() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        bridge.add_fleet_ips(&["10.0.0.3".to_string()], DefensePosture::Vanish);
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("@fleet_vanish"));
+        assert!(content.contains("abort"));
+    }
+
+    #[test]
+    fn write_multi_posture_ordering() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::WarnRoute);
+        bridge.add_fleet_ips(&["10.0.0.2".to_string()], DefensePosture::Vanish);
+        bridge.add_fleet_ips(&["10.0.0.3".to_string()], DefensePosture::Scatter);
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        // Vanish should appear before Scatter, Scatter before WarnRoute
+        let vanish_pos = content.find("@fleet_vanish").unwrap();
+        let scatter_pos = content.find("@fleet_scatter").unwrap();
+        let warn_pos = content.find("@fleet_warn").unwrap();
+        assert!(vanish_pos < scatter_pos, "vanish should come before scatter");
+        assert!(scatter_pos < warn_pos, "scatter should come before warn");
+    }
+
+    #[test]
+    fn observe_posture_produces_no_directives() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::Observe);
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(!content.contains("@fleet_"));
     }
 
     #[test]
@@ -295,15 +493,7 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let config = CaddyBridgeConfig {
-            caddyfile_path: caddyfile,
-            caddy_reload_cmd: "true".to_string(),
-            ip_ttl_secs: 3600,
-            start_marker: "~~FLEET_PRESSURE_START~~".to_string(),
-            end_marker: "~~FLEET_PRESSURE_END~~".to_string(),
-        };
-
-        let mut bridge = CaddyBridge::new(config);
+        let mut bridge = CaddyBridge::new(test_config(caddyfile));
         let changed = bridge.sync().unwrap();
         assert!(!changed);
     }
@@ -314,16 +504,8 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let config = CaddyBridgeConfig {
-            caddyfile_path: caddyfile,
-            caddy_reload_cmd: "true".to_string(),
-            ip_ttl_secs: 3600,
-            start_marker: "~~FLEET_PRESSURE_START~~".to_string(),
-            end_marker: "~~FLEET_PRESSURE_END~~".to_string(),
-        };
-
-        let mut bridge = CaddyBridge::new(config);
-        bridge.add_fleet_ips(&["57.141.20.1".to_string()]);
+        let mut bridge = CaddyBridge::new(test_config(caddyfile));
+        bridge.add_fleet_ips(&["57.141.20.1".to_string()], DefensePosture::WarnRoute);
         let changed = bridge.sync().unwrap();
         assert!(changed);
     }

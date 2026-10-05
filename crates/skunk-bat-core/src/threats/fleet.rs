@@ -29,8 +29,8 @@ use std::collections::VecDeque;
 use std::time::SystemTime;
 
 use cellmembrane_types::fleet::{
-    DeceptionSignals, FleetAntibody, FleetObservation, PathPattern, TimingSignature,
-    UaFingerprint,
+    DeceptionSignals, DefensePosture, FleetAntibody, FleetObservation, PathPattern,
+    TimingSignature, UaFingerprint, DEFAULT_FORGIVE_WINDOW_SECS,
 };
 
 /// Configuration for fleet detection thresholds.
@@ -209,6 +209,10 @@ impl FleetDetector {
             first_seen_epoch: now_epoch,
             last_matched_epoch: now_epoch,
             match_count: 1,
+            escalation: DefensePosture::Observe,
+            last_defection_epoch: 0,
+            defection_count: 0,
+            forgive_window_secs: DEFAULT_FORGIVE_WINDOW_SECS,
         }
     }
 

@@ -25,7 +25,23 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use cellmembrane_types::fleet::{FleetAntibody, FleetObservation};
+use cellmembrane_types::fleet::{DefensePosture, FleetAntibody, FleetObservation};
+use serde::{Deserialize, Serialize};
+
+/// Event emitted when an antibody's defense posture changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EscalationEvent {
+    /// Antibody that changed posture.
+    pub antibody_id: String,
+    /// Previous posture.
+    pub from: DefensePosture,
+    /// New posture.
+    pub to: DefensePosture,
+    /// Why it changed: `"repeat_defection"` or `"forgive_timeout"`.
+    pub reason: String,
+    /// Current defection count at time of change.
+    pub defection_count: u32,
+}
 
 /// Persistent antibody store with confidence decay.
 pub struct AntibodyStore {
@@ -150,6 +166,61 @@ impl AntibodyStore {
         pruned
     }
 
+    /// Tick the escalation engine for all antibodies.
+    ///
+    /// Call once per observation window. Pass the set of antibody IDs that
+    /// matched in this window. Antibodies not in the set get a forgive tick.
+    ///
+    /// Returns escalation events for audit logging and gossip propagation.
+    pub fn tick(&mut self, matched_ids: &[String]) -> Vec<EscalationEvent> {
+        let now_epoch = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+
+        let matched_set: std::collections::HashSet<&str> =
+            matched_ids.iter().map(String::as_str).collect();
+
+        let mut events = Vec::new();
+
+        for (id, antibody) in &mut self.antibodies {
+            let was_matched = matched_set.contains(id.as_str());
+            if let Some(prev) = antibody.tick_escalation(was_matched, now_epoch) {
+                let reason = if was_matched {
+                    "repeat_defection"
+                } else {
+                    "forgive_timeout"
+                };
+                tracing::info!(
+                    id = %id,
+                    from = %prev,
+                    to = %antibody.escalation,
+                    reason,
+                    defections = antibody.defection_count,
+                    "posture change"
+                );
+                events.push(EscalationEvent {
+                    antibody_id: id.clone(),
+                    from: prev,
+                    to: antibody.escalation,
+                    reason: reason.to_owned(),
+                    defection_count: antibody.defection_count,
+                });
+            }
+        }
+
+        if !events.is_empty() {
+            self.persist();
+        }
+
+        events
+    }
+
+    /// Get the current defense posture for an antibody by ID.
+    #[must_use]
+    pub fn posture(&self, id: &str) -> Option<DefensePosture> {
+        self.antibodies.get(id).map(|ab| ab.escalation)
+    }
+
     /// Get all active antibodies as a snapshot.
     #[must_use]
     pub fn snapshot(&self) -> Vec<FleetAntibody> {
@@ -193,7 +264,8 @@ impl AntibodyStore {
 mod tests {
     use super::*;
     use cellmembrane_types::fleet::{
-        DeceptionSignals, PathPattern, TimingSignature, UaFingerprint,
+        DeceptionSignals, DefensePosture, PathPattern, TimingSignature, UaFingerprint,
+        DEFAULT_FORGIVE_WINDOW_SECS,
     };
 
     fn sample_antibody(id: &str, confidence: f64) -> FleetAntibody {
@@ -223,6 +295,10 @@ mod tests {
             first_seen_epoch: 1000,
             last_matched_epoch: 2000,
             match_count: 1,
+            escalation: DefensePosture::Observe,
+            last_defection_epoch: 0,
+            defection_count: 0,
+            forgive_window_secs: DEFAULT_FORGIVE_WINDOW_SECS,
         }
     }
 
@@ -317,5 +393,48 @@ mod tests {
         let store = AntibodyStore::new(Some(dir_str));
         assert_eq!(store.len(), 1);
         assert_eq!(store.snapshot()[0].id, "ab-persist");
+    }
+
+    #[test]
+    fn tick_escalates_matched_antibodies() {
+        let mut store = AntibodyStore::new(None);
+        store.insert(sample_antibody("ab-esc", 0.9));
+
+        let events = store.tick(&["ab-esc".to_string()]);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].from, DefensePosture::Observe);
+        assert_eq!(events[0].to, DefensePosture::WarnRoute);
+        assert_eq!(events[0].reason, "repeat_defection");
+
+        assert_eq!(store.posture("ab-esc"), Some(DefensePosture::WarnRoute));
+    }
+
+    #[test]
+    fn tick_forgives_unmatched_antibodies() {
+        let mut store = AntibodyStore::new(None);
+        let mut ab = sample_antibody("ab-forgive", 0.9);
+        ab.escalation = DefensePosture::SlowDegrade;
+        ab.last_defection_epoch = 1000;
+        store.insert(ab);
+
+        // Not enough time → no change
+        let events = store.tick(&[]);
+        // The tick uses SystemTime::now which is >> 1000 + forgive_window,
+        // so it should actually forgive immediately in tests
+        assert!(!events.is_empty());
+        assert_eq!(events[0].to, DefensePosture::WarnRoute);
+        assert_eq!(events[0].reason, "forgive_timeout");
+    }
+
+    #[test]
+    fn tick_no_events_when_stable() {
+        let mut store = AntibodyStore::new(None);
+        let mut ab = sample_antibody("ab-stable", 0.9);
+        ab.escalation = DefensePosture::Vanish;
+        store.insert(ab);
+
+        // Matched + already at Vanish → no change
+        let events = store.tick(&["ab-stable".to_string()]);
+        assert!(events.is_empty());
     }
 }

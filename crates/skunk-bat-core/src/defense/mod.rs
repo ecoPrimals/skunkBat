@@ -6,6 +6,7 @@
 //! Provides threat response, quarantine, self-healing, and antibody memory.
 
 pub mod antibodies;
+pub mod scatter;
 
 use crate::SkunkBatConfig;
 use crate::error::SkunkBatError;

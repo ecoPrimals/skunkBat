@@ -256,22 +256,30 @@ fn check_lifetime(entry: &GossipEntryParams) -> GossipCheckResult {
     }
 }
 
-/// Defense-topic validation: antibody entries must have valid structure.
+/// Defense-topic validation: antibody and escalation entries must have valid structure.
 ///
-/// Key format: `defense.antibody:<id>`.
-/// Payload must deserialize to a `FleetAntibody` with valid confidence.
+/// Accepted key formats:
+/// - `defense.antibody:<id>` — payload must be a valid `FleetAntibody`
+/// - `defense.escalation:<id>` — payload must be a valid `EscalationEvent`
 fn check_defense_entry(entry: &GossipEntryParams) -> GossipCheckResult {
-    if !entry.key.starts_with("defense.antibody:") {
-        return GossipCheckResult {
+    if entry.key.starts_with("defense.antibody:") {
+        check_defense_antibody(entry)
+    } else if entry.key.starts_with("defense.escalation:") {
+        check_defense_escalation(entry)
+    } else {
+        GossipCheckResult {
             check: "defense_key_format".to_owned(),
             passed: false,
             detail: Some(format!(
-                "defense topic key must start with 'defense.antibody:', got '{}'",
+                "defense topic key must start with 'defense.antibody:' or 'defense.escalation:', got '{}'",
                 entry.key
             )),
-        };
+        }
     }
+}
 
+/// Validate a `defense.antibody:` gossip entry.
+fn check_defense_antibody(entry: &GossipEntryParams) -> GossipCheckResult {
     let antibody: Result<cellmembrane_types::fleet::FleetAntibody, _> =
         serde_json::from_value(entry.payload.clone());
 
@@ -301,6 +309,46 @@ fn check_defense_entry(entry: &GossipEntryParams) -> GossipCheckResult {
             check: "defense_antibody_valid".to_owned(),
             passed: false,
             detail: Some(format!("invalid antibody payload: {e}")),
+        },
+    }
+}
+
+/// Validate a `defense.escalation:` gossip entry.
+///
+/// Payload must deserialize to an `EscalationEvent` with valid posture transition.
+fn check_defense_escalation(entry: &GossipEntryParams) -> GossipCheckResult {
+    let event: Result<crate::defense::antibodies::EscalationEvent, _> =
+        serde_json::from_value(entry.payload.clone());
+
+    match event {
+        Ok(ev) => {
+            if ev.antibody_id.is_empty() {
+                GossipCheckResult {
+                    check: "defense_escalation_valid".to_owned(),
+                    passed: false,
+                    detail: Some("escalation event has empty antibody_id".to_owned()),
+                }
+            } else if ev.from == ev.to {
+                GossipCheckResult {
+                    check: "defense_escalation_valid".to_owned(),
+                    passed: false,
+                    detail: Some(format!(
+                        "escalation event has no posture change: {} → {}",
+                        ev.from, ev.to
+                    )),
+                }
+            } else {
+                GossipCheckResult {
+                    check: "defense_escalation_valid".to_owned(),
+                    passed: true,
+                    detail: None,
+                }
+            }
+        }
+        Err(e) => GossipCheckResult {
+            check: "defense_escalation_valid".to_owned(),
+            passed: false,
+            detail: Some(format!("invalid escalation payload: {e}")),
         },
     }
 }
@@ -504,6 +552,44 @@ mod tests {
     fn defense_invalid_payload_warns() {
         let mut e = entry("defense", "defense.antibody:bad", "sporeGate");
         e.payload = serde_json::json!({"not": "an antibody"});
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Warn);
+    }
+
+    #[test]
+    fn defense_escalation_entry_valid() {
+        let event = serde_json::json!({
+            "antibody_id": "fleet-test-001",
+            "from": "observe",
+            "to": "warn_route",
+            "reason": "repeat_defection",
+            "defection_count": 1
+        });
+        let mut e = entry("defense", "defense.escalation:fleet-test-001", "sporeGate");
+        e.payload = event;
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Allow);
+    }
+
+    #[test]
+    fn defense_escalation_invalid_payload_warns() {
+        let mut e = entry("defense", "defense.escalation:bad", "sporeGate");
+        e.payload = serde_json::json!({"not": "an event"});
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Warn);
+    }
+
+    #[test]
+    fn defense_escalation_no_change_warns() {
+        let event = serde_json::json!({
+            "antibody_id": "fleet-test-001",
+            "from": "observe",
+            "to": "observe",
+            "reason": "no_change",
+            "defection_count": 0
+        });
+        let mut e = entry("defense", "defense.escalation:fleet-test-001", "sporeGate");
+        e.payload = event;
         let v = analyze_gossip_entry(&e, no_quarantine);
         assert_eq!(v.verdict, super::super::Verdict::Warn);
     }

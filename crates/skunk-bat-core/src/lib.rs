@@ -518,6 +518,32 @@ impl<L: threats::traits::LineageVerifier> SkunkBat<L> {
             .map(|mut store| store.decay())
             .unwrap_or(0)
     }
+
+    /// Tick the escalation engine for all antibodies.
+    ///
+    /// Pass the IDs of antibodies that matched in the current window.
+    /// Returns posture-change events for audit logging and gossip propagation.
+    pub fn fleet_tick(
+        &self,
+        matched_ids: &[String],
+    ) -> Vec<defense::antibodies::EscalationEvent> {
+        self.antibody_store
+            .lock()
+            .map(|mut store| store.tick(matched_ids))
+            .unwrap_or_default()
+    }
+
+    /// Get the current defense posture for a specific antibody.
+    #[must_use]
+    pub fn fleet_posture(
+        &self,
+        antibody_id: &str,
+    ) -> Option<cellmembrane_types::fleet::DefensePosture> {
+        self.antibody_store
+            .lock()
+            .ok()
+            .and_then(|store| store.posture(antibody_id))
+    }
 }
 
 impl<L: threats::traits::LineageVerifier> PrimalLifecycle for SkunkBat<L> {

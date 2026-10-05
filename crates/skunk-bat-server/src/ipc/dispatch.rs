@@ -50,6 +50,8 @@ const METHODS: &[&str] = &[
     "fleet.observe",
     "fleet.antibodies",
     "fleet.match",
+    "fleet.posture",
+    "fleet.tick",
 ];
 
 /// Transport-layer methods handled by the connection handler before dispatch.
@@ -116,7 +118,7 @@ fn capabilities_response() -> serde_json::Value {
             { "type": "method_gate", "methods": ["status"] },
             { "type": "auth", "methods": ["check", "mode", "peer_info"] },
             { "type": "metadata", "methods": ["analyze"] },
-            { "type": "fleet", "methods": ["observe", "antibodies", "match"] },
+            { "type": "fleet", "methods": ["observe", "antibodies", "match", "posture", "tick"] },
             { "type": "lifecycle", "methods": ["state", "status", "capabilities"] },
             { "type": "btsp", "methods": ["negotiate", "capabilities"] },
         ],
@@ -210,6 +212,12 @@ pub(super) async fn dispatch(
         }
         "fleet.match" => {
             super::dispatch_fleet::dispatch_fleet_match(state, id, request.params).await
+        }
+        "fleet.posture" => {
+            super::dispatch_fleet::dispatch_fleet_posture(state, id, request.params).await
+        }
+        "fleet.tick" => {
+            super::dispatch_fleet::dispatch_fleet_tick(state, id, request.params).await
         }
         "btsp.capabilities" => dispatch_btsp_capabilities(id),
         _ => Response::error(
