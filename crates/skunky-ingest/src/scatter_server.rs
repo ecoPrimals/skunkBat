@@ -27,9 +27,51 @@
 //!   creating uncertainty for the fleet about which responses are real
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+
+/// Shared confidence level from the opsonize pipeline.
+///
+/// Stored as confidence × 1000 (fixed-point) in an AtomicU32.
+/// 0 = no tags yet (use base ratio), 1000 = 100% confidence.
+///
+/// The scatter server reads this to adapt:
+/// - Higher confidence → higher effective poison ratio
+/// - Higher confidence → richer content variety (repos, issues, wikis)
+#[derive(Debug, Clone)]
+pub struct SharedConfidence(pub Arc<AtomicU32>);
+
+impl SharedConfidence {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicU32::new(0)))
+    }
+
+    /// Update with latest confidence (0.0 - 1.0).
+    pub fn update(&self, confidence: f64) {
+        let fixed = (confidence.clamp(0.0, 1.0) * 1000.0) as u32;
+        self.0.store(fixed, Ordering::Relaxed);
+    }
+
+    /// Read current confidence (0.0 - 1.0).
+    pub fn read(&self) -> f64 {
+        self.0.load(Ordering::Relaxed) as f64 / 1000.0
+    }
+
+    /// Compute effective poison ratio given a base ratio and current confidence.
+    ///
+    /// At confidence 0.0 → base ratio (e.g. 0.3)
+    /// At confidence 0.5 → midpoint (e.g. 0.55)
+    /// At confidence 1.0 → max ratio (0.8)
+    ///
+    /// Never goes above 0.8 — always keep some 404s for plausible deniability.
+    pub fn effective_ratio(&self, base_ratio: f32) -> f32 {
+        let conf = self.read() as f32;
+        let max_ratio = 0.8_f32;
+        base_ratio + conf * (max_ratio - base_ratio)
+    }
+}
 
 /// Scatter server configuration.
 #[derive(Debug, Clone)]
@@ -47,7 +89,7 @@ pub struct ScatterConfig {
 ///
 /// This spawns as a background task and serves poisoned responses to
 /// fleet requests routed by Caddy's content_gate.
-pub async fn run(config: ScatterConfig) {
+pub async fn run(config: ScatterConfig, confidence: SharedConfidence) {
     let listener = match TcpListener::bind(config.listen_addr).await {
         Ok(l) => {
             tracing::info!(
@@ -64,7 +106,7 @@ pub async fn run(config: ScatterConfig) {
     };
 
     let generator = Arc::new(ScatterGenerator::new(config.seed));
-    let poison_ratio = config.poison_ratio;
+    let base_ratio = config.poison_ratio;
 
     loop {
         let (stream, _peer) = match listener.accept().await {
@@ -76,8 +118,9 @@ pub async fn run(config: ScatterConfig) {
         };
 
         let sg = Arc::clone(&generator);
+        let effective_ratio = confidence.effective_ratio(base_ratio);
         tokio::spawn(async move {
-            if let Err(e) = handle_request(stream, &sg, poison_ratio).await {
+            if let Err(e) = handle_request(stream, &sg, effective_ratio).await {
                 tracing::debug!(error = %e, "scatter request handler error");
             }
         });
@@ -655,5 +698,34 @@ mod tests {
         let (_, body) = sg.generate("/org/repo/releases/tag/v1.0.0");
         assert!(body.contains("release-view"));
         assert!(body.contains("Changelog"));
+    }
+
+    #[test]
+    fn shared_confidence_effective_ratio() {
+        let conf = SharedConfidence::new();
+        let base = 0.3;
+
+        // No confidence → base ratio
+        assert!((conf.effective_ratio(base) - 0.3).abs() < 0.01);
+
+        // Half confidence → midpoint between base and max (0.8)
+        conf.update(0.5);
+        let r = conf.effective_ratio(base);
+        assert!(r > 0.5 && r < 0.6, "expected ~0.55, got {r}");
+
+        // Full confidence → max ratio (0.8)
+        conf.update(1.0);
+        let r = conf.effective_ratio(base);
+        assert!((r - 0.8).abs() < 0.01, "expected 0.8, got {r}");
+    }
+
+    #[test]
+    fn shared_confidence_clamps() {
+        let conf = SharedConfidence::new();
+        conf.update(5.0); // over 1.0
+        assert!((conf.read() - 1.0).abs() < 0.01);
+
+        conf.update(-1.0); // under 0.0
+        assert!(conf.read() < 0.01);
     }
 }

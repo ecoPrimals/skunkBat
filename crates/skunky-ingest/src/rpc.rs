@@ -117,6 +117,17 @@ impl RpcClient {
         Ok(events)
     }
 
+    /// Raw JSON-RPC call with arbitrary method and params.
+    ///
+    /// Used for gossip injection and other dynamic method calls.
+    pub async fn call_raw(
+        &mut self,
+        method: &'static str,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, IngestError> {
+        self.call(method, params).await
+    }
+
     /// Generic JSON-RPC 2.0 call. Returns the `result` value on success.
     async fn call<P: Serialize>(
         &mut self,

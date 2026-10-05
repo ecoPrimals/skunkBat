@@ -266,12 +266,14 @@ fn check_defense_entry(entry: &GossipEntryParams) -> GossipCheckResult {
         check_defense_antibody(entry)
     } else if entry.key.starts_with("defense.escalation:") {
         check_defense_escalation(entry)
+    } else if entry.key.starts_with("defense.opsonize:") {
+        check_defense_opsonize(entry)
     } else {
         GossipCheckResult {
             check: "defense_key_format".to_owned(),
             passed: false,
             detail: Some(format!(
-                "defense topic key must start with 'defense.antibody:' or 'defense.escalation:', got '{}'",
+                "defense topic key must start with 'defense.antibody:', 'defense.escalation:', or 'defense.opsonize:', got '{}'",
                 entry.key
             )),
         }
@@ -349,6 +351,62 @@ fn check_defense_escalation(entry: &GossipEntryParams) -> GossipCheckResult {
             check: "defense_escalation_valid".to_owned(),
             passed: false,
             detail: Some(format!("invalid escalation payload: {e}")),
+        },
+    }
+}
+
+/// Validate a `defense.opsonize:` gossip entry.
+///
+/// The payload must deserialize to an `OpsonizeTag` with a valid
+/// behavioral hash, at least one detector, and valid confidence.
+fn check_defense_opsonize(entry: &GossipEntryParams) -> GossipCheckResult {
+    let tag: Result<cellmembrane_types::fleet::OpsonizeTag, _> =
+        serde_json::from_value(entry.payload.clone());
+
+    match tag {
+        Ok(t) => {
+            if t.behavioral_hash.is_empty() || t.behavioral_hash.len() != 16 {
+                GossipCheckResult {
+                    check: "defense_opsonize_valid".to_owned(),
+                    passed: false,
+                    detail: Some(format!(
+                        "behavioral_hash must be 16 hex chars, got {} chars",
+                        t.behavioral_hash.len()
+                    )),
+                }
+            } else if t.detectors.is_empty() {
+                GossipCheckResult {
+                    check: "defense_opsonize_valid".to_owned(),
+                    passed: false,
+                    detail: Some("opsonize tag must have at least one detector".to_owned()),
+                }
+            } else if t.confidence < 0.0 || t.confidence > 1.0 {
+                GossipCheckResult {
+                    check: "defense_opsonize_valid".to_owned(),
+                    passed: false,
+                    detail: Some(format!(
+                        "confidence out of range: {}",
+                        t.confidence
+                    )),
+                }
+            } else if t.origin_gate.is_empty() {
+                GossipCheckResult {
+                    check: "defense_opsonize_valid".to_owned(),
+                    passed: false,
+                    detail: Some("origin_gate is empty".to_owned()),
+                }
+            } else {
+                GossipCheckResult {
+                    check: "defense_opsonize_valid".to_owned(),
+                    passed: true,
+                    detail: None,
+                }
+            }
+        }
+        Err(e) => GossipCheckResult {
+            check: "defense_opsonize_valid".to_owned(),
+            passed: false,
+            detail: Some(format!("invalid opsonize payload: {e}")),
         },
     }
 }
@@ -590,6 +648,84 @@ mod tests {
         });
         let mut e = entry("defense", "defense.escalation:fleet-test-001", "sporeGate");
         e.payload = event;
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Warn);
+    }
+
+    #[test]
+    fn defense_opsonize_entry_valid() {
+        let tag = serde_json::json!({
+            "behavioral_hash": "a3f71234deadbeef",
+            "detectors": ["content_gate", "stale_chrome"],
+            "confidence": 0.95,
+            "origin_gate": "golgiBody",
+            "invariants": {
+                "deep_content_dominant": true,
+                "cookieless": true,
+                "session_depth": "high",
+                "ua_diversity": "narrow",
+                "ip_pattern": "rotating",
+                "deception_flags": ["hides_identity", "rotates_ips"]
+            },
+            "response": {"scatter": {"ratio": 0.3}},
+            "created_epoch": 1000,
+            "last_confirmed_epoch": 2000,
+            "match_count": 50
+        });
+        let mut e = entry("defense", "defense.opsonize:a3f71234deadbeef", "golgiBody");
+        e.payload = tag;
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Allow);
+    }
+
+    #[test]
+    fn defense_opsonize_invalid_hash_warns() {
+        let tag = serde_json::json!({
+            "behavioral_hash": "short",
+            "detectors": ["content_gate"],
+            "confidence": 0.9,
+            "origin_gate": "golgiBody",
+            "invariants": {
+                "deep_content_dominant": true,
+                "cookieless": true,
+                "session_depth": "high",
+                "ua_diversity": "narrow",
+                "ip_pattern": "rotating",
+                "deception_flags": []
+            },
+            "response": "abort",
+            "created_epoch": 1000,
+            "last_confirmed_epoch": 2000,
+            "match_count": 1
+        });
+        let mut e = entry("defense", "defense.opsonize:short", "golgiBody");
+        e.payload = tag;
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Warn);
+    }
+
+    #[test]
+    fn defense_opsonize_no_detectors_warns() {
+        let tag = serde_json::json!({
+            "behavioral_hash": "a3f71234deadbeef",
+            "detectors": [],
+            "confidence": 0.9,
+            "origin_gate": "golgiBody",
+            "invariants": {
+                "deep_content_dominant": true,
+                "cookieless": true,
+                "session_depth": "high",
+                "ua_diversity": "narrow",
+                "ip_pattern": "rotating",
+                "deception_flags": []
+            },
+            "response": "abort",
+            "created_epoch": 1000,
+            "last_confirmed_epoch": 2000,
+            "match_count": 1
+        });
+        let mut e = entry("defense", "defense.opsonize:a3f71234deadbeef", "golgiBody");
+        e.payload = tag;
         let v = analyze_gossip_entry(&e, no_quarantine);
         assert_eq!(v.verdict, super::super::Verdict::Warn);
     }

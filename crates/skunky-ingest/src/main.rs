@@ -261,6 +261,9 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         None
     };
 
+    // Shared confidence level — opsonize pipeline updates, scatter server reads
+    let scatter_confidence = scatter_server::SharedConfidence::new();
+
     // Scatter (opsonization) server — serves poison content to fleet
     if cli.scatter_server {
         let scatter_config = scatter_server::ScatterConfig {
@@ -268,7 +271,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             seed: cli.scatter_seed,
             poison_ratio: cli.scatter_ratio,
         };
-        tokio::spawn(scatter_server::run(scatter_config));
+        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone()));
     }
 
     let poll_interval = Duration::from_millis(cli.poll_ms);
@@ -309,6 +312,8 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     &mut rpc,
                     &mut state,
                     cli.dry_run,
+                    &scatter_confidence,
+                    cli.scatter_ratio,
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -401,6 +406,8 @@ async fn process_line(
     rpc: &mut rpc::RpcClient,
     state: &mut TailState,
     dry_run: bool,
+    scatter_confidence: &scatter_server::SharedConfidence,
+    base_scatter_ratio: f32,
 ) {
     if trimmed.is_empty() {
         return;
@@ -486,6 +493,61 @@ async fn process_line(
                 matched = matched_ids.len(),
                 "fleet antibodies matched — ticking escalation"
             );
+
+            // Step 2b: Compute behavioral hash + emit opsonize tag
+            let bhash = cellmembrane_types::fleet::behavioral_hash(fleet_obs);
+            let invariants = cellmembrane_types::fleet::extract_invariants(fleet_obs);
+            let detectors: Vec<String> = {
+                let mut d = Vec::new();
+                if fleet_obs.path_pattern.commit_url_pct > 0.5 { d.push("content_gate".to_string()); }
+                if fleet_obs.deception.hides_identity { d.push("stealth_ua".to_string()); }
+                if fleet_obs.deception.rotates_ips { d.push("ip_rotation".to_string()); }
+                if fleet_obs.deception.encoding_uniform { d.push("encoding_uniform".to_string()); }
+                if fleet_obs.deception.ignores_rejection { d.push("ignores_rejection".to_string()); }
+                if fleet_obs.ua_fingerprint.ua_count <= 5 { d.push("narrow_ua_pool".to_string()); }
+                d
+            };
+
+            if !detectors.is_empty() {
+                let tag = cellmembrane_types::fleet::OpsonizeTag {
+                    behavioral_hash: bhash.clone(),
+                    detectors: detectors.clone(),
+                    confidence: fleet_obs.deception.hides_identity as u8 as f64 * 0.25
+                        + fleet_obs.deception.rotates_ips as u8 as f64 * 0.25
+                        + fleet_obs.deception.ignores_rejection as u8 as f64 * 0.25
+                        + fleet_obs.deception.encoding_uniform as u8 as f64 * 0.25,
+                    origin_gate: "golgiBody".to_string(),
+                    invariants,
+                    response: cellmembrane_types::fleet::OpsonizeResponse::Scatter { ratio: 0.3 },
+                    created_epoch: fleet_obs.timestamp_epoch,
+                    last_confirmed_epoch: fleet_obs.timestamp_epoch,
+                    match_count: 1,
+                };
+
+                // Update scatter server's confidence — higher confidence = richer poison
+                scatter_confidence.update(tag.confidence);
+
+                tracing::info!(
+                    hash = %bhash,
+                    detectors = detectors.len(),
+                    confidence = %format!("{:.0}%", tag.confidence * 100.0),
+                    effective_ratio = %format!("{:.0}%", scatter_confidence.effective_ratio(base_scatter_ratio) * 100.0),
+                    "🏷️ opsonize tag emitted — behavioral hash {bhash}"
+                );
+
+                // Emit via skunkBat RPC for gossip propagation
+                let tag_json = serde_json::to_value(&tag).unwrap_or_default();
+                if let Err(e) = rpc.call_raw(
+                    "gossip.inject",
+                    &serde_json::json!({
+                        "topic": "defense",
+                        "key": format!("defense.opsonize:{bhash}"),
+                        "payload": tag_json,
+                    }),
+                ).await {
+                    tracing::debug!(error = %e, "gossip.inject failed (swarmVine may not be running)");
+                }
+            }
 
             // Step 3: Tick the escalation engine (tit-for-tat)
             match rpc.fleet_tick(&matched_ids).await {
