@@ -20,6 +20,14 @@ use cellmembrane_types::fleet::{
 
 use crate::caddy::LogEntry;
 
+/// Result from a completed fleet observation window.
+pub struct FleetWindowResult {
+    /// Population-level observation for skunkBat analysis.
+    pub observation: FleetObservation,
+    /// Unique IPs from this window (for CaddyBridge injection).
+    pub ips: Vec<String>,
+}
+
 /// Population-level fleet aggregator.
 ///
 /// Collects all requests to a target host (e.g. `git.primals.eco`) in
@@ -55,8 +63,8 @@ impl FleetAggregator {
         }
     }
 
-    /// Ingest a log entry. Returns a `FleetObservation` if the window closes.
-    pub fn ingest(&mut self, entry: &LogEntry) -> Option<FleetObservation> {
+    /// Ingest a log entry. Returns a `FleetWindowResult` if the window closes.
+    pub fn ingest(&mut self, entry: &LogEntry) -> Option<FleetWindowResult> {
         if !entry.request.host.contains(&self.target_host) {
             return None;
         }
@@ -67,11 +75,11 @@ impl FleetAggregator {
         }
 
         if entry.ts >= self.window_start + window_secs {
-            let obs = self.flush();
+            let result = self.flush_with_ips();
             self.window_start = entry.ts;
             self.entries.clear();
             self.record(entry);
-            obs
+            result
         } else {
             self.record(entry);
             None
@@ -79,10 +87,23 @@ impl FleetAggregator {
     }
 
     /// Force-flush the current window.
-    pub fn flush_remaining(&mut self) -> Option<FleetObservation> {
-        let obs = self.flush();
+    pub fn flush_remaining(&mut self) -> Option<FleetWindowResult> {
+        let result = self.flush_with_ips();
         self.entries.clear();
-        obs
+        result
+    }
+
+    /// Flush and return both observation and unique IPs.
+    fn flush_with_ips(&self) -> Option<FleetWindowResult> {
+        let ips: Vec<String> = self
+            .entries
+            .iter()
+            .map(|e| e.ip.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let observation = self.flush()?;
+        Some(FleetWindowResult { observation, ips })
     }
 
     fn record(&mut self, entry: &LogEntry) {
@@ -332,9 +353,10 @@ mod tests {
         }
 
         // Close the window
-        let obs = agg
+        let result = agg
             .ingest(&make_fleet_entry("1.2.3.4", mac_ua, "/", 200, 200.0))
             .expect("should produce observation");
+        let obs = &result.observation;
 
         assert_eq!(obs.total_requests, 30);
         assert_eq!(obs.unique_ips, 30);
@@ -345,6 +367,7 @@ mod tests {
         assert!(obs.deception.hides_identity);
         assert!(obs.deception.rotates_ips);
         assert!(obs.deception.ignores_rejection);
+        assert_eq!(result.ips.len(), 30, "should have 30 unique fleet IPs");
     }
 
     #[test]
@@ -368,7 +391,8 @@ mod tests {
                 100.0 + f64::from(i),
             ));
         }
-        let obs = agg.flush_remaining().expect("should flush");
-        assert_eq!(obs.total_requests, 10);
+        let result = agg.flush_remaining().expect("should flush");
+        assert_eq!(result.observation.total_requests, 10);
+        assert_eq!(result.ips.len(), 10);
     }
 }

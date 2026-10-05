@@ -179,39 +179,39 @@ impl CaddyBridge {
             DefensePosture::Observe => String::new(),
 
             DefensePosture::WarnRoute => format!(
-                "    @fleet_warn remote_ip {ip_list}\n\
-                 \x20   route @fleet_warn {{\n\
-                 \x20       respond 403 {{\n\
-                 \x20           body \"Fleet behavior detected. Use github.com/ecoPrimals for automated access.\"\n\
-                 \x20           close\n\
-                 \x20       }}\n\
-                 \x20   }}\n"
+                "\t@fleet_warn remote_ip {ip_list}\n\
+                 \thandle @fleet_warn {{\n\
+                 \t\trespond 403 {{\n\
+                 \t\t\tbody \"Fleet behavior detected. Use github.com/ecoPrimals for automated access.\"\n\
+                 \t\t\tclose\n\
+                 \t\t}}\n\
+                 \t}}\n"
             ),
 
             DefensePosture::SlowDegrade => format!(
-                "    @fleet_tarpit remote_ip {ip_list}\n\
-                 \x20   route @fleet_tarpit {{\n\
-                 \x20       header Retry-After \"3600\"\n\
-                 \x20       header X-Fleet-Status \"throttled\"\n\
-                 \x20       respond 429 {{\n\
-                 \x20           body \"Rate limited. Service unavailable for automated access.\"\n\
-                 \x20           close\n\
-                 \x20       }}\n\
-                 \x20   }}\n"
+                "\t@fleet_tarpit remote_ip {ip_list}\n\
+                 \thandle @fleet_tarpit {{\n\
+                 \t\theader Retry-After \"3600\"\n\
+                 \t\theader X-Fleet-Status \"throttled\"\n\
+                 \t\trespond 429 {{\n\
+                 \t\t\tbody \"Rate limited. Service unavailable for automated access.\"\n\
+                 \t\t\tclose\n\
+                 \t\t}}\n\
+                 \t}}\n"
             ),
 
             DefensePosture::Scatter => format!(
-                "    @fleet_scatter remote_ip {ip_list}\n\
-                 \x20   route @fleet_scatter {{\n\
-                 \x20       reverse_proxy localhost:9753\n\
-                 \x20   }}\n"
+                "\t@fleet_scatter remote_ip {ip_list}\n\
+                 \thandle @fleet_scatter {{\n\
+                 \t\treverse_proxy localhost:9753\n\
+                 \t}}\n"
             ),
 
             DefensePosture::Vanish => format!(
-                "    @fleet_vanish remote_ip {ip_list}\n\
-                 \x20   route @fleet_vanish {{\n\
-                 \x20       abort\n\
-                 \x20   }}\n"
+                "\t@fleet_vanish remote_ip {ip_list}\n\
+                 \thandle @fleet_vanish {{\n\
+                 \t\tabort\n\
+                 \t}}\n"
             ),
         }
     }
@@ -236,6 +236,10 @@ impl CaddyBridge {
             .find('\n')
             .map_or(content.len(), |i| start + i + 1);
 
+        // Find the beginning of the line containing the end marker
+        // (preserves any `\t# ` prefix so the marker stays commented)
+        let end_line_start = content[..end].rfind('\n').map_or(0, |i| i + 1);
+
         let groups = self.ips_by_posture();
 
         // Build directive blocks in escalation order (most aggressive first —
@@ -256,7 +260,7 @@ impl CaddyBridge {
             "{}{}{}",
             &content[..start_line_end],
             ip_block,
-            &content[end..]
+            &content[end_line_start..]
         );
 
         std::fs::write(&self.config.caddyfile_path, new_content)?;
@@ -306,14 +310,7 @@ mod tests {
     use std::io::Write;
 
     fn test_caddyfile_content() -> String {
-        [
-            "git.primals.eco {",
-            "    # ~~FLEET_PRESSURE_START~~",
-            "    # ~~FLEET_PRESSURE_END~~",
-            "    root * /opt/ecoPrimals/gitea-data",
-            "}",
-        ]
-        .join("\n")
+        "git.primals.eco {\n\t# ~~FLEET_PRESSURE_START~~\n\t# ~~FLEET_PRESSURE_END~~\n\troot * /opt/ecoPrimals/gitea-data\n}\n".to_string()
     }
 
     fn test_config(caddyfile: PathBuf) -> CaddyBridgeConfig {

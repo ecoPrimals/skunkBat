@@ -12,10 +12,23 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-use cellmembrane_types::fleet::FleetObservation;
+use cellmembrane_types::fleet::{DefensePosture, FleetObservation};
 
 use crate::aggregator::ObservationPayload;
 use crate::error::IngestError;
+
+/// Escalation event received from skunkBat's `fleet.tick` RPC.
+///
+/// Mirrors `skunk_bat_core::defense::antibodies::EscalationEvent` but
+/// defined locally so skunky-ingest doesn't depend on skunk-bat-core.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct EscalationEvent {
+    pub antibody_id: String,
+    pub from: DefensePosture,
+    pub to: DefensePosture,
+    pub reason: String,
+    pub defection_count: u32,
+}
 
 /// riboCipher signal bytes: NDJSON JSON-RPC.
 const RIBOCIPHER_NDJSON: [u8; 2] = [0xEC, 0x01];
@@ -63,18 +76,53 @@ impl RpcClient {
     ///
     /// Reconnects automatically if the connection was lost.
     pub async fn observe(&mut self, obs: &ObservationPayload) -> Result<(), IngestError> {
-        self.call("baseline.observe", obs).await
+        self.call("baseline.observe", obs).await?;
+        Ok(())
     }
 
     /// Send a `fleet.observe` call with a population-level fleet observation.
     ///
     /// Reconnects automatically if the connection was lost.
     pub async fn fleet_observe(&mut self, obs: &FleetObservation) -> Result<(), IngestError> {
-        self.call("fleet.observe", obs).await
+        self.call("fleet.observe", obs).await?;
+        Ok(())
     }
 
-    /// Generic JSON-RPC 2.0 call.
-    async fn call<P: Serialize>(&mut self, method: &'static str, params: &P) -> Result<(), IngestError> {
+    /// Send `fleet.match` — check observation against stored antibodies.
+    ///
+    /// Returns the list of matching antibody IDs.
+    pub async fn fleet_match(&mut self, obs: &FleetObservation) -> Result<Vec<String>, IngestError> {
+        let val = self.call("fleet.match", obs).await?;
+        let ids: Vec<String> = val
+            .get("antibody_ids")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        Ok(ids)
+    }
+
+    /// Send `fleet.tick` — advance the escalation engine.
+    ///
+    /// Pass antibody IDs that matched in this window → defection → escalate.
+    /// Returns posture-change events for audit + Caddy bridge updates.
+    pub async fn fleet_tick(
+        &mut self,
+        matched_ids: &[String],
+    ) -> Result<Vec<EscalationEvent>, IngestError> {
+        let params = serde_json::json!({ "matched_ids": matched_ids });
+        let val = self.call("fleet.tick", &params).await?;
+        let events: Vec<EscalationEvent> = val
+            .get("events")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        Ok(events)
+    }
+
+    /// Generic JSON-RPC 2.0 call. Returns the `result` value on success.
+    async fn call<P: Serialize>(
+        &mut self,
+        method: &'static str,
+        params: &P,
+    ) -> Result<serde_json::Value, IngestError> {
         let req = RpcRequest {
             jsonrpc: "2.0",
             method,
@@ -119,8 +167,8 @@ impl RpcClient {
             });
         }
 
-        if resp.result.is_some() {
-            Ok(())
+        if let Some(result) = resp.result {
+            Ok(result)
         } else {
             Err(IngestError::Rpc(
                 "response missing both result and error".to_string(),

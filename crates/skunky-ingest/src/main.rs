@@ -23,6 +23,7 @@ use error::IngestError;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use cellmembrane_types::fleet::DefensePosture;
 use clap::Parser;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
@@ -71,6 +72,25 @@ struct Cli {
     /// Empty string disables fleet aggregation.
     #[arg(long, default_value = "git.primals")]
     fleet_target_host: String,
+
+    /// Enable Caddy bridge — write posture-aware directives into Caddyfile.
+    #[arg(long, default_value_t = false)]
+    caddy_bridge: bool,
+
+    /// Path to the Caddyfile (used with --caddy-bridge).
+    #[arg(long, default_value = "/etc/membrane/Caddyfile")]
+    caddyfile_path: PathBuf,
+
+    /// Caddy reload command (used with --caddy-bridge).
+    #[arg(
+        long,
+        default_value = "/opt/membrane/caddy reload --config /etc/membrane/Caddyfile --address localhost:2019"
+    )]
+    caddy_reload_cmd: String,
+
+    /// IP TTL in seconds for Caddy bridge (how long fleet IPs stay blocked).
+    #[arg(long, default_value_t = 3600)]
+    ip_ttl_secs: u64,
 }
 
 #[tokio::main]
@@ -104,6 +124,8 @@ struct TailState {
     lines_read: u64,
     lines_failed: u64,
     observations_sent: u64,
+    fleet_posture: DefensePosture,
+    fleet_escalations: u64,
 }
 
 async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64), IngestError> {
@@ -161,6 +183,24 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             cli.fleet_target_host.clone(),
         ))
     };
+
+    let mut caddy_bridge = if cli.caddy_bridge {
+        tracing::info!(
+            caddyfile = %cli.caddyfile_path.display(),
+            "Caddy bridge enabled — posture-aware fleet directives"
+        );
+        Some(caddy_bridge::CaddyBridge::new(
+            caddy_bridge::CaddyBridgeConfig {
+                caddyfile_path: cli.caddyfile_path.clone(),
+                caddy_reload_cmd: cli.caddy_reload_cmd.clone(),
+                ip_ttl_secs: cli.ip_ttl_secs,
+                ..Default::default()
+            },
+        ))
+    } else {
+        None
+    };
+
     let poll_interval = Duration::from_millis(cli.poll_ms);
 
     let mut line_buf = String::new();
@@ -169,6 +209,8 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         lines_read: 0,
         lines_failed: 0,
         observations_sent: 0,
+        fleet_posture: DefensePosture::Observe,
+        fleet_escalations: 0,
     };
 
     let shutdown = tokio::signal::ctrl_c();
@@ -192,6 +234,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     line_buf.trim(),
                     &mut aggregator,
                     fleet_agg.as_mut(),
+                    caddy_bridge.as_mut(),
                     &mut rpc,
                     &mut state,
                     cli.dry_run,
@@ -227,15 +270,15 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     }
 
     if let Some(ref mut fleet) = fleet_agg {
-        if let Some(fleet_obs) = fleet.flush_remaining() {
+        if let Some(result) = fleet.flush_remaining() {
             if !cli.dry_run {
-                if let Err(e) = rpc.fleet_observe(&fleet_obs).await {
+                if let Err(e) = rpc.fleet_observe(&result.observation).await {
                     tracing::warn!(error = %e, "final fleet observe failed");
                 }
             } else {
                 tracing::info!(
-                    requests = fleet_obs.total_requests,
-                    ips = fleet_obs.unique_ips,
+                    requests = result.observation.total_requests,
+                    ips = result.observation.unique_ips,
                     "[dry-run] would send fleet observation"
                 );
             }
@@ -259,6 +302,7 @@ async fn process_line(
     trimmed: &str,
     aggregator: &mut aggregator::Aggregator,
     fleet_agg: Option<&mut fleet::FleetAggregator>,
+    bridge: Option<&mut caddy_bridge::CaddyBridge>,
     rpc: &mut rpc::RpcClient,
     state: &mut TailState,
     dry_run: bool,
@@ -298,9 +342,10 @@ async fn process_line(
         }
     }
 
-    // Population-level fleet aggregation
+    // Population-level fleet aggregation + escalation pipeline
     if let Some(fleet) = fleet_agg {
-        if let Some(fleet_obs) = fleet.ingest(&entry) {
+        if let Some(result) = fleet.ingest(&entry) {
+            let fleet_obs = &result.observation;
             if dry_run {
                 tracing::info!(
                     requests = fleet_obs.total_requests,
@@ -310,18 +355,80 @@ async fn process_line(
                     hides_id = fleet_obs.deception.hides_identity,
                     "[dry-run] would send fleet observation"
                 );
-            } else {
-                match rpc.fleet_observe(&fleet_obs).await {
-                    Ok(()) => {
-                        tracing::info!(
-                            requests = fleet_obs.total_requests,
-                            ips = fleet_obs.unique_ips,
-                            "fleet observation sent"
+                return;
+            }
+
+            // Step 1: Feed observation to skunkBat (may generate antibody)
+            if let Err(e) = rpc.fleet_observe(fleet_obs).await {
+                tracing::warn!(error = %e, "fleet observe failed");
+                return;
+            }
+            tracing::info!(
+                requests = fleet_obs.total_requests,
+                ips = fleet_obs.unique_ips,
+                "fleet observation sent"
+            );
+
+            // Step 2: Check which stored antibodies match this observation
+            let matched_ids = match rpc.fleet_match(fleet_obs).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::warn!(error = %e, "fleet.match failed");
+                    return;
+                }
+            };
+
+            if matched_ids.is_empty() {
+                return;
+            }
+
+            tracing::info!(
+                matched = matched_ids.len(),
+                "fleet antibodies matched — ticking escalation"
+            );
+
+            // Step 3: Tick the escalation engine (tit-for-tat)
+            match rpc.fleet_tick(&matched_ids).await {
+                Ok(events) => {
+                    for event in &events {
+                        // Track the highest posture we've reached
+                        if event.to > state.fleet_posture {
+                            state.fleet_posture = event.to;
+                        }
+                        state.fleet_escalations += 1;
+
+                        tracing::warn!(
+                            antibody = %event.antibody_id,
+                            from = %event.from,
+                            to = %event.to,
+                            defections = event.defection_count,
+                            reason = %event.reason,
+                            "🦨 POSTURE ESCALATION"
                         );
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "fleet observe failed");
+
+                    // Step 4: Inject fleet IPs into CaddyBridge at current posture
+                    if let Some(bridge) = bridge {
+                        bridge.add_fleet_ips(&result.ips, state.fleet_posture);
+
+                        match bridge.sync() {
+                            Ok(true) => {
+                                tracing::info!(
+                                    posture = %state.fleet_posture,
+                                    ips = result.ips.len(),
+                                    tracked = bridge.tracked_count(),
+                                    "🦨 Caddy updated — fleet posture applied"
+                                );
+                            }
+                            Ok(false) => {}
+                            Err(e) => {
+                                tracing::error!(error = %e, "Caddy bridge sync failed");
+                            }
+                        }
                     }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "fleet.tick failed");
                 }
             }
         }
