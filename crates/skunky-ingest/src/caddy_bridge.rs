@@ -21,8 +21,8 @@
 //!
 //! IPs expire after `ip_ttl` seconds without a new match.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use cellmembrane_types::fleet::DefensePosture;
@@ -66,16 +66,62 @@ pub struct CaddyBridge {
     config: CaddyBridgeConfig,
     tracked_ips: HashMap<String, TrackedIp>,
     last_written: Vec<String>,
+    /// Negative selection: IPs that must never be blocked (self-tolerance).
+    /// Loaded from a file at startup. Any IP in this set is silently
+    /// filtered from `add_fleet_ips` — the thymus catches autoimmune
+    /// antibodies before they can attack self.
+    self_ips: HashSet<String>,
+}
+
+/// Load self-IPs from a file (one IP per line, `#` comments, blank lines OK).
+///
+/// This is the negative selection step: any IP listed here will never be
+/// added to fleet block lists, preventing autoimmune responses against
+/// known infrastructure.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read (missing file returns empty set).
+pub fn load_self_ips(path: &Path) -> HashSet<String> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => {
+            let ips: HashSet<String> = content
+                .lines()
+                .map(|line| line.split('#').next().unwrap_or("").trim())
+                .filter(|ip| !ip.is_empty())
+                .map(String::from)
+                .collect();
+            tracing::info!(
+                count = ips.len(),
+                path = %path.display(),
+                "thymic negative selection loaded — {} self-IPs protected",
+                ips.len()
+            );
+            ips
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %path.display(),
+                "self-IPs file not found — negative selection disabled (all IPs vulnerable)"
+            );
+            HashSet::new()
+        }
+    }
 }
 
 impl CaddyBridge {
-    /// Create a new Caddy bridge.
+    /// Create a new Caddy bridge with self-tolerance (negative selection).
+    ///
+    /// `self_ips` contains IPs that must never be blocked. Pass an empty set
+    /// to disable negative selection (not recommended in production).
     #[must_use]
-    pub fn new(config: CaddyBridgeConfig) -> Self {
+    pub fn new(config: CaddyBridgeConfig, self_ips: HashSet<String>) -> Self {
         Self {
             config,
             tracked_ips: HashMap::new(),
             last_written: Vec::new(),
+            self_ips,
         }
     }
 
@@ -84,9 +130,19 @@ impl CaddyBridge {
     /// Called when `fleet.match` returns matching antibody IDs. The posture
     /// determines what Caddy directive is written (403/429/scatter/abort).
     /// Escalates posture if the same IP is already tracked at a lower level.
+    ///
+    /// **Negative selection**: Any IP in the `self_ips` set is silently
+    /// filtered — the thymus catches autoimmune antibodies before they
+    /// can attack self.
     pub fn add_fleet_ips(&mut self, ips: &[String], posture: DefensePosture) {
         let now = SystemTime::now();
+        let mut self_filtered = 0u32;
         for ip in ips {
+            // Negative selection — protect self
+            if self.self_ips.contains(ip.as_str()) {
+                self_filtered += 1;
+                continue;
+            }
             self.tracked_ips
                 .entry(ip.clone())
                 .and_modify(|t| {
@@ -99,6 +155,13 @@ impl CaddyBridge {
                     last_seen: now,
                     posture,
                 });
+        }
+        if self_filtered > 0 {
+            tracing::info!(
+                filtered = self_filtered,
+                "🧬 negative selection: {} self-IP(s) protected from fleet antibodies",
+                self_filtered
+            );
         }
     }
 
@@ -331,7 +394,7 @@ mod tests {
             ip_ttl_secs: 3600,
             ..Default::default()
         };
-        let mut bridge = CaddyBridge::new(config);
+        let mut bridge = CaddyBridge::new(config, HashSet::new());
 
         bridge.add_fleet_ips(
             &["57.141.20.1".to_string(), "57.141.20.2".to_string()],
@@ -350,7 +413,7 @@ mod tests {
             caddyfile_path: PathBuf::from("/tmp/nonexistent"),
             caddy_reload_cmd: "true".to_string(),
             ..Default::default()
-        });
+        }, HashSet::new());
 
         bridge.add_fleet_ips(&["1.2.3.4".to_string()], DefensePosture::WarnRoute);
         assert_eq!(bridge.tracked_ips["1.2.3.4"].posture, DefensePosture::WarnRoute);
@@ -371,7 +434,7 @@ mod tests {
             ip_ttl_secs: 0,
             ..Default::default()
         };
-        let mut bridge = CaddyBridge::new(config);
+        let mut bridge = CaddyBridge::new(config, HashSet::new());
 
         bridge.add_fleet_ips(&["1.2.3.4".to_string()], DefensePosture::WarnRoute);
         std::thread::sleep(Duration::from_millis(10));
@@ -389,7 +452,7 @@ mod tests {
             f.write_all(test_caddyfile_content().as_bytes()).unwrap();
         }
 
-        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
         bridge.add_fleet_ips(
             &["57.141.20.1".to_string(), "57.141.20.2".to_string()],
             DefensePosture::WarnRoute,
@@ -409,7 +472,7 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
         bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::SlowDegrade);
         bridge.write_caddyfile().unwrap();
 
@@ -425,7 +488,7 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
         bridge.add_fleet_ips(&["10.0.0.2".to_string()], DefensePosture::Scatter);
         bridge.write_caddyfile().unwrap();
 
@@ -440,7 +503,7 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
         bridge.add_fleet_ips(&["10.0.0.3".to_string()], DefensePosture::Vanish);
         bridge.write_caddyfile().unwrap();
 
@@ -455,7 +518,7 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
         bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::WarnRoute);
         bridge.add_fleet_ips(&["10.0.0.2".to_string()], DefensePosture::Vanish);
         bridge.add_fleet_ips(&["10.0.0.3".to_string()], DefensePosture::Scatter);
@@ -476,7 +539,7 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()));
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
         bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::Observe);
         bridge.write_caddyfile().unwrap();
 
@@ -490,9 +553,62 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let mut bridge = CaddyBridge::new(test_config(caddyfile));
+        let mut bridge = CaddyBridge::new(test_config(caddyfile), HashSet::new());
         let changed = bridge.sync().unwrap();
         assert!(!changed);
+    }
+
+    #[test]
+    fn negative_selection_filters_self_ips() {
+        let self_ips: HashSet<String> =
+            ["10.13.37.1", "162.226.225.148"].iter().map(|s| s.to_string()).collect();
+        let mut bridge = CaddyBridge::new(
+            CaddyBridgeConfig {
+                caddyfile_path: PathBuf::from("/tmp/nonexistent"),
+                caddy_reload_cmd: "true".to_string(),
+                ..Default::default()
+            },
+            self_ips,
+        );
+
+        bridge.add_fleet_ips(
+            &[
+                "57.141.20.1".to_string(),  // fleet — should be tracked
+                "162.226.225.148".to_string(),  // self — should be filtered
+                "10.13.37.1".to_string(),  // self — should be filtered
+                "57.141.20.2".to_string(),  // fleet — should be tracked
+            ],
+            DefensePosture::Vanish,
+        );
+
+        assert_eq!(bridge.tracked_count(), 2);
+        assert!(bridge.tracked_ips.contains_key("57.141.20.1"));
+        assert!(bridge.tracked_ips.contains_key("57.141.20.2"));
+        assert!(!bridge.tracked_ips.contains_key("162.226.225.148"));
+        assert!(!bridge.tracked_ips.contains_key("10.13.37.1"));
+    }
+
+    #[test]
+    #[test]
+    fn negative_selection_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let self_file = dir.path().join("self-ips.txt");
+        std::fs::write(
+            &self_file,
+            "# Known infrastructure\n\
+             162.226.225.148  # sporeGate WAN\n\
+             10.13.37.1       # golgiBody wg0\n\
+             \n\
+             # golgiBody\n\
+             157.230.3.183    # this server\n",
+        )
+        .unwrap();
+
+        let self_ips = load_self_ips(&self_file);
+        assert_eq!(self_ips.len(), 3);
+        assert!(self_ips.contains("162.226.225.148"));
+        assert!(self_ips.contains("10.13.37.1"));
+        assert!(self_ips.contains("157.230.3.183"));
     }
 
     #[test]
@@ -501,7 +617,7 @@ mod tests {
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        let mut bridge = CaddyBridge::new(test_config(caddyfile));
+        let mut bridge = CaddyBridge::new(test_config(caddyfile), HashSet::new());
         bridge.add_fleet_ips(&["57.141.20.1".to_string()], DefensePosture::WarnRoute);
         let changed = bridge.sync().unwrap();
         assert!(changed);

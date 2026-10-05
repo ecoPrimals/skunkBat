@@ -91,6 +91,12 @@ struct Cli {
     /// IP TTL in seconds for Caddy bridge (how long fleet IPs stay blocked).
     #[arg(long, default_value_t = 3600)]
     ip_ttl_secs: u64,
+
+    /// Path to self-IPs file for thymic negative selection.
+    /// One IP per line, `#` comments allowed. IPs in this file
+    /// will never be added to fleet block lists.
+    #[arg(long, default_value = "/etc/membrane/self-ips.txt")]
+    self_ips_file: PathBuf,
 }
 
 #[tokio::main]
@@ -185,9 +191,11 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     };
 
     let mut caddy_bridge = if cli.caddy_bridge {
+        let self_ips = caddy_bridge::load_self_ips(&cli.self_ips_file);
         tracing::info!(
             caddyfile = %cli.caddyfile_path.display(),
-            "Caddy bridge enabled — posture-aware fleet directives"
+            self_ips = self_ips.len(),
+            "Caddy bridge enabled — posture-aware fleet directives with negative selection"
         );
         Some(caddy_bridge::CaddyBridge::new(
             caddy_bridge::CaddyBridgeConfig {
@@ -196,6 +204,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                 ip_ttl_secs: cli.ip_ttl_secs,
                 ..Default::default()
             },
+            self_ips,
         ))
     } else {
         None
