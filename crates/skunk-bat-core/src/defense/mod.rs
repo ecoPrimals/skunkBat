@@ -3,7 +3,9 @@
 
 //! Automated defense for skunkBat.
 //!
-//! Provides threat response, quarantine, and self-healing.
+//! Provides threat response, quarantine, self-healing, and antibody memory.
+
+pub mod antibodies;
 
 use crate::SkunkBatConfig;
 use crate::error::SkunkBatError;

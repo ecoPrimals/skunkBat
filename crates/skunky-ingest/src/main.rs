@@ -11,9 +11,11 @@
 
 mod aggregator;
 mod caddy;
+pub mod caddy_bridge;
 mod cloudflare;
 mod cursor;
 mod error;
+pub mod fleet;
 mod rpc;
 
 use error::IngestError;
@@ -64,6 +66,11 @@ struct Cli {
     /// Cloudflare analytics poll interval in seconds.
     #[arg(long, default_value_t = 300)]
     cf_poll_secs: u64,
+
+    /// Target host for fleet detection (population-level analysis).
+    /// Empty string disables fleet aggregation.
+    #[arg(long, default_value = "git.primals")]
+    fleet_target_host: String,
 }
 
 #[tokio::main]
@@ -145,6 +152,15 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
 
     let mut rpc = rpc::RpcClient::new(cli.skunkbat_addr.clone());
     let mut aggregator = aggregator::Aggregator::new(Duration::from_secs(cli.window_secs));
+    let mut fleet_agg = if cli.fleet_target_host.is_empty() {
+        None
+    } else {
+        tracing::info!(host = %cli.fleet_target_host, "fleet aggregation enabled");
+        Some(fleet::FleetAggregator::new(
+            Duration::from_secs(cli.window_secs),
+            cli.fleet_target_host.clone(),
+        ))
+    };
     let poll_interval = Duration::from_millis(cli.poll_ms);
 
     let mut line_buf = String::new();
@@ -175,6 +191,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                 process_line(
                     line_buf.trim(),
                     &mut aggregator,
+                    fleet_agg.as_mut(),
                     &mut rpc,
                     &mut state,
                     cli.dry_run,
@@ -209,6 +226,22 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         }
     }
 
+    if let Some(ref mut fleet) = fleet_agg {
+        if let Some(fleet_obs) = fleet.flush_remaining() {
+            if !cli.dry_run {
+                if let Err(e) = rpc.fleet_observe(&fleet_obs).await {
+                    tracing::warn!(error = %e, "final fleet observe failed");
+                }
+            } else {
+                tracing::info!(
+                    requests = fleet_obs.total_requests,
+                    ips = fleet_obs.unique_ips,
+                    "[dry-run] would send fleet observation"
+                );
+            }
+        }
+    }
+
     cursor::save(&cli.cursor_path, state.byte_offset).await?;
 
     tracing::info!(
@@ -225,6 +258,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
 async fn process_line(
     trimmed: &str,
     aggregator: &mut aggregator::Aggregator,
+    fleet_agg: Option<&mut fleet::FleetAggregator>,
     rpc: &mut rpc::RpcClient,
     state: &mut TailState,
     dry_run: bool,
@@ -241,6 +275,7 @@ async fn process_line(
 
     state.lines_read += 1;
 
+    // Per-IP aggregation
     let observations = aggregator.ingest(&entry);
     for obs in &observations {
         if dry_run {
@@ -258,6 +293,35 @@ async fn process_line(
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "observe failed (dropped, next window is fresh)");
+                }
+            }
+        }
+    }
+
+    // Population-level fleet aggregation
+    if let Some(fleet) = fleet_agg {
+        if let Some(fleet_obs) = fleet.ingest(&entry) {
+            if dry_run {
+                tracing::info!(
+                    requests = fleet_obs.total_requests,
+                    ips = fleet_obs.unique_ips,
+                    ua_count = fleet_obs.ua_fingerprint.ua_count,
+                    commit_pct = %format!("{:.1}%", fleet_obs.path_pattern.commit_url_pct * 100.0),
+                    hides_id = fleet_obs.deception.hides_identity,
+                    "[dry-run] would send fleet observation"
+                );
+            } else {
+                match rpc.fleet_observe(&fleet_obs).await {
+                    Ok(()) => {
+                        tracing::info!(
+                            requests = fleet_obs.total_requests,
+                            ips = fleet_obs.unique_ips,
+                            "fleet observation sent"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "fleet observe failed");
+                    }
                 }
             }
         }

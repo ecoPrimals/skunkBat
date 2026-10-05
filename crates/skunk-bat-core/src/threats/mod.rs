@@ -21,6 +21,7 @@
 pub mod baseline;
 mod behavioral;
 mod detection;
+pub mod fleet;
 mod genetic;
 pub mod traits;
 pub mod types;

@@ -60,7 +60,7 @@ pub struct GossipVerdict {
     pub checks: Vec<GossipCheckResult>,
 }
 
-const VALID_TOPICS: &[&str] = &["tower", "data", "compute"];
+const VALID_TOPICS: &[&str] = &["tower", "data", "compute", "defense"];
 const MAX_KEY_LEN: usize = 256;
 const MAX_PAYLOAD_BYTES: usize = 16_384;
 const MAX_TTL: u8 = 16;
@@ -74,7 +74,7 @@ pub fn analyze_gossip_entry(
     entry: &GossipEntryParams,
     is_quarantined: impl Fn(&str) -> bool,
 ) -> GossipVerdict {
-    let checks = vec![
+    let mut checks = vec![
         check_topic(entry),
         check_key_format(entry),
         check_origin_identity(entry),
@@ -84,6 +84,10 @@ pub fn analyze_gossip_entry(
         check_lifetime(entry),
         check_quarantine(&entry.origin_gate, &is_quarantined),
     ];
+
+    if entry.topic == "defense" {
+        checks.push(check_defense_entry(entry));
+    }
 
     let failed: Vec<&GossipCheckResult> = checks.iter().filter(|c| !c.passed).collect();
 
@@ -252,6 +256,55 @@ fn check_lifetime(entry: &GossipEntryParams) -> GossipCheckResult {
     }
 }
 
+/// Defense-topic validation: antibody entries must have valid structure.
+///
+/// Key format: `defense.antibody:<id>`.
+/// Payload must deserialize to a `FleetAntibody` with valid confidence.
+fn check_defense_entry(entry: &GossipEntryParams) -> GossipCheckResult {
+    if !entry.key.starts_with("defense.antibody:") {
+        return GossipCheckResult {
+            check: "defense_key_format".to_owned(),
+            passed: false,
+            detail: Some(format!(
+                "defense topic key must start with 'defense.antibody:', got '{}'",
+                entry.key
+            )),
+        };
+    }
+
+    let antibody: Result<cellmembrane_types::fleet::FleetAntibody, _> =
+        serde_json::from_value(entry.payload.clone());
+
+    match antibody {
+        Ok(ab) => {
+            if ab.confidence < 0.0 || ab.confidence > 1.0 {
+                GossipCheckResult {
+                    check: "defense_antibody_valid".to_owned(),
+                    passed: false,
+                    detail: Some(format!("antibody confidence out of range: {}", ab.confidence)),
+                }
+            } else if ab.id.is_empty() {
+                GossipCheckResult {
+                    check: "defense_antibody_valid".to_owned(),
+                    passed: false,
+                    detail: Some("antibody has empty id".to_owned()),
+                }
+            } else {
+                GossipCheckResult {
+                    check: "defense_antibody_valid".to_owned(),
+                    passed: true,
+                    detail: None,
+                }
+            }
+        }
+        Err(e) => GossipCheckResult {
+            check: "defense_antibody_valid".to_owned(),
+            passed: false,
+            detail: Some(format!("invalid antibody payload: {e}")),
+        },
+    }
+}
+
 fn check_quarantine(
     origin_gate: &str,
     is_quarantined: &impl Fn(&str) -> bool,
@@ -411,12 +464,48 @@ mod tests {
     }
 
     #[test]
-    fn all_three_topics_valid() {
+    fn all_four_topics_valid() {
         for topic in &["tower", "data", "compute"] {
             let e = entry(topic, "test.key", "sporeGate");
             let v = analyze_gossip_entry(&e, no_quarantine);
             assert_eq!(v.verdict, super::super::Verdict::Allow, "topic={topic}");
         }
+    }
+
+    #[test]
+    fn defense_antibody_entry_valid() {
+        let antibody = serde_json::json!({
+            "id": "fleet-test-001",
+            "ua_fingerprint": {"ua_count": 2, "top_ua_pct": 0.5, "platform_split": [0.5, 0.5, 0.0]},
+            "timing": {"mean_interval_ms": 6000, "interval_cv": 0.15},
+            "path_pattern": {"commit_url_pct": 0.9, "single_page_pct": 0.95, "has_referrer_pct": 0.0},
+            "deception": {"hides_identity": true, "rotates_ips": true, "ignores_rejection": true, "encoding_uniform": true},
+            "confidence": 0.85,
+            "first_seen_epoch": 1000,
+            "last_matched_epoch": 2000,
+            "match_count": 5
+        });
+        let mut e = entry("defense", "defense.antibody:fleet-test-001", "sporeGate");
+        e.payload = antibody;
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Allow);
+    }
+
+    #[test]
+    fn defense_bad_key_format_warns() {
+        let antibody = serde_json::json!({"id": "test"});
+        let mut e = entry("defense", "defense.quarantine:bad", "sporeGate");
+        e.payload = antibody;
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Warn);
+    }
+
+    #[test]
+    fn defense_invalid_payload_warns() {
+        let mut e = entry("defense", "defense.antibody:bad", "sporeGate");
+        e.payload = serde_json::json!({"not": "an antibody"});
+        let v = analyze_gossip_entry(&e, no_quarantine);
+        assert_eq!(v.verdict, super::super::Verdict::Warn);
     }
 
     #[test]

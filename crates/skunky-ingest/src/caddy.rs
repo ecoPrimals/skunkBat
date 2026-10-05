@@ -32,23 +32,24 @@ pub struct RequestInfo {
     pub method: String,
     /// Deserialized for future user-agent fingerprinting (Phase 2).
     #[serde(default)]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Phase 2: scanner fingerprinting")
-    )]
     pub headers: Headers,
 }
 
 /// HTTP headers — only fields we care about.
 #[derive(Debug, Default, Deserialize)]
 pub struct Headers {
-    /// Deserialized for future scanner fingerprinting (Phase 2).
+    /// User-Agent for behavioral classification.
     #[serde(default, rename = "User-Agent")]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Phase 2: scanner fingerprinting")
-    )]
     pub user_agent: Vec<String>,
+    /// Accept-Encoding for fleet fingerprinting (encoding uniformity).
+    #[serde(default, rename = "Accept-Encoding")]
+    pub accept_encoding: Vec<String>,
+    /// Accept-Language for fleet fingerprinting (language uniformity).
+    #[serde(default, rename = "Accept-Language")]
+    pub accept_language: Vec<String>,
+    /// Referer for distinguishing organic browsing from direct-nav fleets.
+    #[serde(default, rename = "Referer")]
+    pub referer: Vec<String>,
 }
 
 /// Parse a single Caddy JSON log line.

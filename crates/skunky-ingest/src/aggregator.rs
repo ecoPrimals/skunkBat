@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
+use cellmembrane_types::visitor::{classify_request, VisitorClass};
 use serde::Serialize;
 
 use crate::caddy::LogEntry;
@@ -22,6 +23,8 @@ const DEFAULT_HTTPS_PORT: u16 = 443;
 /// on the wire — we serialize directly, no core crate dependency.
 #[derive(Debug, Serialize)]
 pub struct ObservationPayload {
+    /// Dominant visitor class for this IP bucket (Phase 2 behavioral classification).
+    pub visitor_class: String,
     pub connection_rate: f64,
     pub traffic_volume: u64,
     pub ports_accessed: Vec<u16>,
@@ -58,6 +61,7 @@ struct IpBucket {
     paths: HashSet<String>,
     methods: HashSet<String>,
     ports: HashSet<u16>,
+    class_counts: HashMap<VisitorClass, u64>,
 }
 
 impl IpBucket {
@@ -71,6 +75,7 @@ impl IpBucket {
             paths: HashSet::new(),
             methods: HashSet::new(),
             ports: HashSet::new(),
+            class_counts: HashMap::new(),
         }
     }
 
@@ -99,6 +104,19 @@ impl IpBucket {
             .and_then(|(_, p)| p.parse().ok())
             .unwrap_or(DEFAULT_HTTPS_PORT);
         self.ports.insert(port);
+
+        let ua = entry.request.headers.user_agent.first().map_or("", |s| s.as_str());
+        let class = classify_request(ua, &entry.request.uri);
+        *self.class_counts.entry(class).or_insert(0) += 1;
+    }
+
+    /// Returns the dominant visitor class for this bucket.
+    fn dominant_class(&self) -> VisitorClass {
+        self.class_counts
+            .iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(class, _)| *class)
+            .unwrap_or(VisitorClass::Human)
     }
 }
 
@@ -172,6 +190,7 @@ impl Aggregator {
                 let total = bucket.request_count.max(1) as f64;
 
                 ObservationPayload {
+                    visitor_class: bucket.dominant_class().to_string(),
                     connection_rate: request_rate,
                     #[expect(
                         clippy::cast_possible_truncation,

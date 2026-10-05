@@ -1,0 +1,374 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
+//! Population-level fleet aggregation for stealth fleet detection.
+//!
+//! Unlike [`crate::aggregator::Aggregator`] which buckets per-IP, this
+//! module analyzes the **population** of requests in a time window to
+//! detect coordinated fleet patterns: UA uniformity, metronomic timing,
+//! commit-level URL concentration, and IP rotation signatures.
+//!
+//! Emits [`FleetObservation`] when a window closes, ready for
+//! `fleet.observe` JSON-RPC to skunkBat's `FleetDetector`.
+
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
+
+use cellmembrane_types::fleet::{
+    DeceptionSignals, FleetObservation, PathPattern, TimingSignature, UaFingerprint,
+};
+
+use crate::caddy::LogEntry;
+
+/// Population-level fleet aggregator.
+///
+/// Collects all requests to a target host (e.g. `git.primals.eco`) in
+/// a time window and computes population statistics that reveal fleet
+/// behavior invisible at the per-IP level.
+pub struct FleetAggregator {
+    window: Duration,
+    window_start: f64,
+    target_host: String,
+    entries: Vec<FleetEntry>,
+}
+
+/// Minimal per-request record for fleet analysis.
+struct FleetEntry {
+    ua: String,
+    path: String,
+    ts: f64,
+    status: u16,
+    ip: String,
+    has_referer: bool,
+    accept_encoding: String,
+    accept_language: String,
+}
+
+impl FleetAggregator {
+    /// Create a new fleet aggregator for a specific host.
+    pub fn new(window: Duration, target_host: String) -> Self {
+        Self {
+            window,
+            window_start: 0.0,
+            target_host,
+            entries: Vec::with_capacity(256),
+        }
+    }
+
+    /// Ingest a log entry. Returns a `FleetObservation` if the window closes.
+    pub fn ingest(&mut self, entry: &LogEntry) -> Option<FleetObservation> {
+        if !entry.request.host.contains(&self.target_host) {
+            return None;
+        }
+
+        let window_secs = self.window.as_secs_f64();
+        if self.window_start == 0.0 {
+            self.window_start = entry.ts;
+        }
+
+        if entry.ts >= self.window_start + window_secs {
+            let obs = self.flush();
+            self.window_start = entry.ts;
+            self.entries.clear();
+            self.record(entry);
+            obs
+        } else {
+            self.record(entry);
+            None
+        }
+    }
+
+    /// Force-flush the current window.
+    pub fn flush_remaining(&mut self) -> Option<FleetObservation> {
+        let obs = self.flush();
+        self.entries.clear();
+        obs
+    }
+
+    fn record(&mut self, entry: &LogEntry) {
+        let ua = entry
+            .request
+            .headers
+            .user_agent
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let has_referer = entry
+            .request
+            .headers
+            .referer
+            .first()
+            .is_some_and(|r| !r.is_empty());
+        let accept_encoding = entry
+            .request
+            .headers
+            .accept_encoding
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let accept_language = entry
+            .request
+            .headers
+            .accept_language
+            .first()
+            .cloned()
+            .unwrap_or_default();
+
+        self.entries.push(FleetEntry {
+            ua,
+            path: entry.request.uri.clone(),
+            ts: entry.ts,
+            status: entry.status,
+            ip: entry.request.remote_ip.clone(),
+            has_referer,
+            accept_encoding,
+            accept_language,
+        });
+    }
+
+    fn flush(&self) -> Option<FleetObservation> {
+        if self.entries.len() < 5 {
+            return None;
+        }
+
+        let total_requests = self.entries.len() as u64;
+
+        // UA distribution
+        let mut ua_counts: HashMap<&str, u32> = HashMap::new();
+        let mut platform_mac = 0u32;
+        let mut platform_win = 0u32;
+        let mut platform_linux = 0u32;
+        for e in &self.entries {
+            *ua_counts.entry(&e.ua).or_insert(0) += 1;
+            let ua_lower = e.ua.to_lowercase();
+            if ua_lower.contains("macintosh") {
+                platform_mac += 1;
+            } else if ua_lower.contains("windows") {
+                platform_win += 1;
+            } else if ua_lower.contains("linux") || ua_lower.contains("x11") {
+                platform_linux += 1;
+            }
+        }
+        let ua_count = ua_counts.len().min(255) as u8;
+        let top_ua_count = ua_counts.values().max().copied().unwrap_or(0);
+        let total_f = total_requests as f32;
+        let top_ua_pct = top_ua_count as f32 / total_f;
+        let platform_total = (platform_mac + platform_win + platform_linux).max(1) as f32;
+        let platform_split = [
+            platform_mac as f32 / platform_total,
+            platform_win as f32 / platform_total,
+            platform_linux as f32 / platform_total,
+        ];
+
+        // Unique IPs
+        let unique_ips: HashSet<&str> = self.entries.iter().map(|e| e.ip.as_str()).collect();
+        let unique_ip_count = unique_ips.len() as u32;
+
+        // Timing analysis
+        let mut timestamps: Vec<f64> = self.entries.iter().map(|e| e.ts).collect();
+        timestamps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let intervals: Vec<f64> = timestamps.windows(2).map(|w| (w[1] - w[0]) * 1000.0).collect();
+        let (mean_interval_ms, interval_cv) = if intervals.is_empty() {
+            (0, 0.0)
+        } else {
+            let mean = intervals.iter().sum::<f64>() / intervals.len() as f64;
+            let variance =
+                intervals.iter().map(|i| (i - mean).powi(2)).sum::<f64>() / intervals.len() as f64;
+            let std_dev = variance.sqrt();
+            let cv = if mean > 0.0 { std_dev / mean } else { 0.0 };
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "mean_interval_ms is bounded by window size"
+            )]
+            (mean.min(u32::MAX as f64) as u32, cv as f32)
+        };
+
+        // Path patterns
+        let commit_urls = self
+            .entries
+            .iter()
+            .filter(|e| e.path.contains("/commit/"))
+            .count();
+        let commit_url_pct = commit_urls as f32 / total_f;
+
+        // Session depth: per-IP page count
+        let mut pages_per_ip: HashMap<&str, u32> = HashMap::new();
+        for e in &self.entries {
+            *pages_per_ip.entry(&e.ip).or_insert(0) += 1;
+        }
+        let single_page_ips = pages_per_ip.values().filter(|&&c| c == 1).count();
+        let single_page_pct = single_page_ips as f32 / unique_ip_count.max(1) as f32;
+
+        // Referrer presence
+        let with_referer = self.entries.iter().filter(|e| e.has_referer).count();
+        let has_referrer_pct = with_referer as f32 / total_f;
+
+        // Deception signals
+        let hides_identity = ua_count <= 4 && top_ua_pct > 0.3 && total_requests > 20;
+
+        let rotates_ips = single_page_pct > 0.8 && unique_ip_count > 10;
+
+        let rejected = self
+            .entries
+            .iter()
+            .filter(|e| e.status == 403 || e.status == 429)
+            .count();
+        let rejected_ips_set: HashSet<&str> = self
+            .entries
+            .iter()
+            .filter(|e| e.status == 403 || e.status == 429)
+            .map(|e| e.ip.as_str())
+            .collect();
+        let ignores_rejection = rejected > 10 && rejected as f32 / total_f > 0.5;
+
+        // Encoding uniformity
+        let mut enc_counts: HashMap<&str, u32> = HashMap::new();
+        let mut lang_counts: HashMap<&str, u32> = HashMap::new();
+        for e in &self.entries {
+            *enc_counts.entry(&e.accept_encoding).or_insert(0) += 1;
+            *lang_counts.entry(&e.accept_language).or_insert(0) += 1;
+        }
+        let top_enc_pct = enc_counts
+            .values()
+            .max()
+            .copied()
+            .unwrap_or(0) as f32
+            / total_f;
+        let top_lang_pct = lang_counts
+            .values()
+            .max()
+            .copied()
+            .unwrap_or(0) as f32
+            / total_f;
+        let encoding_uniform = top_enc_pct > 0.9 && top_lang_pct > 0.9 && total_requests > 20;
+
+        // Depth distribution
+        let d1 = pages_per_ip.values().filter(|&&c| c == 1).count() as u32;
+        let d2 = pages_per_ip.values().filter(|&&c| (2..=3).contains(&c)).count() as u32;
+        let d3 = pages_per_ip.values().filter(|&&c| (4..=10).contains(&c)).count() as u32;
+        let d4 = pages_per_ip.values().filter(|&&c| c > 10).count() as u32;
+
+        let ts_epoch = timestamps.last().copied().unwrap_or(0.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "epoch seconds fit in u64"
+        )]
+        let timestamp_epoch = ts_epoch as u64;
+
+        Some(FleetObservation {
+            timestamp_epoch,
+            total_requests,
+            unique_ips: unique_ip_count,
+            ua_fingerprint: UaFingerprint {
+                ua_count,
+                top_ua_pct,
+                platform_split,
+            },
+            timing: TimingSignature {
+                mean_interval_ms,
+                interval_cv,
+            },
+            path_pattern: PathPattern {
+                commit_url_pct,
+                single_page_pct,
+                has_referrer_pct,
+            },
+            deception: DeceptionSignals {
+                hides_identity,
+                rotates_ips,
+                ignores_rejection,
+                encoding_uniform,
+            },
+            depth_distribution: [d1, d2, d3, d4],
+            rejected_ips: rejected_ips_set.len() as u32,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::caddy::{Headers, RequestInfo};
+
+    fn make_fleet_entry(ip: &str, ua: &str, path: &str, status: u16, ts: f64) -> LogEntry {
+        LogEntry {
+            request: RequestInfo {
+                remote_ip: ip.to_string(),
+                host: "git.primals.eco".to_string(),
+                uri: path.to_string(),
+                method: "GET".to_string(),
+                headers: Headers {
+                    user_agent: vec![ua.to_string()],
+                    accept_encoding: vec!["gzip, deflate, br".to_string()],
+                    accept_language: vec!["en-US,en;q=0.9".to_string()],
+                    referer: vec![],
+                },
+            },
+            status,
+            size: 512,
+            duration: 0.01,
+            ts,
+        }
+    }
+
+    #[test]
+    fn fleet_aggregator_detects_stealth_fleet() {
+        let mut agg = FleetAggregator::new(Duration::from_secs(60), "git.primals".to_string());
+
+        let mac_ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+        let win_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+        // Simulate 30 fleet requests: rotating IPs, 2 UAs, commit URLs, metronomic
+        for i in 0..30 {
+            let ip = format!("57.141.20.{}", i);
+            let ua = if i % 2 == 0 { mac_ua } else { win_ua };
+            let path = format!(
+                "/ecoPrimals/wateringHole/src/commit/{:040x}/file",
+                i as u64
+            );
+            agg.ingest(&make_fleet_entry(&ip, ua, &path, 403, 100.0 + f64::from(i) * 2.0));
+        }
+
+        // Close the window
+        let obs = agg
+            .ingest(&make_fleet_entry("1.2.3.4", mac_ua, "/", 200, 200.0))
+            .expect("should produce observation");
+
+        assert_eq!(obs.total_requests, 30);
+        assert_eq!(obs.unique_ips, 30);
+        assert_eq!(obs.ua_fingerprint.ua_count, 2);
+        assert!(obs.ua_fingerprint.top_ua_pct > 0.49);
+        assert!(obs.path_pattern.commit_url_pct > 0.9);
+        assert!(obs.path_pattern.single_page_pct > 0.9);
+        assert!(obs.deception.hides_identity);
+        assert!(obs.deception.rotates_ips);
+        assert!(obs.deception.ignores_rejection);
+    }
+
+    #[test]
+    fn fleet_aggregator_ignores_other_hosts() {
+        let mut agg = FleetAggregator::new(Duration::from_secs(60), "git.primals".to_string());
+
+        let mut entry = make_fleet_entry("1.2.3.4", "Mozilla/5.0", "/", 200, 100.0);
+        entry.request.host = "detroit.primals.eco".to_string();
+        assert!(agg.ingest(&entry).is_none());
+    }
+
+    #[test]
+    fn fleet_aggregator_flush_remaining() {
+        let mut agg = FleetAggregator::new(Duration::from_secs(60), "git.primals".to_string());
+        for i in 0..10 {
+            agg.ingest(&make_fleet_entry(
+                &format!("10.0.0.{i}"),
+                "Mozilla/5.0",
+                "/",
+                200,
+                100.0 + f64::from(i),
+            ));
+        }
+        let obs = agg.flush_remaining().expect("should flush");
+        assert_eq!(obs.total_requests, 10);
+    }
+}

@@ -131,6 +131,9 @@ pub use observability::SecurityObserver;
 /// Audit log (JH-5 security event trail).
 pub use observability::audit_log::AuditLog;
 
+/// Re-export cellmembrane fleet types for server dispatch.
+pub use cellmembrane_types::fleet as fleet_types;
+
 /// The skunkBat primal.
 ///
 /// Generic over the lineage verifier — defaults to [`threats::LocalLineageVerifier`]
@@ -145,18 +148,27 @@ pub struct SkunkBat<L: threats::traits::LineageVerifier = threats::LocalLineageV
     defense: DefenseEngine,
     observer: SecurityObserver,
     audit_log: AuditLog,
+    fleet_detector: std::sync::Mutex<threats::fleet::FleetDetector>,
+    antibody_store: std::sync::Mutex<defense::antibodies::AntibodyStore>,
 }
 
 impl SkunkBat {
     /// Create a new skunkBat instance with default local verifier.
     #[must_use]
     pub fn new(config: SkunkBatConfig) -> Self {
+        let data_dir = if config.common.data_dir.is_empty() {
+            None
+        } else {
+            Some(config.common.data_dir.as_str())
+        };
         Self {
             reconnaissance: ReconnaissanceEngine::new(&config),
             threat_detector: ThreatDetector::new(&config),
             defense: DefenseEngine::new(&config),
             observer: SecurityObserver::new(&config),
             audit_log: AuditLog::with_capacity(config.thresholds.audit_log_capacity),
+            fleet_detector: std::sync::Mutex::new(threats::fleet::FleetDetector::new()),
+            antibody_store: std::sync::Mutex::new(defense::antibodies::AntibodyStore::new(data_dir)),
             config,
             state: PrimalState::Created,
         }
@@ -171,12 +183,19 @@ impl<L: threats::traits::LineageVerifier> SkunkBat<L> {
     /// no remote provider is discovered.
     #[must_use]
     pub fn with_verifier(config: SkunkBatConfig, verifier: L) -> Self {
+        let data_dir = if config.common.data_dir.is_empty() {
+            None
+        } else {
+            Some(config.common.data_dir.as_str())
+        };
         Self {
             reconnaissance: ReconnaissanceEngine::new(&config),
             threat_detector: ThreatDetector::with_lineage_verifier(&config, verifier),
             defense: DefenseEngine::new(&config),
             observer: SecurityObserver::new(&config),
             audit_log: AuditLog::with_capacity(config.thresholds.audit_log_capacity),
+            fleet_detector: std::sync::Mutex::new(threats::fleet::FleetDetector::new()),
+            antibody_store: std::sync::Mutex::new(defense::antibodies::AntibodyStore::new(data_dir)),
             config,
             state: PrimalState::Created,
         }
@@ -445,6 +464,59 @@ impl<L: threats::traits::LineageVerifier> SkunkBat<L> {
     #[must_use]
     pub fn state(&self) -> PrimalState {
         <Self as PrimalLifecycle>::state(self)
+    }
+
+    // ── Fleet Immune Methods ────────────────────────────────────────
+
+    /// Feed a population-level fleet observation into the detector.
+    ///
+    /// If a fleet pattern is detected, generates an antibody and stores it.
+    /// Returns the antibody if one was generated.
+    pub fn fleet_observe(
+        &self,
+        obs: cellmembrane_types::fleet::FleetObservation,
+    ) -> Option<cellmembrane_types::fleet::FleetAntibody> {
+        let antibody = self
+            .fleet_detector
+            .lock()
+            .ok()
+            .and_then(|mut detector| detector.analyze(obs))?;
+
+        if let Ok(mut store) = self.antibody_store.lock() {
+            store.insert(antibody.clone());
+        }
+        Some(antibody)
+    }
+
+    /// Get all active antibodies.
+    #[must_use]
+    pub fn fleet_antibodies(&self) -> Vec<cellmembrane_types::fleet::FleetAntibody> {
+        self.antibody_store
+            .lock()
+            .map(|store| store.snapshot())
+            .unwrap_or_default()
+    }
+
+    /// Check a fleet observation against stored antibodies.
+    ///
+    /// Returns IDs of matching antibodies.
+    pub fn fleet_match(
+        &self,
+        obs: &cellmembrane_types::fleet::FleetObservation,
+    ) -> Vec<String> {
+        self.antibody_store
+            .lock()
+            .map(|mut store| store.match_observation(obs))
+            .unwrap_or_default()
+    }
+
+    /// Run antibody confidence decay. Call periodically (e.g. hourly).
+    /// Returns the number of antibodies pruned.
+    pub fn fleet_decay(&self) -> usize {
+        self.antibody_store
+            .lock()
+            .map(|mut store| store.decay())
+            .unwrap_or(0)
     }
 }
 

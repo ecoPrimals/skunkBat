@@ -14,6 +14,7 @@
 
 mod dispatch;
 mod dispatch_composable;
+mod dispatch_fleet;
 mod dispatch_metadata;
 mod dispatch_security;
 mod jsonrpc;

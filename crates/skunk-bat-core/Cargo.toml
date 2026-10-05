@@ -11,6 +11,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+cellmembrane-types = { path = "../../../../gardens/cellMembrane/crates/cellmembrane-types" }
 tokio = { version = "1.40", features = ["sync"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
+use cellmembrane_types::fleet::FleetObservation;
+
 use crate::aggregator::ObservationPayload;
 use crate::error::IngestError;
 
@@ -21,10 +23,10 @@ const RIBOCIPHER_NDJSON: [u8; 2] = [0xEC, 0x01];
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Serialize)]
-struct RpcRequest<'a> {
+struct RpcRequest<'a, P: Serialize> {
     jsonrpc: &'static str,
     method: &'static str,
-    params: &'a ObservationPayload,
+    params: &'a P,
     id: u64,
 }
 
@@ -61,10 +63,22 @@ impl RpcClient {
     ///
     /// Reconnects automatically if the connection was lost.
     pub async fn observe(&mut self, obs: &ObservationPayload) -> Result<(), IngestError> {
+        self.call("baseline.observe", obs).await
+    }
+
+    /// Send a `fleet.observe` call with a population-level fleet observation.
+    ///
+    /// Reconnects automatically if the connection was lost.
+    pub async fn fleet_observe(&mut self, obs: &FleetObservation) -> Result<(), IngestError> {
+        self.call("fleet.observe", obs).await
+    }
+
+    /// Generic JSON-RPC 2.0 call.
+    async fn call<P: Serialize>(&mut self, method: &'static str, params: &P) -> Result<(), IngestError> {
         let req = RpcRequest {
             jsonrpc: "2.0",
-            method: "baseline.observe",
-            params: obs,
+            method,
+            params,
             id: REQUEST_ID.fetch_add(1, Ordering::Relaxed),
         };
 
@@ -137,6 +151,7 @@ mod tests {
     #[test]
     fn request_serializes_correctly() {
         let obs = ObservationPayload {
+            visitor_class: "human".to_string(),
             connection_rate: 1.5,
             traffic_volume: 4096,
             ports_accessed: vec![443],

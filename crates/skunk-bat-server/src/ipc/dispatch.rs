@@ -47,6 +47,9 @@ const METHODS: &[&str] = &[
     "auth.mode",
     "auth.peer_info",
     "metadata.analyze",
+    "fleet.observe",
+    "fleet.antibodies",
+    "fleet.match",
 ];
 
 /// Transport-layer methods handled by the connection handler before dispatch.
@@ -113,6 +116,7 @@ fn capabilities_response() -> serde_json::Value {
             { "type": "method_gate", "methods": ["status"] },
             { "type": "auth", "methods": ["check", "mode", "peer_info"] },
             { "type": "metadata", "methods": ["analyze"] },
+            { "type": "fleet", "methods": ["observe", "antibodies", "match"] },
             { "type": "lifecycle", "methods": ["state", "status", "capabilities"] },
             { "type": "btsp", "methods": ["negotiate", "capabilities"] },
         ],
@@ -197,6 +201,15 @@ pub(super) async fn dispatch(
         "threat.report" => super::dispatch_security::dispatch_threat_report(state, id).await,
         "metadata.analyze" => {
             super::dispatch_metadata::dispatch_metadata_analyze(state, id, request.params).await
+        }
+        "fleet.observe" => {
+            super::dispatch_fleet::dispatch_fleet_observe(state, id, request.params).await
+        }
+        "fleet.antibodies" => {
+            super::dispatch_fleet::dispatch_fleet_antibodies(state, id).await
+        }
+        "fleet.match" => {
+            super::dispatch_fleet::dispatch_fleet_match(state, id, request.params).await
         }
         "btsp.capabilities" => dispatch_btsp_capabilities(id),
         _ => Response::error(
