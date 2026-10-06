@@ -97,10 +97,9 @@ fn forward_to_swarmvine(
         .map_err(|e| format!("write newline: {e}"))?;
     writer.flush().map_err(|e| format!("flush: {e}"))?;
 
-    let reader = std::io::BufReader::new(&stream);
+    let mut reader = std::io::BufReader::new(&stream);
     let mut response_line = String::new();
     reader
-        .take(8192)
         .read_line(&mut response_line)
         .map_err(|e| format!("read response: {e}"))?;
 
