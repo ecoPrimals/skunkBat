@@ -246,21 +246,32 @@ async fn handle_request(
         .unwrap_or("/")
         .to_string();
 
-    // Consume remaining headers, extract X-Fleet-Hash for canary embedding
+    // Consume remaining headers, extract identity for canary embedding
     let mut header_line = String::new();
     let mut fleet_hash = String::new();
+    let mut real_ip = String::new();
     loop {
         header_line.clear();
         let n = buf_reader.read_line(&mut header_line).await?;
         if n == 0 || header_line.trim().is_empty() {
             break;
         }
-        if header_line.to_ascii_lowercase().starts_with("x-fleet-hash:") {
+        let lower = header_line.to_ascii_lowercase();
+        if lower.starts_with("x-fleet-hash:") {
             fleet_hash = header_line
                 .split_once(':')
                 .map(|(_, v)| v.trim().to_string())
                 .unwrap_or_default();
+        } else if lower.starts_with("x-real-ip:") {
+            real_ip = header_line
+                .split_once(':')
+                .map(|(_, v)| v.trim().to_string())
+                .unwrap_or_default();
         }
+    }
+    // Derive canary identity: prefer behavioral hash, fall back to IP hash
+    if fleet_hash.is_empty() && !real_ip.is_empty() {
+        fleet_hash = format!("{:016x}", path_deterministic_hash(&real_ip, 0xCA4A_4712_FEED));
     }
 
     // ── Layer 1: TARPIT — Caddy rewrites /tarpit{uri} for P2 SlowDegrade ──

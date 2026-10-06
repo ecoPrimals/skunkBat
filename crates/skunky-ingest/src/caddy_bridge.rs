@@ -261,14 +261,18 @@ impl CaddyBridge {
                 "\t@fleet_tarpit remote_ip {ip_list}\n\
                  \thandle @fleet_tarpit {{\n\
                  \t\trewrite * /tarpit{{uri}}\n\
-                 \t\treverse_proxy localhost:9753\n\
+                 \t\treverse_proxy localhost:9753 {{\n\
+                 \t\t\theader_up X-Real-IP {{remote_host}}\n\
+                 \t\t}}\n\
                  \t}}\n"
             ),
 
             DefensePosture::Scatter => format!(
                 "\t@fleet_scatter remote_ip {ip_list}\n\
                  \thandle @fleet_scatter {{\n\
-                 \t\treverse_proxy localhost:9753\n\
+                 \t\treverse_proxy localhost:9753 {{\n\
+                 \t\t\theader_up X-Real-IP {{remote_host}}\n\
+                 \t\t}}\n\
                  \t}}\n"
             ),
 
@@ -283,7 +287,9 @@ impl CaddyBridge {
                 "\t@fleet_disperse remote_ip {ip_list}\n\
                  \thandle @fleet_disperse {{\n\
                  \t\trewrite * /disperse{{uri}}\n\
-                 \t\treverse_proxy localhost:9753\n\
+                 \t\treverse_proxy localhost:9753 {{\n\
+                 \t\t\theader_up X-Real-IP {{remote_host}}\n\
+                 \t\t}}\n\
                  \t}}\n"
             ),
         }
