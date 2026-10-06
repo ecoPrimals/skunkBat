@@ -71,6 +71,16 @@ pub(super) async fn dispatch_fleet_observe(
                 "fleet detected — antibody generated"
             );
 
+            // Emit defense.antibody gossip for cross-gate immune memory
+            if let Ok(payload) = serde_json::to_value(&antibody) {
+                let key = format!("defense.antibody:{}", antibody.id);
+                if super::dispatch_gossip::fire_and_forget_inject("defense", &key, &payload) {
+                    tracing::info!(key = %key, "gossip: emitted antibody to mesh");
+                } else {
+                    tracing::debug!(key = %key, "gossip: antibody emission failed (swarmVine may not be running)");
+                }
+            }
+
             drop(sb);
             serialize(
                 id,
@@ -250,6 +260,14 @@ pub(super) async fn dispatch_fleet_tick(
             defections = event.defection_count,
             "posture change"
         );
+
+        // Emit defense.escalation gossip for cross-gate posture sync
+        if let Ok(payload) = serde_json::to_value(event) {
+            let key = format!("defense.escalation:{}", event.antibody_id);
+            if super::dispatch_gossip::fire_and_forget_inject("defense", &key, &payload) {
+                tracing::info!(key = %key, "gossip: emitted escalation to mesh");
+            }
+        }
     }
 
     drop(sb);

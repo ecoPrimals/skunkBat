@@ -219,6 +219,12 @@ pub(super) async fn dispatch(
         "fleet.tick" => {
             super::dispatch_fleet::dispatch_fleet_tick(state, id, request.params).await
         }
+        "gossip.inject" => {
+            super::dispatch_gossip::dispatch_gossip_inject(id, request.params).await
+        }
+        "gossip.query" => {
+            super::dispatch_gossip::dispatch_gossip_query(id, request.params).await
+        }
         "btsp.capabilities" => dispatch_btsp_capabilities(id),
         _ => Response::error(
             id,
