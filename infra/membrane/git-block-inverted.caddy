@@ -159,7 +159,11 @@ git.primals.eco {
 
 	# Top-level browsing allowed: repo listings, org pages, explore
 	# These pages are the "storefront" — let visitors see what exists
-	reverse_proxy localhost:3000
+	# Must be wrapped in handle{} — bare reverse_proxy gets reordered
+	# by Caddy directive sorting and fires before handle @outer_membrane_deep
+	handle {
+		reverse_proxy localhost:3000
+	}
 
 	handle_errors {
 		@404 expression `{http.error.status_code} == 404`
