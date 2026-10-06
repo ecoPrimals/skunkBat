@@ -6,18 +6,22 @@
 #
 # Order of precedence (Caddy evaluates top-to-bottom, first match wins):
 #   1. Webhooks (unconditional passthrough)
-#   2. Git protocol (authenticated by Forgejo)
+#   2. Git protocol (authenticated by Forgejo — requires credentials)
 #   3. Inner membrane (WireGuard — network-level trust)
 #   4. Authenticated humans (valid session cookie)
 #   5. Login/auth pages (must remain accessible)
 #   6. Fleet immune system (P0-P5 per-IP directives)
 #   7. Bot detection (heuristic fingerprinting)
-#   8. DEFAULT: Outer membrane — deep content → scatter, top-level → Forgejo
+#   7.25. JS challenge (blocks zero-JS fleets — sets cookie via JS)
+#   7.5. Honeytokens (credential bait for scanner probe paths)
+#   8. Storefront (existence-only: landing, explore, org/repo names, READMEs)
+#   9. DEFAULT: Everything else → scatter (outer membrane)
 #
-# The key inversion: the default is no longer "full Forgejo."
-# The default is "outer membrane" — a restricted view where deep
-# content goes through the scatter server. Only authenticated users
-# or inner-membrane traffic gets full access.
+# The full inversion: the default is scatter, not Forgejo.
+# The public sees existence only — names, READMEs, org structure.
+# All content access (source, commits, API, diffs, issues, wiki)
+# requires authentication, WireGuard, or explicit agent grant.
+# sporeGate stays on the inside via wg0. Access granted explicitly.
 
 git.primals.eco {
 	import security_headers
@@ -127,6 +131,55 @@ git.primals.eco {
 		abort
 	}
 
+	# ═══ LAYER 7.25: JS CHALLENGE — static-asset-zero fleet defense ═══
+	# The residential proxy fleet loads zero CSS, JS, or images in 10,000+
+	# requests. Real browsers always execute JavaScript. This layer serves
+	# a tiny JS challenge that sets a cookie. The fleet (which never runs
+	# JS) gets stuck. Real browsers pass through transparently on first visit.
+	#
+	# With the existence-only lockdown, this applies to non-storefront paths
+	# that would otherwise hit scatter. Authenticated humans bypass via
+	# Layer 4 (gitea cookie). This catches fleet probing the storefront
+	# paths too — they get the challenge before seeing even the README.
+
+	@needs_js_challenge {
+		not header Cookie *i_like_gitea*
+		not header Cookie *_membrane_verified=1*
+		not remote_ip 10.13.37.0/24
+		not path /
+		not path /explore
+		not path /explore/*
+		not path /user/login
+		not path /user/login/*
+		not path /user/sign_up
+		not path /user/forgot_password
+		not path /user/oauth2/*
+		not path /webhook
+		not path /assets/*
+		not path /avatars/*
+		not path /favicon.svg
+		not path /robots.txt
+		not path /sitemap.xml
+		not path /.env
+		not path /.env.*
+		not path /wp-config.php*
+		not path /.git/config
+		not path /.aws/credentials
+		not header User-Agent *git/*
+	}
+	handle @needs_js_challenge {
+		header X-Membrane-Route "js-challenge"
+		header Content-Type "text/html; charset=utf-8"
+		respond `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Verifying browser...</title>
+<style>body{background:#1a1a2e;color:#94a3b8;font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
+.v{text-align:center}.s{width:24px;height:24px;border:3px solid #475569;border-top-color:#60a5fa;border-radius:50%;animation:r .8s linear infinite;margin:0 auto 16px}
+@keyframes r{to{transform:rotate(360deg)}}</style></head>
+<body><div class="v"><div class="s"></div><p>Verifying browser&hellip;</p></div>
+<script>document.cookie="_membrane_verified=1;path=/;max-age=86400;SameSite=Lax";location.reload();</script>
+</body></html>` 200
+	}
+
 	# ═══ LAYER 7.5: HONEYTOKENS — complement system (credential bait) ═══
 	# Serve fake-but-plausible credentials for common scanner probe paths.
 	# When scanners harvest and USE these elsewhere, the destination system's
@@ -154,17 +207,14 @@ git.primals.eco {
 		reverse_proxy localhost:9753
 	}
 
-	# ═══ LAYER 8: OUTER MEMBRANE (default — zero trust) ═══
+	# ═══ LAYER 8: STOREFRONT (existence-only — names + READMEs) ═══
 	#
-	# This is the inversion: unauthenticated, unrecognized traffic
-	# hits the outer membrane. Deep content → scatter server.
-	# Top-level browsing (repo list, README, landing) → Forgejo.
-	#
-	# The immune system's job shifts from "who to block" to
-	# "who to allow." The membrane alone holds even if the
-	# immune system fails.
+	# The public sees existence proof: what repos exist, org structure,
+	# README content on repo landing pages. Nothing extractable.
+	# This is the shop window — you can see what's inside but the
+	# door is locked unless you have a key.
 
-	# Static assets always pass through (CSS, JS, images)
+	# Static assets needed to render storefront pages
 	@static_assets {
 		path /assets/*
 		path /avatars/*
@@ -176,20 +226,53 @@ git.primals.eco {
 		reverse_proxy localhost:3000
 	}
 
-	# Deep content without authentication → scatter (outer membrane)
-	@outer_membrane_deep {
-		path_regexp deep_repo .*/(src|raw|commit|blame|wiki|issues|milestones|releases|activity|graph|compare|diff|labels|projects)/.*
+	# Storefront: landing page, explore, org pages, repo root (README)
+	# These are the ONLY real Forgejo pages visible without auth.
+	@storefront_landing {
+		path /
+		path /explore
+		path /explore/repos
+		path /explore/users
+		path /explore/organizations
 	}
-	handle @outer_membrane_deep {
-		reverse_proxy localhost:9753
+	handle @storefront_landing {
+		reverse_proxy localhost:3000
 	}
 
-	# Top-level browsing allowed: repo listings, org pages, explore
-	# These pages are the "storefront" — let visitors see what exists
-	# Must be wrapped in handle{} — bare reverse_proxy gets reordered
-	# by Caddy directive sorting and fires before handle @outer_membrane_deep
-	handle {
+	# Org and repo landing pages — shallow path only (/{owner} or /{owner}/{repo})
+	# Deeper paths (/{owner}/{repo}/anything) fall through to scatter
+	@storefront_shallow {
+		path_regexp shallow_page ^/[a-zA-Z0-9_.-]+/?$
+	}
+	handle @storefront_shallow {
 		reverse_proxy localhost:3000
+	}
+
+	# Repo root page — README visible, nothing deeper
+	@storefront_repo_root {
+		path_regexp repo_root ^/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+/?$
+	}
+	handle @storefront_repo_root {
+		reverse_proxy localhost:3000
+	}
+
+	# ═══ LAYER 8.5: API BLOCK — no unauthenticated API access ═══
+	@api_block {
+		path /api/*
+	}
+	handle @api_block {
+		header X-Membrane-Route "api-blocked"
+		respond `{"error":"Authentication required. This forge serves humans only.","docs":"https://github.com/ecoPrimals"}` 403
+	}
+
+	# ═══ LAYER 9: DEFAULT — SCATTER (outer membrane) ═══
+	#
+	# Everything not matched above goes to the scatter server.
+	# Source trees, commits, diffs, issues, wiki, raw files, branches,
+	# pulls, actions, tags, releases, settings, admin — all scatter.
+	# The ion channel is now fully selective: only the storefront passes.
+	handle {
+		reverse_proxy localhost:9753
 	}
 
 	handle_errors {
