@@ -466,6 +466,8 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     &mut signal_spine,
                     &mut threat_indicators,
                     &threat_feed_path,
+                    &abuse_queue,
+                    cli.window_secs,
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -600,6 +602,8 @@ async fn process_line(
     spine: &mut signal_spine::SignalSpine,
     threat_indicators: &mut Vec<threat_feed::ThreatIndicator>,
     threat_feed_path: &std::path::Path,
+    abuse_queue: &abuse_reporter::AbuseReportQueue,
+    window_secs: u64,
 ) {
     if trimmed.is_empty() {
         return;
@@ -828,6 +832,39 @@ async fn process_line(
                             Ok(false) => {}
                             Err(e) => {
                                 tracing::error!(error = %e, "Caddy bridge sync failed");
+                            }
+                        }
+                    }
+
+                    // Step 5: Cytokine signaling — queue abuse reports at Scatter+
+                    //
+                    // When the immune system has confirmed a fleet is hostile
+                    // (escalated to Scatter or higher), generate an abuse report
+                    // for the hosting provider. Reports queue for manual review —
+                    // never auto-sent. This is the immune system recruiting
+                    // external help via cytokine signals.
+                    for event in &events {
+                        if event.to >= DefensePosture::Scatter
+                            && event.from < DefensePosture::Scatter
+                        {
+                            let now = chrono::Utc::now();
+                            let report = abuse_reporter::build_report(
+                                &bhash,
+                                "unknown",
+                                "unknown",
+                                fleet_obs.unique_ips as u32,
+                                fleet_obs.total_requests as u64,
+                                detectors.clone(),
+                                &(now - chrono::Duration::seconds(window_secs as i64))
+                                    .to_rfc3339(),
+                                &now.to_rfc3339(),
+                            );
+                            if let Err(e) = abuse_queue.enqueue(&report) {
+                                tracing::warn!(
+                                    error = %e,
+                                    antibody = %event.antibody_id,
+                                    "abuse report queue failed"
+                                );
                             }
                         }
                     }
