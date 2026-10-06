@@ -150,7 +150,8 @@ impl FleetDetector {
             + u8::from(obs.deception.ignores_rejection)
             + u8::from(obs.deception.encoding_uniform)
             + u8::from(obs.deception.chrome_impersonation)
-            + u8::from(obs.deception.header_poverty);
+            + u8::from(obs.deception.header_poverty)
+            + u8::from(obs.deception.stale_chrome);
         if deception_count >= self.config.min_deception_signals {
             score += 1;
         }
@@ -208,6 +209,7 @@ impl FleetDetector {
                 encoding_uniform: obs.deception.encoding_uniform,
                 chrome_impersonation: obs.deception.chrome_impersonation,
                 header_poverty: obs.deception.header_poverty,
+                stale_chrome: obs.deception.stale_chrome,
             },
             confidence: self.config.initial_confidence * (f64::from(score) / 6.0).min(1.0),
             first_seen_epoch: now_epoch,
@@ -276,6 +278,7 @@ mod tests {
                 encoding_uniform: true,
                 chrome_impersonation: true,
                 header_poverty: true,
+                stale_chrome: true,
             },
             depth_distribution: [170, 8, 2, 0],
             rejected_ips: 160,
@@ -308,6 +311,7 @@ mod tests {
                 encoding_uniform: false,
                 chrome_impersonation: false,
                 header_poverty: false,
+                stale_chrome: false,
             },
             depth_distribution: [10, 12, 6, 2],
             rejected_ips: 0,
@@ -364,6 +368,7 @@ mod tests {
                 encoding_uniform: true,
                 chrome_impersonation: false,
                 header_poverty: false,
+                stale_chrome: false,
             },
             depth_distribution: [5, 0, 0, 0],
             rejected_ips: 0,

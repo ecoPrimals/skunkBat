@@ -54,6 +54,23 @@ struct FleetEntry {
     has_sec_fetch: bool,
     /// Whether the request had Sec-Ch-Ua header (mandatory in Chrome 89+).
     has_sec_ch_ua: bool,
+    /// Chrome major version from UA string (0 if not Chrome).
+    chrome_major: u16,
+}
+
+/// Current Chrome stable version. Update when Chrome releases new stable.
+/// Chrome 155 stable: Oct 6, 2026. Two-week cadence since Chrome 153.
+const CHROME_CURRENT_STABLE: u16 = 155;
+
+/// Extract Chrome major version from a User-Agent string.
+fn extract_chrome_major(ua: &str) -> u16 {
+    // Look for "Chrome/NNN." pattern
+    let Some(idx) = ua.find("Chrome/") else {
+        return 0;
+    };
+    let after = &ua[idx + 7..];
+    let end = after.find('.').unwrap_or(after.len());
+    after[..end].parse().unwrap_or(0)
 }
 
 impl FleetAggregator {
@@ -140,6 +157,7 @@ impl FleetAggregator {
             .unwrap_or_default();
         let has_sec_fetch = !entry.request.headers.sec_fetch_mode.is_empty();
         let has_sec_ch_ua = !entry.request.headers.sec_ch_ua.is_empty();
+        let chrome_major = extract_chrome_major(&ua);
 
         self.entries.push(FleetEntry {
             ua,
@@ -152,6 +170,7 @@ impl FleetAggregator {
             accept_language,
             has_sec_fetch,
             has_sec_ch_ua,
+            chrome_major,
         });
     }
 
@@ -299,6 +318,34 @@ impl FleetAggregator {
         let header_poverty =
             total_requests > 20 && no_sec_fetch_count as f32 / total_f > 0.8;
 
+        // Stale Chrome version: >80% of Chrome-UA requests use a version
+        // 5+ majors behind current stable. Real Chrome auto-updates — a
+        // population stuck on one old version has hardcoded UA strings.
+        let chrome_entries: Vec<u16> = self
+            .entries
+            .iter()
+            .filter(|e| e.chrome_major > 0)
+            .map(|e| e.chrome_major)
+            .collect();
+        let stale_chrome = if chrome_entries.len() > 10 {
+            let mut version_counts: HashMap<u16, u32> = HashMap::new();
+            for &v in &chrome_entries {
+                *version_counts.entry(v).or_insert(0) += 1;
+            }
+            let top_version = version_counts
+                .iter()
+                .max_by_key(|&(_, &c)| c)
+                .map(|(&v, _)| v)
+                .unwrap_or(0);
+            let top_count = version_counts.get(&top_version).copied().unwrap_or(0);
+            let top_pct = top_count as f32 / chrome_entries.len() as f32;
+            // Stale if: dominant version is 5+ behind stable AND >80% on one version
+            top_pct > 0.8
+                && CHROME_CURRENT_STABLE.saturating_sub(top_version) >= 5
+        } else {
+            false
+        };
+
         // Depth distribution
         let d1 = pages_per_ip.values().filter(|&&c| c == 1).count() as u32;
         let d2 = pages_per_ip.values().filter(|&&c| (2..=3).contains(&c)).count() as u32;
@@ -338,6 +385,7 @@ impl FleetAggregator {
                 encoding_uniform,
                 chrome_impersonation,
                 header_poverty,
+                stale_chrome,
             },
             depth_distribution: [d1, d2, d3, d4],
             rejected_ips: rejected_ips_set.len() as u32,
@@ -365,6 +413,7 @@ mod tests {
                     sec_fetch_mode: vec![],
                     sec_ch_ua: vec![],
                 },
+
             },
             status,
             size: 512,
