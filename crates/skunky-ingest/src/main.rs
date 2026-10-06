@@ -23,7 +23,7 @@ pub mod scatter_server;
 use error::IngestError;
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cellmembrane_types::fleet::DefensePosture;
 use clap::Parser;
@@ -152,9 +152,16 @@ struct TailState {
     observations_sent: u64,
     fleet_posture: DefensePosture,
     fleet_escalations: u64,
+    /// Inode of the currently-open log file (for rotation detection).
+    #[cfg(unix)]
+    log_inode: u64,
+    /// Last time we checked for log rotation.
+    last_rotation_check: Instant,
+    /// Last time we wrote the heartbeat file.
+    last_heartbeat: Instant,
 }
 
-async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64), IngestError> {
+async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64, u64), IngestError> {
     if let Some(parent) = cli.cursor_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -164,6 +171,15 @@ async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64), IngestError> {
 
     let file = File::open(&cli.log_path).await?;
     let metadata = file.metadata().await?;
+
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        metadata.ino()
+    };
+    #[cfg(not(unix))]
+    let inode = 0u64;
+
     let mut reader = BufReader::new(file);
 
     let start_offset = if saved_offset > metadata.len() {
@@ -181,7 +197,38 @@ async fn open_log(cli: &Cli) -> Result<(BufReader<File>, u64), IngestError> {
         reader.seek(std::io::SeekFrom::Start(start_offset)).await?;
     }
 
-    Ok((reader, start_offset))
+    Ok((reader, start_offset, inode))
+}
+
+/// Check if the log file has been rotated by comparing the on-disk inode
+/// to the inode of our open file descriptor. Caddy's `roll_size` renames
+/// the active log to `.log.1` and creates a fresh file — the old fd
+/// follows the renamed file, so we must detect and reopen.
+#[cfg(unix)]
+async fn check_log_rotation(
+    log_path: &std::path::Path,
+    current_inode: u64,
+) -> Option<u64> {
+    let meta = tokio::fs::metadata(log_path).await.ok()?;
+    use std::os::unix::fs::MetadataExt;
+    let disk_inode = meta.ino();
+    if disk_inode != current_inode {
+        Some(disk_inode)
+    } else {
+        None
+    }
+}
+
+/// Write the heartbeat file — a plain epoch timestamp.
+/// If the heartbeat goes stale, the inflammatory watchdog activates.
+async fn write_heartbeat(path: &std::path::Path) {
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if let Err(e) = tokio::fs::write(path, epoch.to_string()).await {
+        tracing::warn!(error = %e, path = %path.display(), "heartbeat write failed");
+    }
 }
 
 async fn run(cli: Cli) -> Result<(), IngestError> {
@@ -196,7 +243,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         );
     }
 
-    let (mut reader, start_offset) = open_log(&cli).await?;
+    let (mut reader, start_offset, log_inode) = open_log(&cli).await?;
 
     let mut rpc = rpc::RpcClient::new(cli.skunkbat_addr.clone());
     let mut aggregator = aggregator::Aggregator::new(Duration::from_secs(cli.window_secs));
@@ -277,6 +324,14 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     let poll_interval = Duration::from_millis(cli.poll_ms);
 
     let mut line_buf = String::new();
+    // Heartbeat path — inflammatory watchdog checks this
+    let heartbeat_path = PathBuf::from("/run/membrane/skunky-ingest.heartbeat");
+    if let Some(parent) = heartbeat_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    write_heartbeat(&heartbeat_path).await;
+
+    let now = Instant::now();
     let mut state = TailState {
         byte_offset: start_offset,
         lines_read: 0,
@@ -284,6 +339,10 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         observations_sent: 0,
         fleet_posture: DefensePosture::Observe,
         fleet_escalations: 0,
+        #[cfg(unix)]
+        log_inode,
+        last_rotation_check: now,
+        last_heartbeat: now,
     };
 
     let shutdown = tokio::signal::ctrl_c();
@@ -297,6 +356,37 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                 let bytes_read = result?;
 
                 if bytes_read == 0 {
+                    // ── Heartbeat (every 30s) ──
+                    if state.last_heartbeat.elapsed() >= Duration::from_secs(30) {
+                        write_heartbeat(&heartbeat_path).await;
+                        state.last_heartbeat = Instant::now();
+                    }
+
+                    // ── Log rotation detection (every 30s) ──
+                    #[cfg(unix)]
+                    if state.last_rotation_check.elapsed() >= Duration::from_secs(30) {
+                        state.last_rotation_check = Instant::now();
+                        if let Some(new_inode) = check_log_rotation(&cli.log_path, state.log_inode).await {
+                            tracing::warn!(
+                                old_inode = state.log_inode,
+                                new_inode,
+                                "🔄 log rotation detected — reopening {}",
+                                cli.log_path.display()
+                            );
+                            match File::open(&cli.log_path).await {
+                                Ok(new_file) => {
+                                    reader = BufReader::new(new_file);
+                                    state.log_inode = new_inode;
+                                    state.byte_offset = 0;
+                                    tracing::info!("log file reopened after rotation");
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "failed to reopen log after rotation");
+                                }
+                            }
+                        }
+                    }
+
                     tokio::time::sleep(poll_interval).await;
                     continue;
                 }

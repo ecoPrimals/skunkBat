@@ -155,21 +155,32 @@ async fn handle_request(
         }
     }
 
+    // Detect disperse mode — Caddy rewrites /disperse{uri} for P5 targets
+    let is_disperse = path.starts_with("/disperse");
+    let effective_path = if is_disperse {
+        path.strip_prefix("/disperse").unwrap_or(&path).to_string()
+    } else {
+        path.clone()
+    };
+
     // Probabilistic poison: use path hash to decide deterministically
     // (same path always gets the same decision — prevents detection via retries)
-    let path_hash = path_deterministic_hash(&path, generator.seed);
-    let should_poison = (path_hash % 100) < (poison_ratio * 100.0) as u64;
+    let path_hash = path_deterministic_hash(&effective_path, generator.seed);
 
-    let (status, content_type, body) = if should_poison {
-        // POISON: serve plausible-but-fake content (200 OK)
-        let (ct, body) = generator.generate(&path);
+    let (status, content_type, body) = if is_disperse {
+        // DISPERSE (P5): maximally-wrong responses — skunk spray
+        let (ct, body) = generator.generate_disperse(&effective_path);
         ("200 OK", ct, body)
     } else {
-        // DECOY: serve a realistic Gitea "not found" page
-        // This is critical — we can't return 502 or drop the connection,
-        // as both give signal. A 404 looks like a legitimate commit/file
-        // that doesn't exist, which is plausible and zero-information.
-        ("404 Not Found", "text/html; charset=utf-8".to_string(), NOT_FOUND_PAGE.to_string())
+        let should_poison = (path_hash % 100) < (poison_ratio * 100.0) as u64;
+        if should_poison {
+            // POISON: serve plausible-but-fake content (200 OK)
+            let (ct, body) = generator.generate(&effective_path);
+            ("200 OK", ct, body)
+        } else {
+            // DECOY: serve a realistic Gitea "not found" page
+            ("404 Not Found", "text/html; charset=utf-8".to_string(), NOT_FOUND_PAGE.to_string())
+        }
     };
 
     let response = format!(
@@ -271,6 +282,76 @@ impl ScatterGenerator {
             file_extensions: FILE_EXTS,
             commit_verbs: VERBS,
             commit_nouns: NOUNS,
+        }
+    }
+
+    /// Generate maximally-wrong disperse (P5 skunk spray) content.
+    ///
+    /// Unlike scatter (P3) which serves plausible-but-wrong content,
+    /// disperse actively confuses: wrong MIME types, garbled structure,
+    /// fake auth flows, misleading redirects. The goal is to waste
+    /// attacker compute and poison downstream processing pipelines.
+    fn generate_disperse(&self, request_path: &str) -> (String, String) {
+        let mut rng = XorShift64::new(self.path_seed(request_path).wrapping_add(0xD15_0E25_E000));
+        let variant = rng.next_usize() % 6;
+        match variant {
+            0 => {
+                // Wrong MIME type: serve HTML as application/json
+                let (_, html) = self.gen_commit(&mut rng);
+                ("application/json; charset=utf-8".to_string(), html)
+            }
+            1 => {
+                // Fake successful auth response
+                let token = rng.hex(64);
+                let body = format!(
+                    r#"{{"status":"ok","token":"{token}","user":{{"id":{},"login":"{}","email":"admin@internal"}},"expires_in":3600}}"#,
+                    rng.next_usize() % 9999 + 1,
+                    self.pick(&mut rng, self.repo_names),
+                );
+                ("application/json; charset=utf-8".to_string(), body)
+            }
+            2 => {
+                // Garbled binary-looking data with valid HTTP framing
+                let garbage: String = (0..512)
+                    .map(|_| {
+                        let b = (rng.next_u64() % 223 + 33) as u8;
+                        b as char
+                    })
+                    .collect();
+                ("application/octet-stream".to_string(), garbage)
+            }
+            3 => {
+                // Valid JSON with shuffled/garbled keys from real structure
+                let repo = self.pick(&mut rng, self.repo_names);
+                let body = format!(
+                    r#"{{"full_name":"{repo}","html_url":"https://git.primals.eco/{repo}","clone_url":"https://git.primals.eco/{repo}.git","ssh_url":"ssh://git@git.primals.eco:2222/{repo}.git","default_branch":"main","stars_count":{},"forks_count":{},"open_issues_count":{},"size":{},"permissions":{{"admin":false,"push":false,"pull":true}},"internal":false,"archived":false,"mirror":false}}"#,
+                    rng.next_usize() % 500,
+                    rng.next_usize() % 100,
+                    rng.next_usize() % 50,
+                    rng.next_usize() % 100000,
+                );
+                ("application/json; charset=utf-8".to_string(), body)
+            }
+            4 => {
+                // Fake redirect chain to nonexistent URLs
+                let dest_repo = self.pick(&mut rng, self.repo_names);
+                let hash = rng.hex(40);
+                let body = format!(
+                    r#"<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=https://git.primals.eco/{dest_repo}/commit/{hash}"></head><body>Redirecting...</body></html>"#
+                );
+                ("text/html; charset=utf-8".to_string(), body)
+            }
+            _ => {
+                // Serve valid-looking XML as text/plain (wrong everything)
+                let repo = self.pick(&mut rng, self.repo_names);
+                let body = format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>{repo}</title><id>urn:uuid:{}</id><updated>2026-10-06T00:00:00Z</updated><entry><title>update: configuration</title><link href="https://git.primals.eco/{repo}/commit/{}" /><id>urn:uuid:{}</id><updated>2026-10-06T00:00:00Z</updated><content type="text">Automated update</content></entry></feed>"#,
+                    rng.hex(32),
+                    rng.hex(40),
+                    rng.hex(32),
+                );
+                ("text/plain; charset=utf-8".to_string(), body)
+            }
         }
     }
 
@@ -744,6 +825,35 @@ mod tests {
             pct * 100.0,
             poison
         );
+    }
+
+    #[test]
+    fn disperse_deterministic() {
+        let sg = ScatterGenerator::new(42);
+        let (ct1, body1) = sg.generate_disperse("/org/repo/commit/abc123");
+        let (ct2, body2) = sg.generate_disperse("/org/repo/commit/abc123");
+        assert_eq!(ct1, ct2);
+        assert_eq!(body1, body2);
+    }
+
+    #[test]
+    fn disperse_different_from_scatter() {
+        let sg = ScatterGenerator::new(42);
+        let (_, scatter_body) = sg.generate("/org/repo/commit/abc123");
+        let (_, disperse_body) = sg.generate_disperse("/org/repo/commit/abc123");
+        assert_ne!(scatter_body, disperse_body);
+    }
+
+    #[test]
+    fn disperse_no_real_names_leak() {
+        let sg = ScatterGenerator::new(42);
+        for i in 0..20 {
+            let path = format!("/org/repo/commit/{:040x}", i);
+            let (_, body) = sg.generate_disperse(&path);
+            assert!(!body.contains("ecoPrimal"), "leaked ecoPrimal in disperse variant");
+            assert!(!body.contains("skunkBat"), "leaked skunkBat in disperse variant");
+            assert!(!body.contains("wateringHole"), "leaked wateringHole in disperse variant");
+        }
     }
 
     #[test]

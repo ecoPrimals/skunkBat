@@ -282,6 +282,14 @@ impl CaddyBridge {
                  \t\tabort\n\
                  \t}}\n"
             ),
+
+            DefensePosture::Disperse => format!(
+                "\t@fleet_disperse remote_ip {ip_list}\n\
+                 \thandle @fleet_disperse {{\n\
+                 \t\trewrite * /disperse{{uri}}\n\
+                 \t\treverse_proxy localhost:9753\n\
+                 \t}}\n"
+            ),
         }
     }
 
@@ -315,6 +323,7 @@ impl CaddyBridge {
         // Caddy evaluates matchers top-to-bottom, first match wins)
         let mut ip_block = String::new();
         for posture in [
+            DefensePosture::Disperse,
             DefensePosture::Vanish,
             DefensePosture::Scatter,
             DefensePosture::SlowDegrade,

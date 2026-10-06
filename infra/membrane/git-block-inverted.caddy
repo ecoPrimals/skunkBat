@@ -1,0 +1,178 @@
+# ═══════════════════════════════════════════════════════════════════
+# git.primals.eco — INVERTED MEMBRANE (Zero-Trust Default-Deny)
+# ═══════════════════════════════════════════════════════════════════
+#
+# The cell membrane is default-deny. Trust is earned, not assumed.
+#
+# Order of precedence (Caddy evaluates top-to-bottom, first match wins):
+#   1. Webhooks (unconditional passthrough)
+#   2. Git protocol (authenticated by Forgejo)
+#   3. Inner membrane (WireGuard — network-level trust)
+#   4. Authenticated humans (valid session cookie)
+#   5. Login/auth pages (must remain accessible)
+#   6. Fleet immune system (P0-P5 per-IP directives)
+#   7. Bot detection (heuristic fingerprinting)
+#   8. DEFAULT: Outer membrane — deep content → scatter, top-level → Forgejo
+#
+# The key inversion: the default is no longer "full Forgejo."
+# The default is "outer membrane" — a restricted view where deep
+# content goes through the scatter server. Only authenticated users
+# or inner-membrane traffic gets full access.
+
+git.primals.eco {
+	import security_headers
+	import lysogeny
+	import csp_proxy
+	import access_log
+
+	# ═══ LAYER 1: UNCONDITIONAL PASSTHROUGH ═══
+
+	handle /webhook {
+		reverse_proxy unix//run/membrane/webhook.sock
+	}
+
+	# ═══ LAYER 2: GIT PROTOCOL (Forgejo authenticates) ═══
+
+	@git_protocol {
+		path_regexp git_smart .*/(info/refs|git-upload-pack|git-receive-pack|HEAD|objects/.*)$
+		header User-Agent *git/*
+	}
+	handle @git_protocol {
+		reverse_proxy localhost:3000
+	}
+
+	# ═══ LAYER 3: INNER MEMBRANE (WireGuard — full trust) ═══
+
+	@inner_membrane {
+		remote_ip 10.13.37.0/24
+	}
+	handle @inner_membrane {
+		reverse_proxy localhost:3000
+	}
+
+	# ═══ LAYER 4: AUTHENTICATED HUMANS (session cookie) ═══
+
+	@authenticated_human {
+		header Cookie *i_like_gitea*
+	}
+	handle @authenticated_human {
+		reverse_proxy localhost:3000
+	}
+
+	# ═══ LAYER 5: AUTH PAGES (must remain accessible to log in) ═══
+
+	@auth_pages {
+		path /user/login
+		path /user/login/*
+		path /user/sign_up
+		path /user/forgot_password
+		path /user/oauth2/*
+	}
+	handle @auth_pages {
+		reverse_proxy localhost:3000
+	}
+
+	# ═══ LAYER 6: FLEET IMMUNE SYSTEM (per-IP posture directives) ═══
+	# Written dynamically by skunky-ingest CaddyBridge.
+	# Most aggressive postures first (Disperse > Vanish > Scatter > etc.)
+
+	# ~~FLEET_PRESSURE_START~~
+	# ~~FLEET_PRESSURE_END~~
+
+	# ═══ LAYER 7: BOT DETECTION (heuristic fingerprinting) ═══
+
+	@meta_stealth {
+		not header Accept-Language *
+		header Accept-Encoding "gzip, deflate, zstd"
+	}
+	@malformed_lang {
+		header Accept-Language "*q=0.9;q=0.9*"
+	}
+	@known_bots {
+		header_regexp User-Agent "(?i)(bot|crawl|spider|facebookexternalhit|meta-externalagent|google|bing|yandex|semrush|ahref|mj12|bytespider|petalbot|gptbot|chatgpt|claude|amazonbot|applebot|dataprovider|DotBot|BLEXBot|SeznamBot|Sogou|Baidu|CCBot|DataForSeoBot|Qwant|ia_archiver|archive\.org_bot|Slurp|curl|wget|python|go-http|java|HeadlessChrome|Lighthouse|okhttp|scrapy|httpclient|libwww|lwp-|httpx|mechanize|aiohttp|requests|node-fetch|axios)"
+	}
+	@empty_ua {
+		not header User-Agent *
+	}
+	@no_encoding {
+		not header Accept-Encoding *
+		not header User-Agent *git/*
+	}
+	@stale_chrome {
+		header_regexp User-Agent "Chrome/(7[0-9]|8[0-9]|9[0-9]|1[0-4][0-9])\."
+		not header Accept-Language *
+	}
+
+	handle @meta_stealth {
+		header X-Membrane-Route "external"
+		respond "This forge serves humans only. Automated access: https://github.com/ecoPrimals" 403
+	}
+	handle @malformed_lang {
+		header X-Membrane-Route "external"
+		respond "This forge serves humans only. Automated access: https://github.com/ecoPrimals" 403
+	}
+	handle @known_bots {
+		header X-Membrane-Route "external"
+		respond "This forge serves humans only. Automated access: https://github.com/ecoPrimals" 403
+	}
+	handle @empty_ua {
+		header X-Membrane-Route "external"
+		respond "This forge serves humans only. Automated access: https://github.com/ecoPrimals" 403
+	}
+	handle @no_encoding {
+		header X-Membrane-Route "external"
+		respond "This forge serves humans only. Automated access: https://github.com/ecoPrimals" 403
+	}
+	handle @stale_chrome {
+		abort
+	}
+
+	# ═══ LAYER 8: OUTER MEMBRANE (default — zero trust) ═══
+	#
+	# This is the inversion: unauthenticated, unrecognized traffic
+	# hits the outer membrane. Deep content → scatter server.
+	# Top-level browsing (repo list, README, landing) → Forgejo.
+	#
+	# The immune system's job shifts from "who to block" to
+	# "who to allow." The membrane alone holds even if the
+	# immune system fails.
+
+	# Static assets always pass through (CSS, JS, images)
+	@static_assets {
+		path /assets/*
+		path /avatars/*
+		path /favicon.svg
+		path /robots.txt
+		path /sitemap.xml
+	}
+	handle @static_assets {
+		reverse_proxy localhost:3000
+	}
+
+	# Deep content without authentication → scatter (outer membrane)
+	@outer_membrane_deep {
+		path_regexp deep_repo .*/(src|raw|commit|blame|wiki|issues|milestones|releases|activity|graph|compare|diff|labels|projects)/.*
+	}
+	handle @outer_membrane_deep {
+		reverse_proxy localhost:9753
+	}
+
+	# Top-level browsing allowed: repo listings, org pages, explore
+	# These pages are the "storefront" — let visitors see what exists
+	reverse_proxy localhost:3000
+
+	handle_errors {
+		@404 expression `{http.error.status_code} == 404`
+		rewrite @404 /404.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+		-Server
+	}
+}
