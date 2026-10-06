@@ -115,14 +115,94 @@ impl CaddyBridge {
     ///
     /// `self_ips` contains IPs that must never be blocked. Pass an empty set
     /// to disable negative selection (not recommended in production).
+    ///
+    /// **Sourdough bootstrapping**: On creation, the bridge parses the
+    /// existing Caddyfile between FLEET_PRESSURE markers and restores
+    /// `tracked_ips` from the directives already written there. This
+    /// ensures restarts don't wipe active defense posture. The Caddyfile
+    /// itself is the durable state until the provenance trio
+    /// (rhizoCrypt/loamSpine/sweetGrass) provides a proper DAG.
     #[must_use]
     pub fn new(config: CaddyBridgeConfig, self_ips: HashSet<String>) -> Self {
+        let tracked_ips = Self::restore_from_caddyfile(&config);
+        let mut last_written: Vec<String> = tracked_ips.keys().cloned().collect();
+        last_written.sort();
+
+        if !tracked_ips.is_empty() {
+            tracing::info!(
+                restored = tracked_ips.len(),
+                "🫓 sourdough: restored {} fleet IPs from existing Caddyfile directives",
+                tracked_ips.len()
+            );
+        }
+
         Self {
             config,
-            tracked_ips: HashMap::new(),
-            last_written: Vec::new(),
+            tracked_ips,
+            last_written,
             self_ips,
         }
+    }
+
+    /// Parse existing fleet directives from the Caddyfile between markers.
+    ///
+    /// Reads `@fleet_{posture} remote_ip {ip_list}` lines and reconstructs
+    /// TrackedIp entries. This is the sourdough starter — the Caddyfile
+    /// ferments its own state across restarts.
+    fn restore_from_caddyfile(config: &CaddyBridgeConfig) -> HashMap<String, TrackedIp> {
+        let mut tracked = HashMap::new();
+        let content = match std::fs::read_to_string(&config.caddyfile_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "sourdough: could not read Caddyfile for restoration"
+                );
+                return tracked;
+            }
+        };
+
+        let start_idx = content.find(&config.start_marker);
+        let end_idx = content.find(&config.end_marker);
+        let (Some(start), Some(end)) = (start_idx, end_idx) else {
+            return tracked;
+        };
+
+        let section = &content[start..end];
+        let now = SystemTime::now();
+
+        for line in section.lines() {
+            let trimmed = line.trim();
+
+            let posture = if trimmed.starts_with("@fleet_disperse") {
+                DefensePosture::Disperse
+            } else if trimmed.starts_with("@fleet_vanish") {
+                DefensePosture::Vanish
+            } else if trimmed.starts_with("@fleet_scatter") {
+                DefensePosture::Scatter
+            } else if trimmed.starts_with("@fleet_tarpit") {
+                DefensePosture::SlowDegrade
+            } else if trimmed.starts_with("@fleet_warn") {
+                DefensePosture::WarnRoute
+            } else {
+                continue;
+            };
+
+            // Parse: @fleet_{name} remote_ip {ip1} {ip2} ...
+            if let Some(ip_part) = trimmed.split("remote_ip").nth(1) {
+                for ip in ip_part.split_whitespace() {
+                    tracked.insert(
+                        ip.to_string(),
+                        TrackedIp {
+                            last_seen: now,
+                            posture,
+                        },
+                    );
+                }
+            }
+        }
+
+        tracked
     }
 
     /// Add fleet IPs that matched an antibody with a specific defense posture.
@@ -626,6 +706,110 @@ mod tests {
         assert!(self_ips.contains("162.226.225.148"));
         assert!(self_ips.contains("10.13.37.1"));
         assert!(self_ips.contains("157.230.3.183"));
+    }
+
+    #[test]
+    fn sourdough_restores_existing_directives() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        // Write a Caddyfile with existing fleet directives
+        std::fs::write(
+            &caddyfile,
+            "git.primals.eco {\n\
+             \t# ~~FLEET_PRESSURE_START~~\n\
+             \t@fleet_disperse remote_ip 57.141.20.1 57.141.20.2 57.141.20.3\n\
+             \thandle @fleet_disperse {\n\
+             \t\trewrite * /disperse{uri}\n\
+             \t\treverse_proxy localhost:9753\n\
+             \t}\n\
+             \t@fleet_warn remote_ip 10.0.0.1\n\
+             \thandle @fleet_warn {\n\
+             \t\trespond 403\n\
+             \t}\n\
+             \t# ~~FLEET_PRESSURE_END~~\n\
+             \troot * /opt/ecoPrimals/gitea-data\n\
+             }\n",
+        )
+        .unwrap();
+
+        let bridge = CaddyBridge::new(test_config(caddyfile), HashSet::new());
+        assert_eq!(bridge.tracked_count(), 4);
+        assert!(bridge.tracked_ips.contains_key("57.141.20.1"));
+        assert!(bridge.tracked_ips.contains_key("57.141.20.2"));
+        assert!(bridge.tracked_ips.contains_key("57.141.20.3"));
+        assert!(bridge.tracked_ips.contains_key("10.0.0.1"));
+        assert_eq!(
+            bridge.tracked_ips["57.141.20.1"].posture,
+            DefensePosture::Disperse
+        );
+        assert_eq!(
+            bridge.tracked_ips["10.0.0.1"].posture,
+            DefensePosture::WarnRoute
+        );
+    }
+
+    #[test]
+    fn sourdough_restores_multi_posture() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(
+            &caddyfile,
+            "git.primals.eco {\n\
+             \t# ~~FLEET_PRESSURE_START~~\n\
+             \t@fleet_disperse remote_ip 1.1.1.1 2.2.2.2\n\
+             \thandle @fleet_disperse {\n\t\trewrite * /disperse{uri}\n\t\treverse_proxy localhost:9753\n\t}\n\
+             \t@fleet_vanish remote_ip 3.3.3.3\n\
+             \thandle @fleet_vanish {\n\t\tabort\n\t}\n\
+             \t@fleet_scatter remote_ip 4.4.4.4\n\
+             \thandle @fleet_scatter {\n\t\treverse_proxy localhost:9753\n\t}\n\
+             \t@fleet_tarpit remote_ip 5.5.5.5 6.6.6.6\n\
+             \thandle @fleet_tarpit {\n\t\trewrite * /tarpit{uri}\n\t\treverse_proxy localhost:9753\n\t}\n\
+             \t# ~~FLEET_PRESSURE_END~~\n\
+             }\n",
+        )
+        .unwrap();
+
+        let bridge = CaddyBridge::new(test_config(caddyfile), HashSet::new());
+        assert_eq!(bridge.tracked_count(), 6);
+        assert_eq!(bridge.tracked_ips["1.1.1.1"].posture, DefensePosture::Disperse);
+        assert_eq!(bridge.tracked_ips["3.3.3.3"].posture, DefensePosture::Vanish);
+        assert_eq!(bridge.tracked_ips["4.4.4.4"].posture, DefensePosture::Scatter);
+        assert_eq!(bridge.tracked_ips["5.5.5.5"].posture, DefensePosture::SlowDegrade);
+    }
+
+    #[test]
+    fn sourdough_empty_section_restores_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let bridge = CaddyBridge::new(test_config(caddyfile), HashSet::new());
+        assert_eq!(bridge.tracked_count(), 0);
+    }
+
+    #[test]
+    fn sourdough_survives_restart_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        // Session 1: add IPs and write
+        let mut bridge1 = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
+        bridge1.add_fleet_ips(
+            &["57.141.20.1".to_string(), "57.141.20.2".to_string()],
+            DefensePosture::Disperse,
+        );
+        bridge1.write_caddyfile().unwrap();
+
+        // Session 2: new bridge should restore those IPs
+        let bridge2 = CaddyBridge::new(test_config(caddyfile), HashSet::new());
+        assert_eq!(bridge2.tracked_count(), 2);
+        assert!(bridge2.tracked_ips.contains_key("57.141.20.1"));
+        assert!(bridge2.tracked_ips.contains_key("57.141.20.2"));
+        assert_eq!(
+            bridge2.tracked_ips["57.141.20.1"].posture,
+            DefensePosture::Disperse
+        );
     }
 
     #[test]
