@@ -18,6 +18,7 @@ mod error;
 pub mod fleet;
 pub mod lysogeny;
 mod rpc;
+pub mod bloom_sensor;
 pub mod scatter_server;
 
 use error::IngestError;
@@ -231,6 +232,20 @@ async fn write_heartbeat(path: &std::path::Path) {
     }
 }
 
+/// Write the bloom signal file — JSON snapshot of the latest observation window.
+async fn write_bloom_signal(path: &std::path::Path, obs: &bloom_sensor::BloomObservation) {
+    match serde_json::to_string_pretty(obs) {
+        Ok(json) => {
+            if let Err(e) = tokio::fs::write(path, json).await {
+                tracing::warn!(error = %e, path = %path.display(), "bloom signal write failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "bloom signal serialization failed");
+        }
+    }
+}
+
 async fn run(cli: Cli) -> Result<(), IngestError> {
     let cf_config = cloudflare::CfConfig::from_args(
         cli.cf_api_token.clone(),
@@ -321,6 +336,11 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone()));
     }
 
+    // Bloom sensor — afferent signal accumulation (all hosts)
+    let mut bloom_sensor = bloom_sensor::BloomSensor::new(Duration::from_secs(cli.window_secs));
+    let bloom_signal_path = PathBuf::from("/run/membrane/bloom.signal");
+    tracing::info!("🌸 bloom sensor active — afferent signal accumulation");
+
     let poll_interval = Duration::from_millis(cli.poll_ms);
 
     let mut line_buf = String::new();
@@ -404,6 +424,8 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     cli.dry_run,
                     &scatter_confidence,
                     cli.scatter_ratio,
+                    &mut bloom_sensor,
+                    &bloom_signal_path,
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -474,6 +496,16 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         }
     }
 
+    // Flush remaining bloom sensor window
+    if let Some(obs) = bloom_sensor.flush_remaining() {
+        tracing::info!(
+            requests = obs.total_requests,
+            ips = obs.unique_ips,
+            "🌸 final bloom flush"
+        );
+        write_bloom_signal(&bloom_signal_path, &obs).await;
+    }
+
     cursor::save(&cli.cursor_path, state.byte_offset).await?;
 
     tracing::info!(
@@ -498,6 +530,8 @@ async fn process_line(
     dry_run: bool,
     scatter_confidence: &scatter_server::SharedConfidence,
     base_scatter_ratio: f32,
+    bloom: &mut bloom_sensor::BloomSensor,
+    bloom_signal_path: &std::path::Path,
 ) {
     if trimmed.is_empty() {
         return;
@@ -514,6 +548,18 @@ async fn process_line(
     // Feed to lysogeny sentinel for self-behavioral tracking
     if let Some(s) = sentinel.as_mut() {
         s.observe(&entry);
+    }
+
+    // Bloom sensor — afferent signal accumulation
+    if let Some(obs) = bloom.ingest(&entry) {
+        tracing::info!(
+            requests = obs.total_requests,
+            ips = obs.unique_ips,
+            cross_domain = obs.cross_domain_sessions,
+            langs = obs.languages.len(),
+            "🌸 bloom observation"
+        );
+        write_bloom_signal(bloom_signal_path, &obs).await;
     }
 
     // Per-IP aggregation
