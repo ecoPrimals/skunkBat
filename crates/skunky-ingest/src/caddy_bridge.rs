@@ -260,12 +260,8 @@ impl CaddyBridge {
             DefensePosture::SlowDegrade => format!(
                 "\t@fleet_tarpit remote_ip {ip_list}\n\
                  \thandle @fleet_tarpit {{\n\
-                 \t\theader Retry-After \"3600\"\n\
-                 \t\theader X-Fleet-Status \"throttled\"\n\
-                 \t\trespond 429 {{\n\
-                 \t\t\tbody \"Rate limited. Service unavailable for automated access.\"\n\
-                 \t\t\tclose\n\
-                 \t\t}}\n\
+                 \t\trewrite * /tarpit{{uri}}\n\
+                 \t\treverse_proxy localhost:9753\n\
                  \t}}\n"
             ),
 
@@ -493,8 +489,8 @@ mod tests {
 
         let content = std::fs::read_to_string(&caddyfile).unwrap();
         assert!(content.contains("@fleet_tarpit"));
-        assert!(content.contains("respond 429"));
-        assert!(content.contains("Retry-After"));
+        assert!(content.contains("/tarpit{uri}"));
+        assert!(content.contains("reverse_proxy localhost:9753"));
     }
 
     #[test]

@@ -29,6 +29,7 @@
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
@@ -73,6 +74,99 @@ impl SharedConfidence {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Layer 1: Tarpit — mucus barrier
+// ══════════════════════════════════════════════════════════════════════
+
+/// Tarpit connection limiter — prevents self-DoS from too many slow-drip connections.
+///
+/// The mucus barrier's thickness is self-limiting. Too much mucus and the
+/// organism suffocates. The TarpitState ensures we don't consume more
+/// resources holding scanner connections than the scanners consume waiting.
+#[derive(Debug, Clone)]
+pub struct TarpitState {
+    active: Arc<AtomicU32>,
+    max_concurrent: u32,
+}
+
+/// Tarpit drip interval — one chunk per 500ms (~100 bytes/sec at 50 bytes/chunk).
+const TARPIT_DRIP_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Bytes per tarpit chunk.
+const TARPIT_CHUNK_SIZE: usize = 50;
+
+/// Minimum tarpit duration in seconds.
+const TARPIT_MIN_SECS: u64 = 30;
+
+/// Maximum tarpit duration in seconds.
+const TARPIT_MAX_SECS: u64 = 60;
+
+impl TarpitState {
+    pub fn new(max_concurrent: u32) -> Self {
+        Self {
+            active: Arc::new(AtomicU32::new(0)),
+            max_concurrent,
+        }
+    }
+
+    fn try_acquire(&self) -> bool {
+        loop {
+            let current = self.active.load(Ordering::SeqCst);
+            if current >= self.max_concurrent {
+                return false;
+            }
+            match self.active.compare_exchange(
+                current,
+                current + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return true,
+                Err(_) => continue,
+            }
+        }
+    }
+
+    fn release(&self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    pub fn active_count(&self) -> u32 {
+        self.active.load(Ordering::Relaxed)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Layer 2: Honeytokens — complement system
+// ══════════════════════════════════════════════════════════════════════
+
+/// Paths that scanners probe for credentials. When matched, the scatter
+/// server serves fake-but-plausible credentials that trigger alerts
+/// at the destination when the scanner tries to use them.
+const HONEYTOKEN_PATHS: &[&str] = &[
+    "/.env",
+    "/.env.local",
+    "/.env.production",
+    "/.env.backup",
+    "/wp-config.php",
+    "/wp-config.php.bak",
+    "/.git/config",
+    "/config/database.yml",
+    "/config/database.yaml",
+    "/api/v1/keys",
+    "/debug/vars",
+    "/server-info",
+    "/.aws/credentials",
+    "/config.json",
+    "/config.yaml",
+];
+
+/// Check if a request path matches a known scanner credential probe.
+fn is_honeytoken_path(path: &str) -> bool {
+    let clean = path.split('?').next().unwrap_or(path);
+    HONEYTOKEN_PATHS.iter().any(|p| clean == *p)
+}
+
 /// Scatter server configuration.
 #[derive(Debug, Clone)]
 pub struct ScatterConfig {
@@ -83,6 +177,9 @@ pub struct ScatterConfig {
     /// Fraction of requests that get scatter content (0.0-1.0).
     /// Remaining requests get connection abort (status 444).
     pub poison_ratio: f32,
+    /// Maximum concurrent tarpit (slow-drip) connections.
+    /// Set to 0 to disable tarpitting (falls back to instant 429).
+    pub max_tarpit_connections: u32,
 }
 
 /// Run the scatter content server.
@@ -95,7 +192,8 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence) {
             tracing::info!(
                 addr = %config.listen_addr,
                 poison_ratio = config.poison_ratio,
-                "🧪 scatter server active — opsonization endpoint ready"
+                max_tarpit = config.max_tarpit_connections,
+                "🧪 scatter server active — opsonization + tarpit + honeytokens ready"
             );
             l
         }
@@ -107,6 +205,7 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence) {
 
     let generator = Arc::new(ScatterGenerator::new(config.seed));
     let base_ratio = config.poison_ratio;
+    let tarpit = TarpitState::new(config.max_tarpit_connections);
 
     loop {
         let (stream, _peer) = match listener.accept().await {
@@ -119,8 +218,9 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence) {
 
         let sg = Arc::clone(&generator);
         let effective_ratio = confidence.effective_ratio(base_ratio);
+        let tp = tarpit.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_request(stream, &sg, effective_ratio).await {
+            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp).await {
                 tracing::debug!(error = %e, "scatter request handler error");
             }
         });
@@ -131,6 +231,7 @@ async fn handle_request(
     mut stream: tokio::net::TcpStream,
     generator: &ScatterGenerator,
     poison_ratio: f32,
+    tarpit: &TarpitState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (reader, mut writer) = stream.split();
     let mut buf_reader = BufReader::new(reader);
@@ -153,6 +254,32 @@ async fn handle_request(
         if n == 0 || header_line.trim().is_empty() {
             break;
         }
+    }
+
+    // ── Layer 1: TARPIT — Caddy rewrites /tarpit{uri} for P2 SlowDegrade ──
+    if path.starts_with("/tarpit") {
+        let effective_path = path.strip_prefix("/tarpit").unwrap_or(&path);
+        return handle_tarpit(&mut writer, generator, effective_path, tarpit).await;
+    }
+
+    // ── Layer 2: HONEYTOKENS — fake credentials for scanner probes ──
+    if is_honeytoken_path(&path) {
+        let (content_type, body) = generator.generate_honeytoken(&path);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: {content_type}\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: private, max-age=3600\r\n\
+             X-Content-Type-Options: nosniff\r\n\
+             \r\n\
+             {body}",
+            body.len()
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        tracing::info!(path = %path, "🍯 honeytoken served");
+        return Ok(());
     }
 
     // Detect disperse mode — Caddy rewrites /disperse{uri} for P5 targets
@@ -198,6 +325,82 @@ async fn handle_request(
     writer.write_all(response.as_bytes()).await?;
     writer.flush().await?;
 
+    Ok(())
+}
+
+/// Tarpit handler — slow-drip response that wastes scanner connections.
+///
+/// Accepts the connection with 200 OK + chunked transfer, then drip-feeds
+/// fabricated bytes at ~100 bytes/second. Each chunk is valid HTTP chunked
+/// encoding, so the scanner's HTTP client stays connected waiting for more.
+/// Connection ties up one of the scanner's threads for 30-60 seconds.
+async fn handle_tarpit(
+    writer: &mut (impl AsyncWriteExt + Unpin),
+    generator: &ScatterGenerator,
+    path: &str,
+    tarpit: &TarpitState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !tarpit.try_acquire() {
+        let body = "Rate limited. Service unavailable for automated access.";
+        let response = format!(
+            "HTTP/1.1 429 Too Many Requests\r\n\
+             Retry-After: 3600\r\n\
+             Content-Type: text/plain\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        return Ok(());
+    }
+
+    let effective = if path.is_empty() { "/" } else { path };
+    let (_ct, body) = generator.generate(effective);
+    let body_bytes = body.into_bytes();
+
+    let path_hash = path_deterministic_hash(path, generator.seed);
+    let duration_secs = TARPIT_MIN_SECS + (path_hash % (TARPIT_MAX_SECS - TARPIT_MIN_SECS + 1));
+    let total_chunks = (duration_secs * 1000 / TARPIT_DRIP_INTERVAL.as_millis() as u64) as usize;
+
+    let headers = "HTTP/1.1 200 OK\r\n\
+                   Transfer-Encoding: chunked\r\n\
+                   Content-Type: text/html; charset=utf-8\r\n\
+                   Connection: keep-alive\r\n\
+                   Cache-Control: no-cache, no-store\r\n\
+                   \r\n";
+    if writer.write_all(headers.as_bytes()).await.is_err() {
+        tarpit.release();
+        return Ok(());
+    }
+    let _ = writer.flush().await;
+
+    let mut offset = 0;
+    for i in 0..total_chunks {
+        let chunk_data = if offset < body_bytes.len() {
+            let end = std::cmp::min(offset + TARPIT_CHUNK_SIZE, body_bytes.len());
+            let slice = &body_bytes[offset..end];
+            offset = end;
+            slice.to_vec()
+        } else {
+            format!("<!-- p-{:x}-{} -->\n", path_hash, i).into_bytes()
+        };
+
+        let size_line = format!("{:x}\r\n", chunk_data.len());
+        if writer.write_all(size_line.as_bytes()).await.is_err() { break; }
+        if writer.write_all(&chunk_data).await.is_err() { break; }
+        if writer.write_all(b"\r\n").await.is_err() { break; }
+        if writer.flush().await.is_err() { break; }
+
+        tokio::time::sleep(TARPIT_DRIP_INTERVAL).await;
+    }
+
+    let _ = writer.write_all(b"0\r\n\r\n").await;
+    let _ = writer.flush().await;
+
+    tarpit.release();
     Ok(())
 }
 
@@ -351,6 +554,221 @@ impl ScatterGenerator {
                     rng.hex(32),
                 );
                 ("text/plain; charset=utf-8".to_string(), body)
+            }
+        }
+    }
+
+    /// Generate fake-but-plausible credential content for honeytoken paths.
+    ///
+    /// These serve as complement system markers — they look real enough that
+    /// scanners harvest them, but when used elsewhere, the destination
+    /// system's own security detects the intrusion. AWS canary keys trigger
+    /// GuardDuty. GitHub token scanning detects fake PATs. The scanner's
+    /// USE of harvested creds creates consequences without us touching any
+    /// third-party system.
+    fn generate_honeytoken(&self, request_path: &str) -> (String, String) {
+        let mut rng = XorShift64::new(self.path_seed(request_path).wrapping_add(0xCAFE_D00D_BEAD_FACE));
+        let clean = request_path.split('?').next().unwrap_or(request_path);
+
+        match clean {
+            "/.env" | "/.env.local" | "/.env.production" | "/.env.backup" => {
+                let aws_key_id = format!("AKIA{}", rng.upper_alphanum(16));
+                let aws_secret = rng.base64ish(40);
+                let stripe_key = format!("sk_live_{}", rng.alphanum(24));
+                let gh_token = format!("ghp_{}", rng.alphanum(36));
+                let db_pass = rng.alphanum(16);
+                let redis_pass = rng.alphanum(12);
+                let jwt_secret = rng.hex(64);
+                let smtp_pass = rng.alphanum(16);
+                let stripe_webhook = rng.alphanum(24);
+                let session_secret = rng.hex(32);
+                let sentry_key = rng.hex(32);
+                let sentry_org = rng.next_usize() % 999999 + 100000;
+                let sentry_proj = rng.next_usize() % 999999 + 100000;
+
+                let body = format!(
+                    "# Environment configuration — DO NOT COMMIT\n\
+                     # Generated by deploy pipeline\n\
+                     \n\
+                     AWS_ACCESS_KEY_ID={aws_key_id}\n\
+                     AWS_SECRET_ACCESS_KEY={aws_secret}\n\
+                     AWS_DEFAULT_REGION=us-east-1\n\
+                     \n\
+                     STRIPE_SECRET_KEY={stripe_key}\n\
+                     STRIPE_WEBHOOK_SECRET=whsec_{stripe_webhook}\n\
+                     \n\
+                     DATABASE_URL=postgres://app_user:{db_pass}@db-primary.internal:5432/production\n\
+                     DATABASE_POOL_SIZE=25\n\
+                     \n\
+                     REDIS_URL=redis://:{redis_pass}@cache.internal:6379/0\n\
+                     \n\
+                     GITHUB_TOKEN={gh_token}\n\
+                     \n\
+                     JWT_SECRET={jwt_secret}\n\
+                     SESSION_SECRET={session_secret}\n\
+                     \n\
+                     SMTP_HOST=smtp.sendgrid.net\n\
+                     SMTP_USER=apikey\n\
+                     SMTP_PASSWORD={smtp_pass}\n\
+                     \n\
+                     SENTRY_DSN=https://{sentry_key}@o{sentry_org}.ingest.sentry.io/{sentry_proj}\n\
+                     \n\
+                     NODE_ENV=production\n\
+                     LOG_LEVEL=warn\n"
+                );
+                ("text/plain; charset=utf-8".to_string(), body)
+            }
+
+            "/wp-config.php" | "/wp-config.php.bak" => {
+                let db_pass = rng.alphanum(20);
+                let auth_key = rng.base64ish(64);
+                let secure_key = rng.base64ish(64);
+                let logged_key = rng.base64ish(64);
+                let nonce_key = rng.base64ish(64);
+                let auth_salt = rng.base64ish(64);
+                let secure_salt = rng.base64ish(64);
+                let logged_salt = rng.base64ish(64);
+                let nonce_salt = rng.base64ish(64);
+
+                let body = format!(
+                    "<?php\n\
+                     /**\n * WordPress Database Configuration\n */\n\
+                     \n\
+                     define('DB_NAME',     'wordpress_prod');\n\
+                     define('DB_USER',     'wp_admin');\n\
+                     define('DB_PASSWORD', '{db_pass}');\n\
+                     define('DB_HOST',     'db-primary.internal:3306');\n\
+                     define('DB_CHARSET',  'utf8mb4');\n\
+                     define('DB_COLLATE',  '');\n\
+                     \n\
+                     define('AUTH_KEY',         '{auth_key}');\n\
+                     define('SECURE_AUTH_KEY',  '{secure_key}');\n\
+                     define('LOGGED_IN_KEY',    '{logged_key}');\n\
+                     define('NONCE_KEY',        '{nonce_key}');\n\
+                     define('AUTH_SALT',        '{auth_salt}');\n\
+                     define('SECURE_AUTH_SALT', '{secure_salt}');\n\
+                     define('LOGGED_IN_SALT',   '{logged_salt}');\n\
+                     define('NONCE_SALT',       '{nonce_salt}');\n\
+                     \n\
+                     $table_prefix = 'wp_';\n\
+                     define('WP_DEBUG', false);\n\
+                     define('DISALLOW_FILE_EDIT', true);\n\
+                     \n\
+                     if ( !defined('ABSPATH') )\n\
+                     \tdefine('ABSPATH', dirname(__FILE__) . '/');\n\
+                     require_once(ABSPATH . 'wp-settings.php');\n"
+                );
+                ("application/x-httpd-php; charset=utf-8".to_string(), body)
+            }
+
+            "/.git/config" => {
+                let token = rng.alphanum(40);
+                let repo = self.pick(&mut rng, self.repo_names);
+                let org = self.pick(&mut rng, self.repo_names);
+
+                let body = format!(
+                    "[core]\n\
+                     \trepositoryformatversion = 0\n\
+                     \tfilemode = true\n\
+                     \tbare = false\n\
+                     \tlogallrefupdates = true\n\
+                     [remote \"origin\"]\n\
+                     \turl = https://{token}@github.com/{org}/{repo}.git\n\
+                     \tfetch = +refs/heads/*:refs/remotes/origin/*\n\
+                     [branch \"main\"]\n\
+                     \tremote = origin\n\
+                     \tmerge = refs/heads/main\n\
+                     [user]\n\
+                     \tname = deploy-bot\n\
+                     \temail = deploy@internal\n"
+                );
+                ("text/plain; charset=utf-8".to_string(), body)
+            }
+
+            "/config/database.yml" | "/config/database.yaml" => {
+                let prod_pass = rng.alphanum(20);
+                let staging_pass = rng.alphanum(16);
+
+                let body = format!(
+                    "# Database configuration\n\
+                     \n\
+                     production:\n\
+                     \x20 adapter: postgresql\n\
+                     \x20 encoding: unicode\n\
+                     \x20 database: app_production\n\
+                     \x20 username: deploy\n\
+                     \x20 password: {prod_pass}\n\
+                     \x20 host: db-primary.internal\n\
+                     \x20 port: 5432\n\
+                     \x20 pool: 25\n\
+                     \x20 timeout: 5000\n\
+                     \n\
+                     staging:\n\
+                     \x20 adapter: postgresql\n\
+                     \x20 encoding: unicode\n\
+                     \x20 database: app_staging\n\
+                     \x20 username: staging_user\n\
+                     \x20 password: {staging_pass}\n\
+                     \x20 host: db-staging.internal\n\
+                     \x20 port: 5432\n\
+                     \x20 pool: 10\n\
+                     \n\
+                     test:\n\
+                     \x20 adapter: sqlite3\n\
+                     \x20 database: db/test.sqlite3\n"
+                );
+                ("text/yaml; charset=utf-8".to_string(), body)
+            }
+
+            "/api/v1/keys" => {
+                let key1 = format!("sk_prod_{}", rng.alphanum(32));
+                let key2 = format!("sk_stg_{}", rng.alphanum(32));
+                let key3 = format!("sk_dev_{}", rng.alphanum(32));
+
+                let body = format!(
+                    r#"{{"api_version":"v1","keys":[{{"id":1,"name":"production","key":"{key1}","scope":"read_write","created_at":"2026-01-15T08:30:00Z","last_used":"2026-10-05T14:22:00Z"}},{{"id":2,"name":"staging","key":"{key2}","scope":"read_write","created_at":"2026-03-22T10:15:00Z","last_used":"2026-10-04T09:11:00Z"}},{{"id":3,"name":"development","key":"{key3}","scope":"read_only","created_at":"2026-06-01T16:45:00Z","last_used":"2026-09-30T11:05:00Z"}}]}}"#
+                );
+                ("application/json; charset=utf-8".to_string(), body)
+            }
+
+            "/.aws/credentials" => {
+                let access_key = format!("AKIA{}", rng.upper_alphanum(16));
+                let secret_key = rng.base64ish(40);
+                let access_key2 = format!("AKIA{}", rng.upper_alphanum(16));
+                let secret_key2 = rng.base64ish(40);
+
+                let body = format!(
+                    "[default]\n\
+                     aws_access_key_id = {access_key}\n\
+                     aws_secret_access_key = {secret_key}\n\
+                     region = us-east-1\n\
+                     \n\
+                     [production]\n\
+                     aws_access_key_id = {access_key2}\n\
+                     aws_secret_access_key = {secret_key2}\n\
+                     region = us-east-2\n"
+                );
+                ("text/plain; charset=utf-8".to_string(), body)
+            }
+
+            _ => {
+                let api_key = rng.alphanum(32);
+                let secret = rng.hex(64);
+                let db_pass = rng.alphanum(16);
+                let body = format!(
+                    "{{\n\
+                     \x20 \"api_key\": \"{api_key}\",\n\
+                     \x20 \"api_secret\": \"{secret}\",\n\
+                     \x20 \"environment\": \"production\",\n\
+                     \x20 \"debug\": false,\n\
+                     \x20 \"database\": {{\n\
+                     \x20\x20\x20 \"host\": \"db-primary.internal\",\n\
+                     \x20\x20\x20 \"port\": 5432,\n\
+                     \x20\x20\x20 \"password\": \"{db_pass}\"\n\
+                     \x20 }}\n\
+                     }}\n"
+                );
+                ("application/json; charset=utf-8".to_string(), body)
             }
         }
     }
@@ -694,6 +1112,27 @@ impl XorShift64 {
         s.truncate(len);
         s
     }
+
+    fn alphanum(&mut self, len: usize) -> String {
+        const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        (0..len)
+            .map(|_| CHARSET[self.next_usize() % CHARSET.len()] as char)
+            .collect()
+    }
+
+    fn upper_alphanum(&mut self, len: usize) -> String {
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        (0..len)
+            .map(|_| CHARSET[self.next_usize() % CHARSET.len()] as char)
+            .collect()
+    }
+
+    fn base64ish(&mut self, len: usize) -> String {
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        (0..len)
+            .map(|_| CHARSET[self.next_usize() % CHARSET.len()] as char)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -864,5 +1303,140 @@ mod tests {
 
         conf.update(-1.0); // under 0.0
         assert!(conf.read() < 0.01);
+    }
+
+    // ── Layer 1: Tarpit tests ──
+
+    #[test]
+    fn tarpit_acquire_and_release() {
+        let tp = TarpitState::new(2);
+        assert!(tp.try_acquire());
+        assert!(tp.try_acquire());
+        assert!(!tp.try_acquire()); // at capacity
+        assert_eq!(tp.active_count(), 2);
+
+        tp.release();
+        assert_eq!(tp.active_count(), 1);
+        assert!(tp.try_acquire()); // slot freed
+    }
+
+    #[test]
+    fn tarpit_zero_max_rejects_all() {
+        let tp = TarpitState::new(0);
+        assert!(!tp.try_acquire());
+    }
+
+    // ── Layer 2: Honeytoken tests ──
+
+    #[test]
+    fn honeytoken_path_detection() {
+        assert!(is_honeytoken_path("/.env"));
+        assert!(is_honeytoken_path("/.env.local"));
+        assert!(is_honeytoken_path("/wp-config.php"));
+        assert!(is_honeytoken_path("/.git/config"));
+        assert!(is_honeytoken_path("/api/v1/keys"));
+        assert!(is_honeytoken_path("/.aws/credentials"));
+        assert!(is_honeytoken_path("/config/database.yml"));
+        assert!(is_honeytoken_path("/.env?cachebust=1"));
+
+        assert!(!is_honeytoken_path("/"));
+        assert!(!is_honeytoken_path("/org/repo/commit/abc"));
+        assert!(!is_honeytoken_path("/robots.txt"));
+    }
+
+    #[test]
+    fn honeytoken_env_has_aws_keys() {
+        let sg = ScatterGenerator::new(42);
+        let (ct, body) = sg.generate_honeytoken("/.env");
+        assert_eq!(ct, "text/plain; charset=utf-8");
+        assert!(body.contains("AKIA"), "should contain AWS key prefix");
+        assert!(body.contains("AWS_SECRET_ACCESS_KEY="));
+        assert!(body.contains("STRIPE_SECRET_KEY=sk_live_"));
+        assert!(body.contains("GITHUB_TOKEN=ghp_"));
+        assert!(body.contains("DATABASE_URL=postgres://"));
+    }
+
+    #[test]
+    fn honeytoken_env_deterministic() {
+        let sg = ScatterGenerator::new(42);
+        let (_, body1) = sg.generate_honeytoken("/.env");
+        let (_, body2) = sg.generate_honeytoken("/.env");
+        assert_eq!(body1, body2);
+    }
+
+    #[test]
+    fn honeytoken_env_different_seeds() {
+        let sg1 = ScatterGenerator::new(42);
+        let sg2 = ScatterGenerator::new(99);
+        let (_, body1) = sg1.generate_honeytoken("/.env");
+        let (_, body2) = sg2.generate_honeytoken("/.env");
+        assert_ne!(body1, body2);
+    }
+
+    #[test]
+    fn honeytoken_wp_config() {
+        let sg = ScatterGenerator::new(42);
+        let (ct, body) = sg.generate_honeytoken("/wp-config.php");
+        assert!(ct.contains("php"));
+        assert!(body.contains("DB_PASSWORD"));
+        assert!(body.contains("AUTH_KEY"));
+        assert!(body.contains("wordpress_prod"));
+    }
+
+    #[test]
+    fn honeytoken_git_config() {
+        let sg = ScatterGenerator::new(42);
+        let (_, body) = sg.generate_honeytoken("/.git/config");
+        assert!(body.contains("[remote \"origin\"]"));
+        assert!(body.contains("github.com"));
+        assert!(body.contains("@"));
+    }
+
+    #[test]
+    fn honeytoken_aws_credentials() {
+        let sg = ScatterGenerator::new(42);
+        let (_, body) = sg.generate_honeytoken("/.aws/credentials");
+        assert!(body.contains("AKIA"));
+        assert!(body.contains("[default]"));
+        assert!(body.contains("[production]"));
+    }
+
+    #[test]
+    fn honeytoken_api_keys_json() {
+        let sg = ScatterGenerator::new(42);
+        let (ct, body) = sg.generate_honeytoken("/api/v1/keys");
+        assert!(ct.contains("json"));
+        assert!(body.contains("sk_prod_"));
+        assert!(body.contains("sk_stg_"));
+    }
+
+    #[test]
+    fn honeytoken_database_yml() {
+        let sg = ScatterGenerator::new(42);
+        let (ct, body) = sg.generate_honeytoken("/config/database.yml");
+        assert!(ct.contains("yaml"));
+        assert!(body.contains("production:"));
+        assert!(body.contains("password:"));
+        assert!(body.contains("postgresql"));
+    }
+
+    #[test]
+    fn honeytoken_no_real_data_leaked() {
+        let sg = ScatterGenerator::new(42);
+        for path in HONEYTOKEN_PATHS {
+            let (_, body) = sg.generate_honeytoken(path);
+            assert!(!body.contains("ecoPrimal"), "leaked ecoPrimal in {path}");
+            assert!(!body.contains("primals.eco"), "leaked primals.eco in {path}");
+            assert!(!body.contains("skunkBat"), "leaked skunkBat in {path}");
+            assert!(!body.contains("golgiBody"), "leaked golgiBody in {path}");
+        }
+    }
+
+    #[test]
+    fn xorshift_alphanum_len() {
+        let mut rng = XorShift64::new(42);
+        assert_eq!(rng.alphanum(16).len(), 16);
+        assert_eq!(rng.upper_alphanum(20).len(), 20);
+        assert_eq!(rng.base64ish(40).len(), 40);
     }
 }

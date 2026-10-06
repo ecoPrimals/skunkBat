@@ -18,9 +18,11 @@ mod error;
 pub mod fleet;
 pub mod lysogeny;
 mod rpc;
+pub mod abuse_reporter;
 pub mod bloom_sensor;
 pub mod scatter_server;
 pub mod signal_spine;
+pub mod threat_feed;
 
 use error::IngestError;
 
@@ -119,6 +121,12 @@ struct Cli {
     /// Remaining requests get connection abort.
     #[arg(long, default_value_t = 0.3)]
     scatter_ratio: f32,
+
+    /// Maximum concurrent tarpit connections (Layer 1 active defense).
+    /// Each tarpit connection holds a scanner thread for 30-60 seconds.
+    /// Set to 0 to disable tarpitting (falls back to instant 429).
+    #[arg(long, default_value_t = 100)]
+    max_tarpit_connections: u32,
 }
 
 #[tokio::main]
@@ -333,6 +341,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             listen_addr: std::net::SocketAddr::from(([127, 0, 0, 1], cli.scatter_port)),
             seed: cli.scatter_seed,
             poison_ratio: cli.scatter_ratio,
+            max_tarpit_connections: cli.max_tarpit_connections,
         };
         tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone()));
     }
@@ -349,6 +358,25 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     }
     let mut signal_spine = signal_spine::SignalSpine::new(&spine_dir);
     tracing::info!("📜 signal spine active — immune memory chain");
+
+    // Abuse report queue — cytokine signaling (Layer 3)
+    let abuse_queue_dir = PathBuf::from("/run/membrane/abuse-queue");
+    let abuse_queue = abuse_reporter::AbuseReportQueue::new(&abuse_queue_dir);
+    tracing::info!(
+        path = %abuse_queue_dir.display(),
+        "📨 abuse report queue initialized (manual review gate active)"
+    );
+
+    // Threat intelligence feed — MHC presentation (Layer 4)
+    let threat_feed_path = PathBuf::from("/opt/ecoPrimals/detroit/public/defense/feed.json");
+    if let Some(parent) = threat_feed_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut threat_indicators: Vec<threat_feed::ThreatIndicator> = Vec::new();
+    tracing::info!(
+        path = %threat_feed_path.display(),
+        "📡 threat feed path configured"
+    );
 
     let poll_interval = Duration::from_millis(cli.poll_ms);
 
@@ -436,6 +464,8 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     &mut bloom_sensor,
                     &bloom_signal_path,
                     &mut signal_spine,
+                    &mut threat_indicators,
+                    &threat_feed_path,
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -533,6 +563,12 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             root = %spine_entry.merkle_root,
             "📜 signal spine flushed on shutdown"
         );
+
+        // Layer 4: Generate final threat feed on shutdown
+        let feed = threat_feed::generate_feed(&spine_entry, &threat_indicators);
+        if let Err(e) = threat_feed::write_feed(&feed, &threat_feed_path) {
+            tracing::warn!(error = %e, "threat feed write failed on shutdown");
+        }
     }
 
     cursor::save(&cli.cursor_path, state.byte_offset).await?;
@@ -562,6 +598,8 @@ async fn process_line(
     bloom: &mut bloom_sensor::BloomSensor,
     bloom_signal_path: &std::path::Path,
     spine: &mut signal_spine::SignalSpine,
+    threat_indicators: &mut Vec<threat_feed::ThreatIndicator>,
+    threat_feed_path: &std::path::Path,
 ) {
     if trimmed.is_empty() {
         return;
@@ -599,6 +637,13 @@ async fn process_line(
                 root = %spine_entry.merkle_root,
                 "📜 spine day committed"
             );
+
+            // Layer 4: Generate threat intelligence feed on day commit
+            let feed = threat_feed::generate_feed(&spine_entry, threat_indicators);
+            if let Err(e) = threat_feed::write_feed(&feed, threat_feed_path) {
+                tracing::warn!(error = %e, "threat feed write failed");
+            }
+            threat_indicators.clear();
         }
     }
 
@@ -710,6 +755,23 @@ async fn process_line(
                     effective_ratio = %format!("{:.0}%", scatter_confidence.effective_ratio(base_scatter_ratio) * 100.0),
                     "🏷️ opsonize tag emitted — behavioral hash {bhash}"
                 );
+
+                // Layer 4: Accumulate threat indicator for daily feed
+                let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                threat_indicators.push(threat_feed::ThreatIndicator {
+                    behavioral_hash: bhash.clone(),
+                    detectors: detectors.clone(),
+                    confidence: tag.confidence,
+                    probe_paths: Vec::new(),
+                    timing_signature: if fleet_obs.deception.encoding_uniform {
+                        "metronomic".to_string()
+                    } else {
+                        "varied".to_string()
+                    },
+                    estimated_fleet_size: fleet_obs.unique_ips,
+                    first_observed: today.clone(),
+                    last_observed: today,
+                });
 
                 // Emit via skunkBat RPC for gossip propagation
                 let tag_json = serde_json::to_value(&tag).unwrap_or_default();

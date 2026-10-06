@@ -127,6 +127,33 @@ git.primals.eco {
 		abort
 	}
 
+	# ═══ LAYER 7.5: HONEYTOKENS — complement system (credential bait) ═══
+	# Serve fake-but-plausible credentials for common scanner probe paths.
+	# When scanners harvest and USE these elsewhere, the destination system's
+	# own security catches them (AWS GuardDuty, GitHub token scanning, etc.).
+	# Deterministic per seed — same path always returns the same fake creds.
+
+	@honeytoken_probe {
+		path /.env
+		path /.env.local
+		path /.env.production
+		path /.env.backup
+		path /wp-config.php
+		path /wp-config.php.bak
+		path /.git/config
+		path /config/database.yml
+		path /config/database.yaml
+		path /api/v1/keys
+		path /debug/vars
+		path /server-info
+		path /.aws/credentials
+		path /config.json
+		path /config.yaml
+	}
+	handle @honeytoken_probe {
+		reverse_proxy localhost:9753
+	}
+
 	# ═══ LAYER 8: OUTER MEMBRANE (default — zero trust) ═══
 	#
 	# This is the inversion: unauthenticated, unrecognized traffic
