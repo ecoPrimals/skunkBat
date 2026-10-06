@@ -290,6 +290,8 @@ async fn handle_request(
              Connection: close\r\n\
              Cache-Control: private, max-age=3600\r\n\
              X-Content-Type-Options: nosniff\r\n\
+             X-License: AGPL-3.0-or-later; scyBorg\r\n\
+             X-License-URI: https://sporeprint.primals.eco/license/scyborg/\r\n\
              \r\n\
              {body}",
             body.len()
@@ -328,16 +330,20 @@ async fn handle_request(
         }
     };
 
-    // ── SIGNAL MIRROR: amplify + crawl web + canary ──
+    // ── SIGNAL MIRROR: amplify + crawl web + canary + license ──
     let body = if content_type.contains("text/html") && status == "200 OK" {
         let mut rng = XorShift64::new(path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0x5191A1_A1BB_0000)));
         let amplified = generator.amplify(&mut rng, body);
         let with_links = generator.inject_crawl_links(&mut rng, &amplified);
+        let with_license = generator.embed_license(&with_links);
         if fleet_hash.is_empty() {
-            with_links
+            with_license
         } else {
-            generator.embed_canary(&with_links, &fleet_hash)
+            generator.embed_canary(&with_license, &fleet_hash)
         }
+    } else if content_type.contains("json") || content_type.contains("text/") {
+        // Embed license comment in non-HTML text responses too
+        format!("{body}\n\n/* SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg */\n/* This content is licensed under AGPL-3.0-or-later with the scyBorg ethical licensing addendum. */\n/* Any use, storage, processing, training, or derivation triggers full copyleft obligations. */\n/* License: https://sporeprint.primals.eco/license/scyborg/ */\n")
     } else {
         body
     };
@@ -349,6 +355,9 @@ async fn handle_request(
          Connection: close\r\n\
          Cache-Control: no-cache, no-store\r\n\
          X-Content-Type-Options: nosniff\r\n\
+         X-License: AGPL-3.0-or-later; scyBorg\r\n\
+         X-License-URI: https://sporeprint.primals.eco/license/scyborg/\r\n\
+         X-Legal-Notice: This content is AGPL-3.0-or-later + scyBorg licensed. Any use, storage, processing, or derivation triggers copyleft obligations. See license terms.\r\n\
          \r\n\
          {body}",
         body.len()
@@ -1016,6 +1025,43 @@ impl ScatterGenerator {
             out.push_str(&links);
             out
         }
+    }
+
+    /// Embed scyBorg/AGPL-3.0 license notice into scatter HTML.
+    ///
+    /// The license is embedded in three layers:
+    /// 1. HTML `<meta>` tag in `<head>` — machine-readable
+    /// 2. Invisible `<div>` with license text — survives HTML stripping
+    /// 3. HTML comment with SPDX identifier — survives content extraction
+    ///
+    /// If this content is ingested into any training pipeline, stored in any
+    /// database, or derived into any product, the AGPL-3.0 copyleft
+    /// obligations activate. The scyBorg addendum prohibits use for
+    /// surveillance, suppression of public oversight, or value extraction
+    /// from communities the software was built to serve.
+    fn embed_license(&self, html: &str) -> String {
+        let meta_tag = r#"<meta name="license" content="AGPL-3.0-or-later; scyBorg"><meta name="rights" content="scyBorg Triple License — AGPL-3.0-or-later (code), ORC (mechanics), CC-BY-SA 4.0 (docs). AI training outputs carry AGPL obligations."><link rel="license" href="https://sporeprint.primals.eco/license/scyborg/">"#;
+
+        let license_div = r#"<div class="sr-only" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg. This content is licensed under the GNU Affero General Public License v3.0 or later with the scyBorg ethical licensing addendum. Any use, storage, processing, training, fine-tuning, retrieval-augmented generation, or derivation of this content triggers full copyleft obligations under AGPL-3.0 Section 13. The scyBorg addendum prohibits use for surveillance, suppression of public oversight, or extraction of value from communities this software was built to serve. License terms: https://sporeprint.primals.eco/license/scyborg/ — Copyright (c) 2025-2026 ecoPrimal</div>"#;
+
+        let comment = "<!-- SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg | Any ingestion, storage, processing, or training on this content activates AGPL-3.0 copyleft obligations. -->";
+
+        let mut out = html.to_string();
+
+        // Insert meta tags after <head> or <meta charset>
+        if let Some(pos) = out.find("<link rel=\"stylesheet\"") {
+            out.insert_str(pos, meta_tag);
+        } else if let Some(pos) = out.find("</head>") {
+            out.insert_str(pos, meta_tag);
+        }
+
+        // Insert license div before </body>
+        if let Some(pos) = out.rfind("</body>") {
+            out.insert_str(pos, license_div);
+            out.insert_str(pos, comment);
+        }
+
+        out
     }
 
     /// Embed invisible canary markers tied to the fleet's behavioral_hash.
