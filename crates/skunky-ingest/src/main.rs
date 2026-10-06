@@ -20,6 +20,7 @@ pub mod lysogeny;
 mod rpc;
 pub mod bloom_sensor;
 pub mod scatter_server;
+pub mod signal_spine;
 
 use error::IngestError;
 
@@ -341,6 +342,14 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     let bloom_signal_path = PathBuf::from("/run/membrane/bloom.signal");
     tracing::info!("🌸 bloom sensor active — afferent signal accumulation");
 
+    // Signal spine — immune memory (content-addressed observation chain)
+    let spine_dir = PathBuf::from("/run/membrane/signal-spine");
+    if let Err(e) = std::fs::create_dir_all(&spine_dir) {
+        tracing::warn!(error = %e, "failed to create signal-spine directory");
+    }
+    let mut signal_spine = signal_spine::SignalSpine::new(&spine_dir);
+    tracing::info!("📜 signal spine active — immune memory chain");
+
     let poll_interval = Duration::from_millis(cli.poll_ms);
 
     let mut line_buf = String::new();
@@ -426,6 +435,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     cli.scatter_ratio,
                     &mut bloom_sensor,
                     &bloom_signal_path,
+                    &mut signal_spine,
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -504,6 +514,25 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             "🌸 final bloom flush"
         );
         write_bloom_signal(&bloom_signal_path, &obs).await;
+
+        // Feed the final observation into the spine before shutdown.
+        if let Some(spine_entry) = signal_spine.ingest(&obs) {
+            tracing::info!(
+                date = %spine_entry.date,
+                windows = spine_entry.window_count,
+                "📜 spine day committed (pre-shutdown)"
+            );
+        }
+    }
+
+    // Flush signal spine — commit whatever we have for today.
+    if let Some(spine_entry) = signal_spine.flush() {
+        tracing::info!(
+            date = %spine_entry.date,
+            windows = spine_entry.window_count,
+            root = %spine_entry.merkle_root,
+            "📜 signal spine flushed on shutdown"
+        );
     }
 
     cursor::save(&cli.cursor_path, state.byte_offset).await?;
@@ -532,6 +561,7 @@ async fn process_line(
     base_scatter_ratio: f32,
     bloom: &mut bloom_sensor::BloomSensor,
     bloom_signal_path: &std::path::Path,
+    spine: &mut signal_spine::SignalSpine,
 ) {
     if trimmed.is_empty() {
         return;
@@ -560,6 +590,16 @@ async fn process_line(
             "🌸 bloom observation"
         );
         write_bloom_signal(bloom_signal_path, &obs).await;
+
+        // Signal spine — chain the observation into immune memory.
+        if let Some(spine_entry) = spine.ingest(&obs) {
+            tracing::info!(
+                date = %spine_entry.date,
+                windows = spine_entry.window_count,
+                root = %spine_entry.merkle_root,
+                "📜 spine day committed"
+            );
+        }
     }
 
     // Per-IP aggregation
