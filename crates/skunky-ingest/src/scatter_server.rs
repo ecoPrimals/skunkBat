@@ -246,13 +246,20 @@ async fn handle_request(
         .unwrap_or("/")
         .to_string();
 
-    // Consume remaining headers (read until empty line)
+    // Consume remaining headers, extract X-Fleet-Hash for canary embedding
     let mut header_line = String::new();
+    let mut fleet_hash = String::new();
     loop {
         header_line.clear();
         let n = buf_reader.read_line(&mut header_line).await?;
         if n == 0 || header_line.trim().is_empty() {
             break;
+        }
+        if header_line.to_ascii_lowercase().starts_with("x-fleet-hash:") {
+            fleet_hash = header_line
+                .split_once(':')
+                .map(|(_, v)| v.trim().to_string())
+                .unwrap_or_default();
         }
     }
 
@@ -310,6 +317,20 @@ async fn handle_request(
         }
     };
 
+    // ── SIGNAL MIRROR: amplify + crawl web + canary ──
+    let body = if content_type.contains("text/html") && status == "200 OK" {
+        let mut rng = XorShift64::new(path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0x5191A1_A1BB_0000)));
+        let amplified = generator.amplify(&mut rng, body);
+        let with_links = generator.inject_crawl_links(&mut rng, &amplified);
+        if fleet_hash.is_empty() {
+            with_links
+        } else {
+            generator.embed_canary(&with_links, &fleet_hash)
+        }
+    } else {
+        body
+    };
+
     let response = format!(
         "HTTP/1.1 {status}\r\n\
          Content-Type: {content_type}\r\n\
@@ -324,6 +345,16 @@ async fn handle_request(
 
     writer.write_all(response.as_bytes()).await?;
     writer.flush().await?;
+
+    // Counter-intelligence logging
+    let hash_tag = if fleet_hash.is_empty() { "none" } else { &fleet_hash };
+    tracing::info!(
+        path = %effective_path,
+        bytes = body.len(),
+        fleet_hash = %hash_tag,
+        status = %status,
+        "🪞 scatter served"
+    );
 
     Ok(())
 }
@@ -422,6 +453,26 @@ static NOT_FOUND_PAGE: &str = r#"<!DOCTYPE html>
 </div>
 </body>
 </html>"#;
+
+/// Encode a hex string as zero-width Unicode characters for canary embedding.
+/// Uses zero-width space (U+200B) and zero-width non-joiner (U+200C) to
+/// represent binary 0/1. Invisible in rendered HTML but detectable in source.
+fn encode_zwc(hex_str: &str) -> String {
+    let mut out = String::new();
+    out.push('\u{FEFF}'); // BOM as start marker
+    for ch in hex_str.chars().take(16) {
+        let nibble = ch.to_digit(16).unwrap_or(0) as u8;
+        for bit in (0..4).rev() {
+            if (nibble >> bit) & 1 == 1 {
+                out.push('\u{200C}'); // ZWNJ = 1
+            } else {
+                out.push('\u{200B}'); // ZWS = 0
+            }
+        }
+    }
+    out.push('\u{FEFF}'); // BOM as end marker
+    out
+}
 
 /// Deterministic hash for a path — same path always gets the same decision.
 fn path_deterministic_hash(path: &str, seed: u64) -> u64 {
@@ -801,6 +852,204 @@ impl ScatterGenerator {
 
     fn pick<'a>(&self, rng: &mut XorShift64, items: &[&'a str]) -> &'a str {
         items[rng.next_usize() % items.len()]
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Signal Mirror: Amplify + Crawl Web + Canary
+    // ══════════════════════════════════════════════════════════════════
+
+    /// Amplify scatter HTML with fabricated file trees, commit history,
+    /// and contributor metadata. Inflates ~1.5KB responses to 50-200KB.
+    /// The fleet pays per-byte through residential proxies — every KB
+    /// of poison costs them money and storage.
+    fn amplify(&self, rng: &mut XorShift64, base_html: String) -> String {
+        let mut out = String::with_capacity(120_000);
+
+        // Keep original content up to </body>
+        let (before_close, _) = base_html
+            .rsplit_once("</body>")
+            .unwrap_or((&base_html, ""));
+        out.push_str(before_close);
+
+        // Fabricated file tree — 80-120 entries
+        let tree_size = 80 + rng.next_usize() % 40;
+        out.push_str(r#"<div class="repository-file-list"><table class="ui attached table segment"><tbody>"#);
+        for _ in 0..tree_size {
+            let dir = self.pick(rng, self.repo_names);
+            let ext = self.pick(rng, self.file_extensions);
+            let name = self.pick(rng, self.repo_names);
+            let hash = rng.hex(8);
+            let size = rng.next_usize() % 50000 + 100;
+            let verb = self.pick(rng, self.commit_verbs);
+            let noun = self.pick(rng, self.commit_nouns);
+            out.push_str(&format!(
+                r#"<tr><td class="name"><a href="/{dir}/src/branch/main/{name}.{ext}">{name}.{ext}</a></td><td class="message"><a href="/{dir}/commit/{hash}">{verb}: {noun}</a></td><td class="text right">{size} B</td></tr>"#
+            ));
+        }
+        out.push_str("</tbody></table></div>");
+
+        // Fabricated commit history — 30-50 entries
+        let commit_count = 30 + rng.next_usize() % 20;
+        out.push_str(r#"<div class="repository-commits"><div class="ui attached segment">"#);
+        for i in 0..commit_count {
+            let hash = rng.hex(40);
+            let short = &hash[..8];
+            let repo = self.pick(rng, self.repo_names);
+            let verb = self.pick(rng, self.commit_verbs);
+            let noun = self.pick(rng, self.commit_nouns);
+            let days = i + 1;
+            let adds = rng.next_usize() % 200 + 1;
+            let dels = rng.next_usize() % 80;
+            out.push_str(&format!(
+                r#"<div class="singular-commit"><a class="sha label" href="/{repo}/commit/{hash}">{short}</a><span class="commit-summary">{verb}: {noun}</span><span class="time-since">{days} days ago</span><span class="diff-stat"><span class="color-green">+{adds}</span> <span class="color-red">-{dels}</span></span></div>"#
+            ));
+        }
+        out.push_str("</div></div>");
+
+        // Fabricated contributor list — 8-15 entries
+        let contrib_count = 8 + rng.next_usize() % 7;
+        out.push_str(r#"<div class="ui attached segment contributors"><h4>Contributors</h4><div class="ui avatar-list">"#);
+        for _ in 0..contrib_count {
+            let name = self.pick(rng, self.repo_names);
+            let commits = rng.next_usize() % 200 + 5;
+            let avatar_hash = rng.hex(32);
+            out.push_str(&format!(
+                r#"<div class="contributor"><img class="ui avatar" src="/avatars/{avatar_hash}" width="28" height="28"><a href="/user/{name}">{name}</a> <span class="text grey">{commits} commits</span></div>"#
+            ));
+        }
+        out.push_str("</div></div>");
+
+        // Fabricated branch list — 5-10 entries
+        let branch_count = 5 + rng.next_usize() % 5;
+        out.push_str(r#"<div class="ui attached segment branches"><h4>Branches</h4><ul>"#);
+        for _ in 0..branch_count {
+            let prefix = ["feature", "fix", "release", "dev", "hotfix"][rng.next_usize() % 5];
+            let name = self.pick(rng, self.repo_names);
+            let hash = rng.hex(8);
+            out.push_str(&format!(
+                r#"<li><a href="/commit/{hash}">{prefix}/{name}</a></li>"#
+            ));
+        }
+        out.push_str("</ul></div>");
+
+        // Fabricated tag list — 5-8 entries
+        let tag_count = 5 + rng.next_usize() % 3;
+        out.push_str(r#"<div class="ui attached segment tags"><h4>Tags</h4><ul>"#);
+        for _ in 0..tag_count {
+            let major = rng.next_usize() % 4;
+            let minor = rng.next_usize() % 20;
+            let patch = rng.next_usize() % 30;
+            let hash = rng.hex(8);
+            out.push_str(&format!(
+                r#"<li><a href="/commit/{hash}">v{major}.{minor}.{patch}</a></li>"#
+            ));
+        }
+        out.push_str("</ul></div>");
+
+        out.push_str("</body></html>");
+        out
+    }
+
+    /// Inject 15-25 internal links into scatter HTML that point to other
+    /// scatter-served paths. Creates an infinite crawl web: each generated
+    /// page links to more generated pages. The fleet's crawler follows
+    /// links, multiplying their request count and bandwidth consumption.
+    fn inject_crawl_links(&self, rng: &mut XorShift64, html: &str) -> String {
+        let link_count = 15 + rng.next_usize() % 10;
+        let mut links = String::with_capacity(link_count * 150);
+
+        links.push_str(r#"<div class="ui attached segment related"><h4>Related</h4><div class="ui relaxed list">"#);
+        for _ in 0..link_count {
+            let org = ["ecoPrimals", "sporeGarden", "syntheticChemistry"][rng.next_usize() % 3];
+            let repo = self.pick(rng, self.repo_names);
+            let hash = rng.hex(40);
+            let verb = self.pick(rng, self.commit_verbs);
+            let noun = self.pick(rng, self.commit_nouns);
+            let ext = self.pick(rng, self.file_extensions);
+            let file = self.pick(rng, self.repo_names);
+
+            let link_type = rng.next_usize() % 4;
+            let (href, text) = match link_type {
+                0 => (
+                    format!("/{org}/{repo}/src/branch/main/src/{file}.{ext}"),
+                    format!("{repo}/src/{file}.{ext}"),
+                ),
+                1 => (
+                    format!("/{org}/{repo}/commit/{hash}"),
+                    format!("{verb}: {noun}"),
+                ),
+                2 => (
+                    format!("/{org}/{repo}/issues/{}", rng.next_usize() % 200 + 1),
+                    format!("{repo} #{}", rng.next_usize() % 200 + 1),
+                ),
+                _ => (
+                    format!("/{org}/{repo}/src/branch/main/{file}/README.md"),
+                    format!("{repo}/{file}/"),
+                ),
+            };
+            links.push_str(&format!(
+                r#"<div class="item"><a href="{href}">{text}</a></div>"#
+            ));
+        }
+        links.push_str("</div></div>");
+
+        // Insert before </body>
+        if let Some(pos) = html.rfind("</body>") {
+            let mut out = String::with_capacity(html.len() + links.len());
+            out.push_str(&html[..pos]);
+            out.push_str(&links);
+            out.push_str(&html[pos..]);
+            out
+        } else {
+            let mut out = html.to_string();
+            out.push_str(&links);
+            out
+        }
+    }
+
+    /// Embed invisible canary markers tied to the fleet's behavioral_hash.
+    /// If this content surfaces anywhere (AI training, republication,
+    /// intelligence reports), the markers trace it back to this specific
+    /// exfiltration event.
+    fn embed_canary(&self, html: &str, behavioral_hash: &str) -> String {
+        let hash_short = &behavioral_hash[..behavioral_hash.len().min(16)];
+        let ts_window = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 3600) // 1-hour windows
+            .unwrap_or(0);
+
+        let mut out = html.to_string();
+
+        // Layer 1: HTML comment canaries (2 per page, different positions)
+        let c1 = format!("<!-- m-{hash_short}-{ts_window} -->");
+        let c2 = format!("<!-- v-{ts_window}-{hash_short} -->");
+        if let Some(pos) = out.find("<div class=\"ui container\">") {
+            out.insert_str(pos, &c1);
+        }
+        if let Some(pos) = out.rfind("</div>") {
+            out.insert_str(pos, &c2);
+        }
+
+        // Layer 2: CSS class canary — encoded hash in class name
+        let class_canary = format!(
+            r#"<span class="sr-only c-{}-{}"></span>"#,
+            &hash_short[..hash_short.len().min(8)],
+            ts_window % 10000,
+        );
+        if let Some(pos) = out.find("</body>") {
+            out.insert_str(pos, &class_canary);
+        }
+
+        // Layer 3: Zero-width Unicode markers in text content
+        // Encode hash_short as zero-width char sequence
+        let zwc = encode_zwc(hash_short);
+        if let Some(pos) = out.find("</h1>") {
+            out.insert_str(pos, &zwc);
+        } else if let Some(pos) = out.find("</h2>") {
+            out.insert_str(pos, &zwc);
+        }
+
+        out
     }
 
     fn gen_commit(&self, rng: &mut XorShift64) -> (String, String) {
@@ -1293,6 +1542,98 @@ mod tests {
             assert!(!body.contains("skunkBat"), "leaked skunkBat in disperse variant");
             assert!(!body.contains("wateringHole"), "leaked wateringHole in disperse variant");
         }
+    }
+
+    // ── Signal Mirror tests ──
+
+    #[test]
+    fn amplify_inflates_response() {
+        let sg = ScatterGenerator::new(42);
+        let (_, base) = sg.generate("/org/repo/commit/abc123");
+        let base_len = base.len();
+        let mut rng = XorShift64::new(12345);
+        let amplified = sg.amplify(&mut rng, base);
+        assert!(
+            amplified.len() > base_len * 10,
+            "amplified ({}) should be >10x base ({})",
+            amplified.len(),
+            base_len
+        );
+        assert!(amplified.contains("repository-file-list"));
+        assert!(amplified.contains("repository-commits"));
+        assert!(amplified.contains("contributors"));
+        assert!(amplified.contains("</body>"));
+    }
+
+    #[test]
+    fn amplify_deterministic() {
+        let sg = ScatterGenerator::new(42);
+        let (_, base) = sg.generate("/org/repo/commit/abc123");
+        let mut rng1 = XorShift64::new(12345);
+        let mut rng2 = XorShift64::new(12345);
+        let a1 = sg.amplify(&mut rng1, base.clone());
+        let a2 = sg.amplify(&mut rng2, base);
+        assert_eq!(a1, a2);
+    }
+
+    #[test]
+    fn amplify_no_real_names() {
+        let sg = ScatterGenerator::new(42);
+        let (_, base) = sg.generate("/org/repo/commit/abc123");
+        let mut rng = XorShift64::new(99);
+        let amplified = sg.amplify(&mut rng, base);
+        assert!(!amplified.contains("whitePaper"));
+        assert!(!amplified.contains("sporePrint"));
+        assert!(!amplified.contains("siltPond"));
+    }
+
+    #[test]
+    fn crawl_links_injected() {
+        let sg = ScatterGenerator::new(42);
+        let (_, base) = sg.generate("/org/repo/commit/abc123");
+        let mut rng = XorShift64::new(777);
+        let with_links = sg.inject_crawl_links(&mut rng, &base);
+        assert!(with_links.len() > base.len());
+        assert!(with_links.contains("related"));
+        let link_count = with_links.matches("<a href=\"/").count();
+        assert!(link_count >= 15, "expected >=15 links, got {link_count}");
+    }
+
+    #[test]
+    fn canary_embedded() {
+        let sg = ScatterGenerator::new(42);
+        let (_, base) = sg.generate("/org/repo/commit/abc123");
+        let marked = sg.embed_canary(&base, "49e77ea75aa7666e");
+        assert!(marked.contains("m-49e77ea75aa7666e"));
+        assert!(marked.contains("c-49e77ea7"));
+        assert!(marked.contains("sr-only"));
+        assert!(marked.contains('\u{200B}') || marked.contains('\u{200C}'));
+    }
+
+    #[test]
+    fn canary_deterministic_within_hour() {
+        let sg = ScatterGenerator::new(42);
+        let (_, base) = sg.generate("/org/repo/commit/abc123");
+        let m1 = sg.embed_canary(&base, "abcdef0123456789");
+        let m2 = sg.embed_canary(&base, "abcdef0123456789");
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn canary_different_per_hash() {
+        let sg = ScatterGenerator::new(42);
+        let (_, base) = sg.generate("/org/repo/commit/abc123");
+        let m1 = sg.embed_canary(&base, "aaaa000011112222");
+        let m2 = sg.embed_canary(&base, "bbbb333344445555");
+        assert_ne!(m1, m2);
+    }
+
+    #[test]
+    fn zwc_encode_roundtrip() {
+        let encoded = encode_zwc("deadbeef");
+        assert!(encoded.starts_with('\u{FEFF}'));
+        assert!(encoded.ends_with('\u{FEFF}'));
+        assert!(encoded.len() > 10);
     }
 
     #[test]
