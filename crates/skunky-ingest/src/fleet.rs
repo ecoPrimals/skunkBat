@@ -50,6 +50,10 @@ struct FleetEntry {
     has_referer: bool,
     accept_encoding: String,
     accept_language: String,
+    /// Whether the request had Sec-Fetch-Mode header (mandatory in Chrome 76+).
+    has_sec_fetch: bool,
+    /// Whether the request had Sec-Ch-Ua header (mandatory in Chrome 89+).
+    has_sec_ch_ua: bool,
 }
 
 impl FleetAggregator {
@@ -134,6 +138,8 @@ impl FleetAggregator {
             .first()
             .cloned()
             .unwrap_or_default();
+        let has_sec_fetch = !entry.request.headers.sec_fetch_mode.is_empty();
+        let has_sec_ch_ua = !entry.request.headers.sec_ch_ua.is_empty();
 
         self.entries.push(FleetEntry {
             ua,
@@ -144,6 +150,8 @@ impl FleetAggregator {
             has_referer,
             accept_encoding,
             accept_language,
+            has_sec_fetch,
+            has_sec_ch_ua,
         });
     }
 
@@ -264,6 +272,33 @@ impl FleetAggregator {
             / total_f;
         let encoding_uniform = top_enc_pct > 0.9 && top_lang_pct > 0.9 && total_requests > 20;
 
+        // Header poverty: requests with Chrome UA but missing mandatory
+        // browser headers (Sec-Fetch-Mode, Sec-Ch-Ua). Chrome 145+ sends
+        // 11+ headers; an HTTP client sends 3-4.
+        let chrome_uas = self
+            .entries
+            .iter()
+            .filter(|e| e.ua.contains("Chrome/"))
+            .count();
+        let chrome_missing_sec = self
+            .entries
+            .iter()
+            .filter(|e| e.ua.contains("Chrome/") && !e.has_sec_fetch && !e.has_sec_ch_ua)
+            .count();
+        let chrome_impersonation = chrome_uas > 10
+            && chrome_missing_sec as f32 / chrome_uas.max(1) as f32 > 0.8;
+
+        // Header poverty: >80% of ALL requests lack mandatory browser
+        // headers (Sec-Fetch-Mode). Any real browser (Chrome, Firefox,
+        // Safari, Edge) sends Sec-Fetch headers since 2020+.
+        let no_sec_fetch_count = self
+            .entries
+            .iter()
+            .filter(|e| !e.has_sec_fetch)
+            .count();
+        let header_poverty =
+            total_requests > 20 && no_sec_fetch_count as f32 / total_f > 0.8;
+
         // Depth distribution
         let d1 = pages_per_ip.values().filter(|&&c| c == 1).count() as u32;
         let d2 = pages_per_ip.values().filter(|&&c| (2..=3).contains(&c)).count() as u32;
@@ -301,6 +336,8 @@ impl FleetAggregator {
                 rotates_ips,
                 ignores_rejection,
                 encoding_uniform,
+                chrome_impersonation,
+                header_poverty,
             },
             depth_distribution: [d1, d2, d3, d4],
             rejected_ips: rejected_ips_set.len() as u32,
@@ -325,6 +362,8 @@ mod tests {
                     accept_encoding: vec!["gzip, deflate, br".to_string()],
                     accept_language: vec!["en-US,en;q=0.9".to_string()],
                     referer: vec![],
+                    sec_fetch_mode: vec![],
+                    sec_ch_ua: vec![],
                 },
             },
             status,

@@ -144,11 +144,13 @@ impl FleetDetector {
             score += 1;
         }
 
-        // Deception signals
+        // Deception signals (including header poverty / chrome impersonation)
         let deception_count = u8::from(obs.deception.hides_identity)
             + u8::from(obs.deception.rotates_ips)
             + u8::from(obs.deception.ignores_rejection)
-            + u8::from(obs.deception.encoding_uniform);
+            + u8::from(obs.deception.encoding_uniform)
+            + u8::from(obs.deception.chrome_impersonation)
+            + u8::from(obs.deception.header_poverty);
         if deception_count >= self.config.min_deception_signals {
             score += 1;
         }
@@ -204,6 +206,8 @@ impl FleetDetector {
                 rotates_ips: obs.deception.rotates_ips,
                 ignores_rejection: obs.deception.ignores_rejection,
                 encoding_uniform: obs.deception.encoding_uniform,
+                chrome_impersonation: obs.deception.chrome_impersonation,
+                header_poverty: obs.deception.header_poverty,
             },
             confidence: self.config.initial_confidence * (f64::from(score) / 6.0).min(1.0),
             first_seen_epoch: now_epoch,
@@ -270,6 +274,8 @@ mod tests {
                 rotates_ips: true,
                 ignores_rejection: true,
                 encoding_uniform: true,
+                chrome_impersonation: true,
+                header_poverty: true,
             },
             depth_distribution: [170, 8, 2, 0],
             rejected_ips: 160,
@@ -300,6 +306,8 @@ mod tests {
                 rotates_ips: false,
                 ignores_rejection: false,
                 encoding_uniform: false,
+                chrome_impersonation: false,
+                header_poverty: false,
             },
             depth_distribution: [10, 12, 6, 2],
             rejected_ips: 0,
@@ -354,6 +362,8 @@ mod tests {
                 rotates_ips: false,
                 ignores_rejection: false,
                 encoding_uniform: true,
+                chrome_impersonation: false,
+                header_poverty: false,
             },
             depth_distribution: [5, 0, 0, 0],
             rejected_ips: 0,

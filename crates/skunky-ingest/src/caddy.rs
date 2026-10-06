@@ -36,6 +36,14 @@ pub struct RequestInfo {
 }
 
 /// HTTP headers — only fields we care about.
+///
+/// ## Header Poverty Signal (Wave 165f)
+///
+/// Real Chrome 145+ sends 11+ headers per request (including mandatory
+/// Sec-Ch-Ua, Sec-Fetch-*, Priority, Accept-Language). The fleet sends
+/// only 3: Accept, Accept-Encoding, User-Agent. This is a binary
+/// classifier — header_count < 6 with a Chrome UA is definitive proof
+/// of a non-browser HTTP client.
 #[derive(Debug, Default, Deserialize)]
 pub struct Headers {
     /// User-Agent for behavioral classification.
@@ -50,6 +58,13 @@ pub struct Headers {
     /// Referer for distinguishing organic browsing from direct-nav fleets.
     #[serde(default, rename = "Referer")]
     pub referer: Vec<String>,
+    /// Sec-Fetch-Mode — mandatory in Chrome 76+. Absence with Chrome UA
+    /// proves the request is from an HTTP client, not a browser.
+    #[serde(default, rename = "Sec-Fetch-Mode")]
+    pub sec_fetch_mode: Vec<String>,
+    /// Sec-Ch-Ua — Client Hints UA, mandatory in Chrome 89+.
+    #[serde(default, rename = "Sec-Ch-Ua")]
+    pub sec_ch_ua: Vec<String>,
 }
 
 /// Parse a single Caddy JSON log line.
