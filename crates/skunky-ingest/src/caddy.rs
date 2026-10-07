@@ -65,6 +65,14 @@ pub struct Headers {
     /// Sec-Ch-Ua — Client Hints UA, mandatory in Chrome 89+.
     #[serde(default, rename = "Sec-Ch-Ua")]
     pub sec_ch_ua: Vec<String>,
+    /// Accept header — real browsers vary per resource type (text/html,
+    /// image/webp, etc.). Fleet uses `*/*` universally.
+    #[serde(default, rename = "Accept")]
+    pub accept: Vec<String>,
+    /// Connection header — real Chrome sends `keep-alive`. Absence
+    /// indicates bare HTTP client library.
+    #[serde(default, rename = "Connection")]
+    pub connection: Vec<String>,
 }
 
 /// Parse a single Caddy JSON log line.

@@ -151,7 +151,11 @@ impl FleetDetector {
             + u8::from(obs.deception.encoding_uniform)
             + u8::from(obs.deception.chrome_impersonation)
             + u8::from(obs.deception.header_poverty)
-            + u8::from(obs.deception.stale_chrome);
+            + u8::from(obs.deception.stale_chrome)
+            + u8::from(obs.deception.accept_monoculture)
+            + u8::from(obs.deception.connection_absent)
+            + u8::from(obs.deception.blame_ratio)
+            + u8::from(obs.deception.pagination_walk);
         if deception_count >= self.config.min_deception_signals {
             score += 1;
         }
@@ -210,6 +214,10 @@ impl FleetDetector {
                 chrome_impersonation: obs.deception.chrome_impersonation,
                 header_poverty: obs.deception.header_poverty,
                 stale_chrome: obs.deception.stale_chrome,
+                accept_monoculture: obs.deception.accept_monoculture,
+                connection_absent: obs.deception.connection_absent,
+                blame_ratio: obs.deception.blame_ratio,
+                pagination_walk: obs.deception.pagination_walk,
             },
             confidence: self.config.initial_confidence * (f64::from(score) / 6.0).min(1.0),
             first_seen_epoch: now_epoch,
@@ -279,6 +287,10 @@ mod tests {
                 chrome_impersonation: true,
                 header_poverty: true,
                 stale_chrome: true,
+                accept_monoculture: false,
+                connection_absent: false,
+                blame_ratio: false,
+                pagination_walk: false,
             },
             depth_distribution: [170, 8, 2, 0],
             rejected_ips: 160,
@@ -312,6 +324,10 @@ mod tests {
                 chrome_impersonation: false,
                 header_poverty: false,
                 stale_chrome: false,
+                accept_monoculture: false,
+                connection_absent: false,
+                blame_ratio: false,
+                pagination_walk: false,
             },
             depth_distribution: [10, 12, 6, 2],
             rejected_ips: 0,
@@ -369,6 +385,10 @@ mod tests {
                 chrome_impersonation: false,
                 header_poverty: false,
                 stale_chrome: false,
+                accept_monoculture: false,
+                connection_absent: false,
+                blame_ratio: false,
+                pagination_walk: false,
             },
             depth_distribution: [5, 0, 0, 0],
             rejected_ips: 0,

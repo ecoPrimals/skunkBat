@@ -26,12 +26,14 @@
 //! - **Mixed response**: Not all requests get poison — some still abort,
 //!   creating uncertainty for the fleet about which responses are real
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 
 /// Shared confidence level from the opsonize pipeline.
 ///
@@ -71,6 +73,90 @@ impl SharedConfidence {
         let conf = self.read() as f32;
         let max_ratio = 0.8_f32;
         base_ratio + conf * (max_ratio - base_ratio)
+    }
+}
+
+/// Cached opsonize tags from gossip — keyed by behavioral_hash.
+///
+/// The opsonize consumer periodically queries the gossip defense topic
+/// for `defense.opsonize:*` entries and caches the results here. The scatter
+/// server reads this cache to customize responses per-fleet:
+/// - Known hashes get higher amplification intensity
+/// - Detectors list drives content variant selection
+/// - Multi-gate corroboration increases confidence
+///
+/// Population: skunky-ingest main loop calls `update_from_tag()` on each
+/// opsonize emission, and `refresh_from_gossip()` on timer.
+#[derive(Debug, Clone)]
+pub struct OpsonizeCache {
+    entries: Arc<RwLock<HashMap<String, CachedTag>>>,
+}
+
+/// A cached opsonize tag entry.
+#[derive(Debug, Clone)]
+pub struct CachedTag {
+    /// Confidence from the detector pipeline (0.0-1.0).
+    pub confidence: f64,
+    /// Which detectors triggered (e.g. "content_gate", "stealth_ua").
+    pub detectors: Vec<String>,
+    /// How many times this hash has been matched.
+    pub match_count: u64,
+    /// Number of gates that have corroborated this hash.
+    pub gate_count: usize,
+    /// When this cache entry was last refreshed (epoch secs).
+    pub last_refreshed: u64,
+}
+
+impl OpsonizeCache {
+    pub fn new() -> Self {
+        Self {
+            entries: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Update or insert a tag from the local opsonize pipeline.
+    pub async fn update_from_tag(&self, behavioral_hash: &str, confidence: f64, detectors: Vec<String>, match_count: u64) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut map = self.entries.write().await;
+        let entry = map.entry(behavioral_hash.to_owned()).or_insert_with(|| CachedTag {
+            confidence: 0.0,
+            detectors: Vec::new(),
+            match_count: 0,
+            gate_count: 1,
+            last_refreshed: now,
+        });
+        entry.confidence = entry.confidence.max(confidence);
+        entry.match_count += match_count;
+        entry.last_refreshed = now;
+        // Union detectors
+        for d in detectors {
+            if !entry.detectors.contains(&d) {
+                entry.detectors.push(d);
+            }
+        }
+    }
+
+    /// Look up a behavioral hash in the cache.
+    pub async fn lookup(&self, behavioral_hash: &str) -> Option<CachedTag> {
+        self.entries.read().await.get(behavioral_hash).cloned()
+    }
+
+    /// Count of known fleet hashes.
+    pub async fn len(&self) -> usize {
+        self.entries.read().await.len()
+    }
+
+    /// Evict stale entries older than the given age in seconds.
+    pub async fn evict_stale(&self, max_age_secs: u64) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut map = self.entries.write().await;
+        map.retain(|_, tag| now.saturating_sub(tag.last_refreshed) < max_age_secs);
     }
 }
 
@@ -186,7 +272,7 @@ pub struct ScatterConfig {
 ///
 /// This spawns as a background task and serves poisoned responses to
 /// fleet requests routed by Caddy's content_gate.
-pub async fn run(config: ScatterConfig, confidence: SharedConfidence) {
+pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_cache: OpsonizeCache) {
     let listener = match TcpListener::bind(config.listen_addr).await {
         Ok(l) => {
             tracing::info!(
@@ -206,6 +292,7 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence) {
     let generator = Arc::new(ScatterGenerator::new(config.seed));
     let base_ratio = config.poison_ratio;
     let tarpit = TarpitState::new(config.max_tarpit_connections);
+    let cache = Arc::new(opsonize_cache);
 
     loop {
         let (stream, _peer) = match listener.accept().await {
@@ -219,8 +306,9 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence) {
         let sg = Arc::clone(&generator);
         let effective_ratio = confidence.effective_ratio(base_ratio);
         let tp = tarpit.clone();
+        let oc = Arc::clone(&cache);
         tokio::spawn(async move {
-            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp).await {
+            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc).await {
                 tracing::debug!(error = %e, "scatter request handler error");
             }
         });
@@ -232,6 +320,7 @@ async fn handle_request(
     generator: &ScatterGenerator,
     poison_ratio: f32,
     tarpit: &TarpitState,
+    opsonize_cache: &OpsonizeCache,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (reader, mut writer) = stream.split();
     let mut buf_reader = BufReader::new(reader);
@@ -331,10 +420,32 @@ async fn handle_request(
     };
 
     // ── SIGNAL MIRROR: amplify + crawl web + canary + license ──
+    // Confidence drives amplification intensity: higher confidence = bigger responses
+    // Per-hash opsonize cache boosts confidence for known fleet shapes
     let body = if content_type.contains("text/html") && status == "200 OK" {
         let mut rng = XorShift64::new(path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0x5191A1_A1BB_0000)));
-        let amplified = generator.amplify(&mut rng, body);
-        let with_links = generator.inject_crawl_links(&mut rng, &amplified);
+
+        // Base confidence from poison_ratio (already scaled by SharedConfidence)
+        let mut conf_level = f64::from(poison_ratio).clamp(0.0, 1.0);
+
+        // Boost confidence if this fleet_hash is a known opsonize target
+        if !fleet_hash.is_empty() {
+            if let Some(cached) = opsonize_cache.lookup(&fleet_hash).await {
+                // Known fleet → boost by cached confidence (multiplicative)
+                conf_level = (conf_level + cached.confidence * 0.5).min(1.0);
+                tracing::debug!(
+                    fleet_hash = %fleet_hash,
+                    cached_confidence = cached.confidence,
+                    detectors = cached.detectors.len(),
+                    match_count = cached.match_count,
+                    effective_confidence = conf_level,
+                    "🎯 opsonize cache hit — adaptive amplification"
+                );
+            }
+        }
+
+        let amplified = generator.amplify_adaptive(&mut rng, body, conf_level);
+        let with_links = generator.inject_crawl_links_adaptive(&mut rng, &amplified, conf_level);
         let with_license = generator.embed_license(&with_links);
         if fleet_hash.is_empty() {
             with_license
@@ -883,7 +994,19 @@ impl ScatterGenerator {
     /// The fleet pays per-byte through residential proxies — every KB
     /// of poison costs them money and storage.
     fn amplify(&self, rng: &mut XorShift64, base_html: String) -> String {
-        let mut out = String::with_capacity(120_000);
+        self.amplify_adaptive(rng, base_html, 0.5)
+    }
+
+    /// Confidence-driven amplification. Higher confidence = bigger poison.
+    ///
+    /// | Confidence | File tree | Commits | Contributors | Links |
+    /// |------------|-----------|---------|--------------|-------|
+    /// | 0.0        | 80-120    | 30-50   | 8-15         | 15-25 |
+    /// | 0.5        | 150-200   | 60-90   | 15-25        | 25-40 |
+    /// | 1.0        | 250-350   | 100-150 | 25-40        | 40-60 |
+    fn amplify_adaptive(&self, rng: &mut XorShift64, base_html: String, confidence: f64) -> String {
+        let scale = 1.0 + confidence * 2.0; // 1.0x at c=0, 3.0x at c=1
+        let mut out = String::with_capacity((120_000.0 * scale) as usize);
 
         // Keep original content up to </body>
         let (before_close, _) = base_html
@@ -891,8 +1014,9 @@ impl ScatterGenerator {
             .unwrap_or((&base_html, ""));
         out.push_str(before_close);
 
-        // Fabricated file tree — 80-120 entries
-        let tree_size = 80 + rng.next_usize() % 40;
+        // Fabricated file tree — scaled with confidence
+        let base_tree = 80 + rng.next_usize() % 40;
+        let tree_size = (base_tree as f64 * scale) as usize;
         out.push_str(r#"<div class="repository-file-list"><table class="ui attached table segment"><tbody>"#);
         for _ in 0..tree_size {
             let dir = self.pick(rng, self.repo_names);
@@ -908,8 +1032,9 @@ impl ScatterGenerator {
         }
         out.push_str("</tbody></table></div>");
 
-        // Fabricated commit history — 30-50 entries
-        let commit_count = 30 + rng.next_usize() % 20;
+        // Fabricated commit history — scaled with confidence
+        let base_commits = 30 + rng.next_usize() % 20;
+        let commit_count = (base_commits as f64 * scale) as usize;
         out.push_str(r#"<div class="repository-commits"><div class="ui attached segment">"#);
         for i in 0..commit_count {
             let hash = rng.hex(40);
@@ -926,8 +1051,9 @@ impl ScatterGenerator {
         }
         out.push_str("</div></div>");
 
-        // Fabricated contributor list — 8-15 entries
-        let contrib_count = 8 + rng.next_usize() % 7;
+        // Fabricated contributor list — scaled with confidence
+        let base_contribs = 8 + rng.next_usize() % 7;
+        let contrib_count = (base_contribs as f64 * scale) as usize;
         out.push_str(r#"<div class="ui attached segment contributors"><h4>Contributors</h4><div class="ui avatar-list">"#);
         for _ in 0..contrib_count {
             let name = self.pick(rng, self.repo_names);
@@ -939,8 +1065,9 @@ impl ScatterGenerator {
         }
         out.push_str("</div></div>");
 
-        // Fabricated branch list — 5-10 entries
-        let branch_count = 5 + rng.next_usize() % 5;
+        // Fabricated branch list — scaled with confidence
+        let base_branches = 5 + rng.next_usize() % 5;
+        let branch_count = (base_branches as f64 * scale) as usize;
         out.push_str(r#"<div class="ui attached segment branches"><h4>Branches</h4><ul>"#);
         for _ in 0..branch_count {
             let prefix = ["feature", "fix", "release", "dev", "hotfix"][rng.next_usize() % 5];
@@ -952,8 +1079,9 @@ impl ScatterGenerator {
         }
         out.push_str("</ul></div>");
 
-        // Fabricated tag list — 5-8 entries
-        let tag_count = 5 + rng.next_usize() % 3;
+        // Fabricated tag list — scaled with confidence
+        let base_tags = 5 + rng.next_usize() % 3;
+        let tag_count = (base_tags as f64 * scale) as usize;
         out.push_str(r#"<div class="ui attached segment tags"><h4>Tags</h4><ul>"#);
         for _ in 0..tag_count {
             let major = rng.next_usize() % 4;
@@ -975,7 +1103,14 @@ impl ScatterGenerator {
     /// page links to more generated pages. The fleet's crawler follows
     /// links, multiplying their request count and bandwidth consumption.
     fn inject_crawl_links(&self, rng: &mut XorShift64, html: &str) -> String {
-        let link_count = 15 + rng.next_usize() % 10;
+        self.inject_crawl_links_adaptive(rng, html, 0.5)
+    }
+
+    /// Confidence-driven crawl link injection. Higher confidence = more links = bigger crawl graph.
+    fn inject_crawl_links_adaptive(&self, rng: &mut XorShift64, html: &str, confidence: f64) -> String {
+        let scale = 1.0 + confidence * 2.0;
+        let base_links = 15 + rng.next_usize() % 10;
+        let link_count = (base_links as f64 * scale) as usize;
         let mut links = String::with_capacity(link_count * 150);
 
         links.push_str(r#"<div class="ui attached segment related"><h4>Related</h4><div class="ui relaxed list">"#);

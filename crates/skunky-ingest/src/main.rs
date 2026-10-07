@@ -335,6 +335,9 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     // Shared confidence level — opsonize pipeline updates, scatter server reads
     let scatter_confidence = scatter_server::SharedConfidence::new();
 
+    // Opsonize cache — aggregates defense gossip for per-hash adaptive scatter
+    let opsonize_cache = scatter_server::OpsonizeCache::new();
+
     // Scatter (opsonization) server — serves poison content to fleet
     if cli.scatter_server {
         let scatter_config = scatter_server::ScatterConfig {
@@ -343,7 +346,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             poison_ratio: cli.scatter_ratio,
             max_tarpit_connections: cli.max_tarpit_connections,
         };
-        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone()));
+        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone()));
     }
 
     // Bloom sensor — afferent signal accumulation (all hosts)
@@ -468,6 +471,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     &threat_feed_path,
                     &abuse_queue,
                     cli.window_secs,
+                    &opsonize_cache,
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -604,6 +608,7 @@ async fn process_line(
     threat_feed_path: &std::path::Path,
     abuse_queue: &abuse_reporter::AbuseReportQueue,
     window_secs: u64,
+    opsonize_cache: &scatter_server::OpsonizeCache,
 ) {
     if trimmed.is_empty() {
         return;
@@ -751,6 +756,14 @@ async fn process_line(
 
                 // Update scatter server's confidence — higher confidence = richer poison
                 scatter_confidence.update(tag.confidence);
+
+                // Feed opsonize cache — scatter server uses this for per-hash adaptive responses
+                opsonize_cache.update_from_tag(
+                    &bhash,
+                    tag.confidence,
+                    detectors.clone(),
+                    tag.match_count,
+                ).await;
 
                 tracing::info!(
                     hash = %bhash,

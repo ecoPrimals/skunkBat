@@ -56,6 +56,10 @@ struct FleetEntry {
     has_sec_ch_ua: bool,
     /// Chrome major version from UA string (0 if not Chrome).
     chrome_major: u16,
+    /// Accept header value — real browsers vary per resource type.
+    accept: String,
+    /// Whether Connection header was present (Chrome sends keep-alive).
+    has_connection: bool,
 }
 
 /// Current Chrome stable version. Update when Chrome releases new stable.
@@ -158,6 +162,19 @@ impl FleetAggregator {
         let has_sec_fetch = !entry.request.headers.sec_fetch_mode.is_empty();
         let has_sec_ch_ua = !entry.request.headers.sec_ch_ua.is_empty();
         let chrome_major = extract_chrome_major(&ua);
+        let accept = entry
+            .request
+            .headers
+            .accept
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let has_connection = entry
+            .request
+            .headers
+            .connection
+            .first()
+            .is_some_and(|c| !c.is_empty());
 
         self.entries.push(FleetEntry {
             ua,
@@ -171,6 +188,8 @@ impl FleetAggregator {
             has_sec_fetch,
             has_sec_ch_ua,
             chrome_major,
+            accept,
+            has_connection,
         });
     }
 
@@ -346,6 +365,52 @@ impl FleetAggregator {
             false
         };
 
+        // Accept monoculture: entire fleet uses one Accept value (e.g. `*/*`).
+        // Real browsers vary: `text/html` for pages, `image/*` for images,
+        // `application/json` for APIs. Universal `*/*` = HTTP client library.
+        let mut accept_counts: HashMap<&str, u32> = HashMap::new();
+        for e in &self.entries {
+            *accept_counts.entry(&e.accept).or_insert(0) += 1;
+        }
+        let accept_monoculture = total_requests > 20 && accept_counts.len() <= 2;
+
+        // Connection absent: real Chrome always sends `Connection: keep-alive`.
+        // HTTP client libraries (reqwest, urllib, etc.) often omit it entirely.
+        let no_connection_count = self
+            .entries
+            .iter()
+            .filter(|e| !e.has_connection)
+            .count();
+        let connection_absent =
+            total_requests > 20 && no_connection_count as f32 / total_f > 0.8;
+
+        // Blame ratio: >10% of requests target `/blame/` paths — author
+        // attribution intelligence gathering. Normal browsing has <1%.
+        let blame_requests = self
+            .entries
+            .iter()
+            .filter(|e| e.path.contains("/blame/"))
+            .count();
+        let blame_ratio = total_requests > 20 && blame_requests as f32 / total_f > 0.10;
+
+        // Pagination walk: requests with `?page=N` where N > 50 — systematic
+        // commit history enumeration. No human paginates through 50+ pages.
+        let max_page: u32 = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                e.path
+                    .find("page=")
+                    .and_then(|idx| {
+                        let after = &e.path[idx + 5..];
+                        let end = after.find('&').unwrap_or(after.len());
+                        after[..end].parse::<u32>().ok()
+                    })
+            })
+            .max()
+            .unwrap_or(0);
+        let pagination_walk = total_requests > 20 && max_page > 50;
+
         // Depth distribution
         let d1 = pages_per_ip.values().filter(|&&c| c == 1).count() as u32;
         let d2 = pages_per_ip.values().filter(|&&c| (2..=3).contains(&c)).count() as u32;
@@ -386,6 +451,10 @@ impl FleetAggregator {
                 chrome_impersonation,
                 header_poverty,
                 stale_chrome,
+                accept_monoculture,
+                connection_absent,
+                blame_ratio,
+                pagination_walk,
             },
             depth_distribution: [d1, d2, d3, d4],
             rejected_ips: rejected_ips_set.len() as u32,
@@ -412,6 +481,8 @@ mod tests {
                     referer: vec![],
                     sec_fetch_mode: vec![],
                     sec_ch_ua: vec![],
+                    accept: vec![],
+                    connection: vec![],
                 },
 
             },
