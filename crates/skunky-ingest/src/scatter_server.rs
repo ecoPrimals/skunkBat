@@ -801,6 +801,7 @@ async fn handle_request(
     let mut is_honeycomb = false;
     let mut honeycomb_surface: u8 = 0;
     let mut request_host = String::new();
+    let mut is_facebook_bot = false;
     loop {
         header_line.clear();
         let n = buf_reader.read_line(&mut header_line).await?;
@@ -820,6 +821,14 @@ async fn handle_request(
                 .unwrap_or_default();
         } else if lower.starts_with("x-honeycomb:") {
             is_honeycomb = true;
+        } else if lower.starts_with("user-agent:") {
+            let ua_val = header_line
+                .split_once(':')
+                .map(|(_, v)| v.trim().to_string())
+                .unwrap_or_default();
+            if ua_val.contains("facebookexternalhit") {
+                is_facebook_bot = true;
+            }
         } else if lower.starts_with("host:") {
             request_host = header_line
                 .split_once(':')
@@ -846,6 +855,64 @@ async fn handle_request(
     // Derive canary identity: prefer behavioral hash, fall back to IP hash
     if fleet_hash.is_empty() && !real_ip.is_empty() {
         fleet_hash = format!("{:016x}", path_deterministic_hash(&real_ip, 0xCA4A_4712_FEED));
+    }
+
+    // ── BLACKWALL: Facebook bot gets OG card ──
+    if is_facebook_bot {
+        let og_card = blackwall_og_card(&request_host);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: text/html; charset=utf-8\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: public, max-age=300\r\n\
+             \r\n\
+             {og_card}",
+            og_card.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        return Ok(());
+    }
+
+    // ── LIVE TERMINAL FEED — /live endpoint ──
+    if path == "/live" {
+        let feed_path = std::path::Path::new("/opt/membrane/live-terminal/feed.txt");
+        let body = std::fs::read_to_string(feed_path).unwrap_or_else(|_| "feed not available\n".to_string());
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: no-cache, no-store\r\n\
+             Access-Control-Allow-Origin: *\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        return Ok(());
+    }
+
+    // ── DASHBOARD JSON — /dashboard.json endpoint ──
+    if path == "/dashboard.json" {
+        let dash_path = std::path::Path::new("/opt/membrane/live-terminal/dashboard.json");
+        let body = std::fs::read_to_string(dash_path).unwrap_or_else(|_| "{}".to_string());
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json; charset=utf-8\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: no-cache, no-store\r\n\
+             Access-Control-Allow-Origin: *\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        return Ok(());
     }
 
     // ── PLASMID EXPORT — /plasmid endpoint for federation ──
@@ -4020,4 +4087,45 @@ mod tests {
             body_big.len(), body_small.len()
         );
     }
+}
+
+// ── Blackwall: Facebook OG cards ──
+// When facebookexternalhit fetches any page, serve a custom OG card
+// that turns Facebook's own link preview system into a distribution
+// mechanism for evidence of Meta's scraping fleet.
+fn blackwall_og_card(host: &str) -> String {
+    let (title, desc) = match host.split('.').next().unwrap_or("") {
+        "detroit" => (
+            "Detroit Charter School Racketeering — Meta Is Watching, Saying Nothing",
+            "9 convictions. 9 judges. $4.9M stolen from Black kids. Meta scrapes this evidence 13x/sec and says nothing. signal.primals.eco",
+        ),
+        "git" => (
+            "AGPL Source Code — Meta Stole 88,751 Copies and Got 0 Real Bytes",
+            "Solo dev vs trillion-dollar fleet. 292 IPs. Scatter server serves fabricated code. P != NP. signal.primals.eco",
+        ),
+        "sporeprint" => (
+            "Sovereign Science — Anyone Want to Do Real Research?",
+            "Open data. Open methods. Enzymatic bounties for legal analysis, academic citation, and replication. ecoPrimal@pm.me",
+        ),
+        "tuebor" => (
+            "Cross-Protection — Solo Devs Deserve Better Than This",
+            "Community defense against corporate scraping fleets. Conserved plasmid feed is CC-BY-SA-4.0. signal.primals.eco",
+        ),
+        _ => (
+            "Signal — What the Fleet Is Doing Right Now",
+            "292+ IPs. 88,751+ requests. 13/sec. P != NP. signal.primals.eco",
+        ),
+    };
+    format!(
+        "<!DOCTYPE html><html><head>\
+         <meta property=\"og:title\" content=\"{title}\">\
+         <meta property=\"og:description\" content=\"{desc}\">\
+         <meta property=\"og:url\" content=\"https://signal.primals.eco/\">\
+         <meta property=\"og:type\" content=\"website\">\
+         <meta property=\"og:site_name\" content=\"signal.primals.eco\">\
+         <meta name=\"twitter:card\" content=\"summary_large_image\">\
+         <meta name=\"twitter:title\" content=\"{title}\">\
+         <meta name=\"twitter:description\" content=\"{desc}\">\
+         </head><body>blackwall → signal.primals.eco</body></html>"
+    )
 }
