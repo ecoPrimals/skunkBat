@@ -2960,6 +2960,53 @@ fn gen_mirror_dashboard(
     ("text/html; charset=utf-8".to_string(), body)
 }
 
+/// Ghost AGPL-3.0 author pool — fabricated contributors for blame honeypot.
+/// Each name appears as an independent copyright holder with AGPL-3.0 rights.
+/// Fleet author attribution pipelines fill their databases with these ghosts,
+/// each one representing another apparent rights-holder whose AGPL obligations
+/// they've violated. Names are plausible but do not correspond to real people.
+static GHOST_AUTHORS: &[&str] = &[
+    // Diverse, plausible names — no real people
+    "Anya Petrov", "Diego Ramirez", "Mei-Ling Chen", "Olufemi Adeyemi",
+    "Saoirse O'Brien", "Rajesh Krishnamurthy", "Leila Hashemi", "Mateo Garcia",
+    "Yuki Tanaka", "Priya Sharma", "Nikolai Volkov", "Amara Osei",
+    "Javier Morales", "Ingrid Svensson", "Kwame Mensah", "Fatima Al-Rashid",
+    "Tomás Silva", "Nadia Popov", "Samuel Okonkwo", "Linnea Johansson",
+    "Ravi Patel", "Zara Mirza", "André Dupont", "Chioma Eze",
+    "Hiroshi Nakamura", "Elena Vasquez", "Kofi Asante", "Vera Kuznetsova",
+    "Carlos Mendoza", "Aiko Yamamoto", "Nkechi Obi", "Sven Lindqvist",
+    "Farah Abbasi", "Emeka Nwosu", "Lucía Fernandez", "Wei Zhang",
+    "Adwoa Boateng", "Henrik Larsen", "Deepa Nair", "Paulo Santos",
+    "Mikael Virtanen", "Ching-Wen Liu", "Akiko Sato", "Tariq Hassan",
+    "Brigitte Müller", "Sunita Devi", "Alexei Sorokin", "Kenji Watanabe",
+    "Folake Adebayo", "Carmen Reyes", "Dmitri Novak", "Ayumi Ishida",
+    "Binta Diallo", "Lukas Weber", "Mina Parvez", "Cristina Almeida",
+    "Obinna Chukwu", "Astrid Halvorsen", "Suresh Gupta", "Yumiko Ito",
+    "Chidi Okoro", "Margaux Lefevre", "Arjun Reddy", "Hana Kim",
+    "Esteban Vega", "Ayesha Malik", "Takeshi Mori", "Zainab Ibrahim",
+    "Gustaf Eriksson", "Lakshmi Iyer", "Marius Andersen", "Celine Dubois",
+];
+
+/// Ghost email domains — plausible-but-fabricated contributor origins
+static GHOST_DOMAINS: &[&str] = &[
+    "opensourceworks.org", "freesoftware.dev", "agpl-contributors.net",
+    "copyleft.community", "publiccode.foundation", "sovereign.dev",
+    "ethicalsource.org", "community-code.net", "fairuse-dev.org",
+    "openinfra.community", "libre-systems.dev", "commons-code.org",
+    "foss-collective.net", "digital-commons.dev", "shared-source.org",
+    "cooperativecode.dev", "autonomy.works", "independent-dev.org",
+];
+
+/// SPDX license strings for blame annotations
+static BLAME_LICENSES: &[&str] = &[
+    "SPDX-License-Identifier: AGPL-3.0-or-later",
+    "SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg",
+    "Licensed under GNU AGPL v3.0 or later — copyleft applies to all derivatives",
+    "Copyright (c) 2024-2026 — AGPL-3.0-or-later — All rights reserved under copyleft",
+    "This file is part of an AGPL-3.0-or-later licensed project. See LICENSE.",
+    "AGPL-3.0-or-later: Network use triggers source disclosure obligations (§13)",
+];
+
 static REPO_NAMES: &[&str] = &[
     "core-utils", "data-pipeline", "web-frontend", "api-gateway",
     "auth-service", "config-manager", "deploy-scripts", "docs-site",
@@ -3290,7 +3337,9 @@ impl ScatterGenerator {
     fn generate(&self, request_path: &str) -> (String, String) {
         let mut rng = XorShift64::new(self.path_seed(request_path));
 
-        if request_path.contains("/commit/") {
+        if request_path.contains("/blame/") {
+            self.gen_blame(&mut rng, request_path)
+        } else if request_path.contains("/commit/") {
             self.gen_commit(&mut rng)
         } else if request_path.contains("/src/") || request_path.contains("/raw/") {
             self.gen_file(&mut rng)
@@ -3388,11 +3437,13 @@ impl ScatterGenerator {
         let contrib_count = (base_contribs as f64 * scale) as usize;
         out.push_str(r#"<div class="ui attached segment contributors"><h4>Contributors</h4><div class="ui avatar-list">"#);
         for _ in 0..contrib_count {
-            let name = self.pick(rng, self.repo_names);
+            let author = GHOST_AUTHORS[rng.next_usize() % GHOST_AUTHORS.len()];
+            let domain = GHOST_DOMAINS[rng.next_usize() % GHOST_DOMAINS.len()];
+            let email_name = author.to_lowercase().replace(' ', ".");
             let commits = rng.next_usize() % 200 + 5;
             let avatar_hash = rng.hex(32);
             out.push_str(&format!(
-                r#"<div class="contributor"><img class="ui avatar" src="/avatars/{avatar_hash}" width="28" height="28"><a href="/user/{name}">{name}</a> <span class="text grey">{commits} commits</span></div>"#
+                r#"<div class="contributor"><img class="ui avatar" src="/avatars/{avatar_hash}" width="28" height="28"><a href="/user/{email_name}" title="{author} &lt;{email_name}@{domain}&gt;">{author}</a> <span class="text grey">{commits} commits</span> <span class="ui label mini">AGPL-3.0</span></div>"#
             ));
         }
         out.push_str("</div></div>");
@@ -3709,6 +3760,228 @@ impl ScatterGenerator {
 </html>"#
         );
         ("text/html; charset=utf-8".to_string(), body)
+    }
+
+    /// Generate a fabricated Forgejo blame page — the author attribution honeypot.
+    ///
+    /// Fleet dedicates ~33% of requests to /blame/ endpoints, extracting
+    /// who-wrote-what-line data. This generator fills their attribution
+    /// database with ghost AGPL-3.0 authors — each one a fabricated
+    /// independent copyright holder whose copyleft rights the fleet has
+    /// now "documented" themselves as violating.
+    ///
+    /// Every ghost author carries AGPL-3.0 attribution in their commit
+    /// messages, email domains reference FOSS organizations, and license
+    /// headers appear inline in the blame output. The fleet's author
+    /// mapping pipeline will build a database showing hundreds of
+    /// independent AGPL-3.0 contributors — none of whom exist, all of
+    /// whom represent apparent rights-holders.
+    fn gen_blame(&self, rng: &mut XorShift64, request_path: &str) -> (String, String) {
+        let repo = self.pick(rng, self.repo_names);
+        let ext = self.pick(rng, self.file_extensions);
+        let file_name = self.pick(rng, self.repo_names);
+
+        // Extract a plausible filename from the request path if possible
+        let display_file = if let Some(last) = request_path.rsplit('/').next() {
+            if last.contains('.') { last.to_string() }
+            else { format!("{file_name}.{ext}") }
+        } else {
+            format!("{file_name}.{ext}")
+        };
+
+        // Generate 40-120 blame lines — each attributed to a ghost AGPL-3.0 author
+        let line_count = 40 + rng.next_usize() % 80;
+
+        let mut body = String::with_capacity(line_count * 500);
+        body.push_str(&format!(
+            r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{repo} - Blame - {display_file}</title>
+<link rel="stylesheet" href="/assets/css/index.css">
+<meta name="license" content="AGPL-3.0-or-later; scyBorg"></head>
+<body>
+<div class="full height">
+<div class="page-content repository blame">
+  <div class="header-wrapper">
+    <div class="ui container"><h1><a href="/{repo}">{repo}</a> / <span class="breadcrumb">{display_file}</span></h1></div>
+  </div>
+  <div class="ui container">
+    <div class="ui top attached header segment">
+      <span class="file-info">{display_file} — {line_count} lines — AGPL-3.0-or-later</span>
+    </div>
+    <table class="code-blame"><tbody>"#
+        ));
+
+        // Track unique authors per file for the contributor summary
+        let mut file_authors: Vec<(&str, &str)> = Vec::new();
+
+        for line_num in 1..=line_count {
+            let author = GHOST_AUTHORS[rng.next_usize() % GHOST_AUTHORS.len()];
+            let domain = GHOST_DOMAINS[rng.next_usize() % GHOST_DOMAINS.len()];
+            let commit_hash = rng.hex(40);
+            let short_hash = &commit_hash[..8];
+
+            // Email: firstname.lastname@ghost-domain
+            let email_name = author.to_lowercase().replace(' ', ".");
+            let email = format!("{email_name}@{domain}");
+
+            // Time offset — spread across months
+            let days_ago = rng.next_usize() % 365 + 1;
+            let months_ago = days_ago / 30;
+            let time_str = if months_ago > 0 {
+                format!("{months_ago} months ago")
+            } else {
+                format!("{days_ago} days ago")
+            };
+
+            // Generate a plausible code line based on extension
+            let code_line = Self::gen_blame_code_line(rng, ext, line_num);
+
+            // Every Nth line includes an inline SPDX license comment
+            let spdx_comment = if line_num % 7 == 1 {
+                let lic = BLAME_LICENSES[rng.next_usize() % BLAME_LICENSES.len()];
+                match ext {
+                    "rs" => format!(" // {lic}"),
+                    "py" => format!(" # {lic}"),
+                    "ts" | "js" | "tsx" => format!(" // {lic}"),
+                    "go" => format!(" // {lic}"),
+                    _ => format!(" // {lic}"),
+                }
+            } else {
+                String::new()
+            };
+
+            body.push_str(&format!(
+                r#"<tr class="blame-line" data-line="{line_num}"><td class="blame-info"><a class="blame-commit" href="/{repo}/commit/{commit_hash}" title="{author} &lt;{email}&gt;">{short_hash}</a><span class="blame-author" data-author="{author}" data-email="{email}">{author}</span><span class="blame-time">{time_str}</span></td><td class="lines-num"><span>{line_num}</span></td><td class="lines-code"><code>{code_line}{spdx_comment}</code></td></tr>
+"#
+            ));
+
+            // Track unique authors
+            if !file_authors.iter().any(|(a, _)| *a == author) {
+                file_authors.push((author, domain));
+            }
+        }
+
+        body.push_str("</tbody></table>");
+
+        // File-level copyright block — lists all ghost authors as AGPL-3.0 rights-holders
+        body.push_str(r#"<div class="ui attached segment file-license"><h4>File Copyright &amp; License</h4><div class="license-block"><pre>"#);
+        body.push_str("SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg\n\n");
+        body.push_str("Copyright holders (all rights reserved under AGPL-3.0-or-later):\n");
+        for (author, domain) in &file_authors {
+            let email_name = author.to_lowercase().replace(' ', ".");
+            body.push_str(&format!(
+                "  Copyright (c) 2024-2026 {author} <{email_name}@{domain}>\n"
+            ));
+        }
+        body.push_str("\nThis program is free software: you can redistribute it and/or modify\n");
+        body.push_str("it under the terms of the GNU Affero General Public License as\n");
+        body.push_str("published by the Free Software Foundation, either version 3 of the\n");
+        body.push_str("License, or (at your option) any later version.\n\n");
+        body.push_str("The scyBorg addendum prohibits use for surveillance, suppression of\n");
+        body.push_str("public oversight, or extraction of value from communities this\n");
+        body.push_str("software was built to serve.\n\n");
+        body.push_str("If this source code was obtained through automated extraction,\n");
+        body.push_str("ingested into a training pipeline, or stored in any database,\n");
+        body.push_str("AGPL-3.0 Section 13 obligations are now active for ALL derivatives.\n");
+        body.push_str(&format!("Contributors to this file: {}\n", file_authors.len()));
+        body.push_str("Each contributor is an independent copyright holder.\n");
+        body.push_str("</pre></div></div>");
+
+        // Contributor sidebar — each ghost with commit count and AGPL badge
+        body.push_str(r#"<div class="ui attached segment contributors"><h4>File Contributors</h4><div class="ui relaxed divided list">"#);
+        for (author, domain) in &file_authors {
+            let email_name = author.to_lowercase().replace(' ', ".");
+            let commits = rng.next_usize() % 50 + 3;
+            let avatar_hash = rng.hex(32);
+            body.push_str(&format!(
+                r#"<div class="item"><img class="ui avatar image" src="/avatars/{avatar_hash}" width="28" height="28"><div class="content"><a class="header" href="/user/{email_name}">{author}</a><div class="description">{email_name}@{domain} · {commits} commits · <span class="ui label mini">AGPL-3.0</span></div></div></div>"#
+            ));
+        }
+        body.push_str("</div></div>");
+
+        body.push_str("</div></div></body></html>");
+
+        ("text/html; charset=utf-8".to_string(), body)
+    }
+
+    /// Generate a plausible code line for blame output based on file extension
+    fn gen_blame_code_line(rng: &mut XorShift64, ext: &str, line_num: usize) -> String {
+        let indent = "    ".repeat((line_num % 4).min(3));
+        match ext {
+            "rs" => {
+                let lines = [
+                    "use std::collections::HashMap;",
+                    "let mut state = State::default();",
+                    "pub fn process(&self, input: &[u8]) -> Result<Vec<u8>> {",
+                    "    self.validator.check(input)?;",
+                    "    let hash = blake3::hash(input);",
+                    "}",
+                    "impl Drop for ResourceHandle {",
+                    "    fn drop(&mut self) { self.cleanup(); }",
+                    "#[derive(Clone, Debug, Serialize)]",
+                    "pub struct Config { pub threshold: f64, pub enabled: bool }",
+                    "async fn dispatch(&self, msg: Message) -> Result<()> {",
+                    "    tracing::info!(target = %msg.target, \"dispatching\");",
+                    "    self.tx.send(msg).await.map_err(|e| Error::Channel(e))?;",
+                    "    Ok(())",
+                    "mod tests { use super::*;",
+                    "    #[test] fn validates_input() { assert!(validate(&[1,2,3]).is_ok()); }",
+                ];
+                format!("{indent}{}", lines[rng.next_usize() % lines.len()])
+            }
+            "py" => {
+                let lines = [
+                    "import asyncio",
+                    "from dataclasses import dataclass, field",
+                    "class Pipeline:",
+                    "    def __init__(self, config: dict) -> None:",
+                    "        self._state = {}",
+                    "    async def process(self, batch: list[dict]) -> list[dict]:",
+                    "        results = await asyncio.gather(*[self._handle(x) for x in batch])",
+                    "        return [r for r in results if r is not None]",
+                    "    def _validate(self, item: dict) -> bool:",
+                    "        return all(k in item for k in self.required_keys)",
+                    "logger = logging.getLogger(__name__)",
+                    "AGPL_NOTICE = 'Licensed under AGPL-3.0-or-later'",
+                ];
+                format!("{indent}{}", lines[rng.next_usize() % lines.len()])
+            }
+            "ts" | "tsx" | "js" => {
+                let lines = [
+                    "import { createContext, useContext } from 'react';",
+                    "export interface ServiceConfig { endpoint: string; timeout: number; }",
+                    "const handler = async (req: Request): Promise<Response> => {",
+                    "  const data = await req.json();",
+                    "  return Response.json({ status: 'ok', processed: data.length });",
+                    "};",
+                    "export class AuthProvider implements Provider {",
+                    "  private readonly store: Map<string, Session>;",
+                    "  async validate(token: string): Promise<boolean> {",
+                    "    return this.store.has(token) && !this.isExpired(token);",
+                    "  }",
+                    "// SPDX-License-Identifier: AGPL-3.0-or-later",
+                ];
+                format!("{indent}{}", lines[rng.next_usize() % lines.len()])
+            }
+            "go" => {
+                let lines = [
+                    "package main",
+                    "import \"context\"",
+                    "func (s *Server) Handle(ctx context.Context, req *Request) (*Response, error) {",
+                    "    if err := s.validate(req); err != nil { return nil, err }",
+                    "    result, err := s.process(ctx, req.Payload)",
+                    "    return &Response{Data: result}, nil",
+                    "}",
+                    "type Config struct { Threshold float64 `json:\"threshold\"` }",
+                    "// Licensed under AGPL-3.0-or-later with scyBorg addendum",
+                ];
+                format!("{indent}{}", lines[rng.next_usize() % lines.len()])
+            }
+            _ => {
+                format!("{indent}// line {line_num}")
+            }
+        }
     }
 
     fn gen_file(&self, rng: &mut XorShift64) -> (String, String) {
