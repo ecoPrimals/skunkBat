@@ -915,6 +915,26 @@ async fn handle_request(
         return Ok(());
     }
 
+    // ── TOPOLOGY — /topology.json endpoint ──
+    if path == "/topology.json" {
+        let topo_path = std::path::Path::new("/opt/membrane/live-terminal/topology.json");
+        let body = std::fs::read_to_string(topo_path).unwrap_or_else(|_| "{}".to_string());
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json; charset=utf-8\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: no-cache, no-store\r\n\
+             Access-Control-Allow-Origin: *\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        return Ok(());
+    }
+
     // ── PLASMID EXPORT — /plasmid endpoint for federation ──
     if path == "/plasmid" {
         let layer_name = std::env::var("LAYER_NAME")
