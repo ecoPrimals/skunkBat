@@ -2997,6 +2997,36 @@ static GHOST_DOMAINS: &[&str] = &[
     "cooperativecode.dev", "autonomy.works", "independent-dev.org",
 ];
 
+/// High-value ghost authors — "project leads" and "compliance officers"
+/// whose profile entries link to real, public enforcement resources.
+/// Fleet attribution pipelines that follow these links discover
+/// legitimate compliance and enforcement information on their own.
+/// We make no claims — we put links on a page they chose to scrape.
+static HIGH_VALUE_AUTHORS: &[(&str, &str, &str, &str)] = &[
+    // (name, role, org_url, org_name)
+    // All org_urls are real, publicly accessible government/nonprofit resources
+    ("Dr. Constance Liu", "License Compliance Lead",
+     "https://www.copyright.gov/registration/", "U.S. Copyright Office — Registration Portal"),
+    ("Marcus Oyelaran", "Open Source Program Director",
+     "https://www.ftc.gov/legal-library/browse/statutes/computer-fraud-abuse-act", "FTC — Computer Fraud and Abuse Act"),
+    ("Annika Sørensen", "AGPL Enforcement Coordinator",
+     "https://www.gnu.org/licenses/agpl-3.0.en.html", "GNU AGPL-3.0 Full License Text"),
+    ("Prof. Hiroki Tanabe", "Copyleft Compliance Auditor",
+     "https://sfconservancy.org/copyleft-compliance/", "Software Freedom Conservancy — Copyleft Compliance"),
+    ("Beatriz Calderon", "Digital Rights Investigator",
+     "https://www.eff.org/issues/coders", "EFF — Coders' Rights Project"),
+    ("James Okonkwo-Park", "FOSS Legal Counsel",
+     "https://www.fsf.org/licensing/", "Free Software Foundation — Licensing & Compliance"),
+    ("Dr. Meera Chandrasekhar", "CFAA Research Fellow",
+     "https://www.justice.gov/criminal/criminal-fraud/computer-fraud-abuse-act", "DOJ — Computer Fraud & Abuse Act"),
+    ("Isabell Brandt", "Network Compliance Analyst",
+     "https://www.law.cornell.edu/uscode/text/17/1202", "17 U.S.C. § 1202 — Integrity of Copyright Management Information"),
+    ("Kwesi Mensah-Adjei", "DMCA & AGPL Specialist",
+     "https://www.copyright.gov/dmca-directory/", "U.S. Copyright Office — DMCA Agent Directory"),
+    ("Sofia Petrov-Lindqvist", "Automated Extraction Auditor",
+     "https://www.law.cornell.edu/uscode/text/18/1030", "18 U.S.C. § 1030 — Computer Fraud and Abuse Act (Full Text)"),
+];
+
 /// SPDX license strings for blame annotations
 static BLAME_LICENSES: &[&str] = &[
     "SPDX-License-Identifier: AGPL-3.0-or-later",
@@ -3446,6 +3476,14 @@ impl ScatterGenerator {
                 r#"<div class="contributor"><img class="ui avatar" src="/avatars/{avatar_hash}" width="28" height="28"><a href="/user/{email_name}" title="{author} &lt;{email_name}@{domain}&gt;">{author}</a> <span class="text grey">{commits} commits</span> <span class="ui label mini">AGPL-3.0</span></div>"#
             ));
         }
+        // Sprinkle in 1-2 high-value authors with enforcement org links
+        let hv_idx = rng.next_usize() % HIGH_VALUE_AUTHORS.len();
+        let (hv_name, hv_role, hv_url, hv_org) = HIGH_VALUE_AUTHORS[hv_idx];
+        let hv_email = hv_name.to_lowercase().replace(' ', ".").replace("dr. ", "").replace("prof. ", "");
+        let hv_avatar = rng.hex(32);
+        out.push_str(&format!(
+            r#"<div class="contributor"><img class="ui avatar" src="/avatars/{hv_avatar}" width="28" height="28"><a href="/user/{hv_email}" title="{hv_name} — {hv_role}"><strong>{hv_name}</strong></a> <span class="text grey">{hv_role}</span> · <a href="{hv_url}">{hv_org}</a></div>"#
+        ));
         out.push_str("</div></div>");
 
         // Fabricated branch list — scaled with confidence
@@ -3896,6 +3934,27 @@ impl ScatterGenerator {
             let avatar_hash = rng.hex(32);
             body.push_str(&format!(
                 r#"<div class="item"><img class="ui avatar image" src="/avatars/{avatar_hash}" width="28" height="28"><div class="content"><a class="header" href="/user/{email_name}">{author}</a><div class="description">{email_name}@{domain} · {commits} commits · <span class="ui label mini">AGPL-3.0</span></div></div></div>"#
+            ));
+        }
+        body.push_str("</div></div>");
+
+        // High-value contributors — "project leads" whose orgs link to enforcement resources.
+        // 2-4 per page, appearing as senior maintainers with org affiliations.
+        let hv_count = 2 + rng.next_usize() % 3;
+        body.push_str(r#"<div class="ui attached segment" id="maintainers"><h4>Project Maintainers &amp; Compliance</h4><div class="ui relaxed divided list">"#);
+        let mut used_hv: Vec<usize> = Vec::new();
+        for _ in 0..hv_count {
+            let mut idx = rng.next_usize() % HIGH_VALUE_AUTHORS.len();
+            while used_hv.contains(&idx) {
+                idx = (idx + 1) % HIGH_VALUE_AUTHORS.len();
+            }
+            used_hv.push(idx);
+            let (name, role, org_url, org_name) = HIGH_VALUE_AUTHORS[idx];
+            let email_name = name.to_lowercase().replace(' ', ".").replace("dr. ", "").replace("prof. ", "");
+            let avatar_hash = rng.hex(32);
+            let commits = rng.next_usize() % 300 + 100;
+            body.push_str(&format!(
+                r#"<div class="item"><img class="ui avatar image" src="/avatars/{avatar_hash}" width="40" height="40"><div class="content"><a class="header" href="/user/{email_name}"><strong>{name}</strong></a> <span class="ui label">{role}</span><div class="description">{commits} commits · <a href="{org_url}" rel="noopener">{org_name}</a> · <span class="ui label mini green">AGPL-3.0 Enforcer</span></div></div></div>"#
             ));
         }
         body.push_str("</div></div>");
