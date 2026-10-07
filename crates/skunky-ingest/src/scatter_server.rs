@@ -601,6 +601,83 @@ fn is_honeytoken_path(path: &str) -> bool {
     HONEYTOKEN_PATHS.iter().any(|p| clean == *p)
 }
 
+/// Live metrics for the scatter server — atomic counters for the /metrics endpoint.
+#[derive(Debug, Clone)]
+pub struct ScatterMetrics {
+    pub total_requests: Arc<AtomicU32>,
+    pub scatter_served: Arc<AtomicU32>,
+    pub prism_served: Arc<AtomicU32>,
+    pub mirror_served: Arc<AtomicU32>,
+    pub tarpit_served: Arc<AtomicU32>,
+    pub honeytoken_served: Arc<AtomicU32>,
+    pub plasmid_served: Arc<AtomicU32>,
+    pub bytes_served: Arc<std::sync::atomic::AtomicU64>,
+    pub started_at: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ScatterMetrics {
+    pub fn new() -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self {
+            total_requests: Arc::new(AtomicU32::new(0)),
+            scatter_served: Arc::new(AtomicU32::new(0)),
+            prism_served: Arc::new(AtomicU32::new(0)),
+            mirror_served: Arc::new(AtomicU32::new(0)),
+            tarpit_served: Arc::new(AtomicU32::new(0)),
+            honeytoken_served: Arc::new(AtomicU32::new(0)),
+            plasmid_served: Arc::new(AtomicU32::new(0)),
+            bytes_served: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            started_at: Arc::new(std::sync::atomic::AtomicU64::new(now)),
+        }
+    }
+
+    pub fn record(&self, bytes: u64) {
+        self.total_requests.fetch_add(1, Ordering::Relaxed);
+        self.bytes_served.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn export_json(&self, layer_name: &str) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let started = self.started_at.load(std::sync::atomic::Ordering::Relaxed);
+        let uptime = now.saturating_sub(started);
+        let total = self.total_requests.load(Ordering::Relaxed);
+        let bytes = self.bytes_served.load(std::sync::atomic::Ordering::Relaxed);
+        let scatter = self.scatter_served.load(Ordering::Relaxed);
+        let prism = self.prism_served.load(Ordering::Relaxed);
+        let mirror = self.mirror_served.load(Ordering::Relaxed);
+        let tarpit = self.tarpit_served.load(Ordering::Relaxed);
+        let honey = self.honeytoken_served.load(Ordering::Relaxed);
+        let plasmid = self.plasmid_served.load(Ordering::Relaxed);
+        let rps = if uptime > 0 { total as f64 / uptime as f64 } else { 0.0 };
+        let mbps = if uptime > 0 { bytes as f64 / uptime as f64 / 1024.0 / 1024.0 } else { 0.0 };
+
+        format!(
+            "{{\
+                \"layer\":\"{layer_name}\",\
+                \"uptime_secs\":{uptime},\
+                \"total_requests\":{total},\
+                \"requests_per_second\":{rps:.2},\
+                \"bytes_served\":{bytes},\
+                \"mb_per_second\":{mbps:.4},\
+                \"breakdown\":{{\
+                    \"scatter\":{scatter},\
+                    \"prism\":{prism},\
+                    \"mirror\":{mirror},\
+                    \"tarpit\":{tarpit},\
+                    \"honeytoken\":{honey},\
+                    \"plasmid\":{plasmid}\
+                }}\
+            }}"
+        )
+    }
+}
+
 /// Scatter server configuration.
 #[derive(Debug, Clone)]
 pub struct ScatterConfig {
@@ -641,6 +718,7 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
     let base_ratio = config.poison_ratio;
     let tarpit = TarpitState::new(config.max_tarpit_connections);
     let cache = Arc::new(opsonize_cache);
+    let metrics = Arc::new(ScatterMetrics::new());
 
     loop {
         let (stream, _peer) = match listener.accept().await {
@@ -655,8 +733,9 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
         let effective_ratio = confidence.effective_ratio(base_ratio);
         let tp = tarpit.clone();
         let oc = Arc::clone(&cache);
+        let mt = Arc::clone(&metrics);
         tokio::spawn(async move {
-            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc).await {
+            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc, &mt).await {
                 tracing::debug!(error = %e, "scatter request handler error");
             }
         });
@@ -669,6 +748,7 @@ async fn handle_request(
     poison_ratio: f32,
     tarpit: &TarpitState,
     opsonize_cache: &OpsonizeCache,
+    metrics: &ScatterMetrics,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (reader, mut writer) = stream.split();
     let mut buf_reader = BufReader::new(reader);
@@ -738,8 +818,6 @@ async fn handle_request(
     }
 
     // ── PLASMID EXPORT — /plasmid endpoint for federation ──
-    // Each golgi layer serves its local conserved plasmid as JSON so the
-    // central aggregator can merge all layers into the published feed.
     if path == "/plasmid" {
         let layer_name = std::env::var("LAYER_NAME")
             .or_else(|_| std::fs::read_to_string("/etc/membrane/gate-name").map(|s| s.trim().to_string()))
@@ -759,7 +837,31 @@ async fn handle_request(
         );
         writer.write_all(response.as_bytes()).await?;
         writer.flush().await?;
-        tracing::debug!("plasmid export served ({} bytes)", body.len());
+        metrics.plasmid_served.fetch_add(1, Ordering::Relaxed);
+        metrics.record(body.len() as u64);
+        return Ok(());
+    }
+
+    // ── METRICS — /metrics endpoint for live monitoring ──
+    if path == "/metrics" {
+        let layer_name = std::env::var("LAYER_NAME")
+            .or_else(|_| std::fs::read_to_string("/etc/membrane/gate-name").map(|s| s.trim().to_string()))
+            .unwrap_or_else(|_| "unknown".to_string());
+        let body = metrics.export_json(&layer_name);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: no-cache\r\n\
+             Access-Control-Allow-Origin: *\r\n\
+             X-Content-Type-Options: nosniff\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
         return Ok(());
     }
 
@@ -820,6 +922,8 @@ async fn handle_request(
                 &fleet_hash[..fleet_hash.len().min(8)],
                 mix.population_size,
             );
+            metrics.prism_served.fetch_add(1, Ordering::Relaxed);
+            metrics.record(body.len() as u64);
             return Ok(());
         }
     }
@@ -827,6 +931,8 @@ async fn handle_request(
     // ── Layer 1: TARPIT — Caddy rewrites /tarpit{uri} for P2 SlowDegrade ──
     if path.starts_with("/tarpit") {
         let effective_path = path.strip_prefix("/tarpit").unwrap_or(&path);
+        metrics.tarpit_served.fetch_add(1, Ordering::Relaxed);
+        metrics.record(0);
         return handle_tarpit(&mut writer, generator, effective_path, tarpit).await;
     }
 
@@ -849,6 +955,8 @@ async fn handle_request(
         writer.write_all(response.as_bytes()).await?;
         writer.flush().await?;
         tracing::info!(path = %path, "🍯 honeytoken served");
+        metrics.honeytoken_served.fetch_add(1, Ordering::Relaxed);
+        metrics.record(body.len() as u64);
         return Ok(());
     }
 
@@ -984,6 +1092,8 @@ async fn handle_request(
         status = %status,
         "🪞 scatter served"
     );
+    metrics.scatter_served.fetch_add(1, Ordering::Relaxed);
+    metrics.record(body.len() as u64);
 
     Ok(())
 }
