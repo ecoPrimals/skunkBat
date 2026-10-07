@@ -10,9 +10,9 @@
 //! Module declarations live in `lib.rs` for reuse; binary owns CLI + tail loop.
 
 use skunky_ingest::{
-    aggregator, caddy, caddy_bridge, cloudflare, cursor, error, fleet,
-    lysogeny, rpc, abuse_reporter, bloom_sensor, scatter_server,
-    signal_spine, threat_feed,
+    aggregator, caddy, caddy_bridge, cloudflare, cursor, error,
+    federation, fleet, inflammatory, lysogeny, rpc, abuse_reporter,
+    bloom_sensor, scatter_server, signal_spine, threat_feed,
 };
 
 use error::IngestError;
@@ -338,6 +338,23 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             max_tarpit_connections: cli.max_tarpit_connections,
         };
         tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone()));
+    }
+
+    // Inflammatory watchdog — heartbeat failover (replaces membrane-inflammatory.timer)
+    if cli.caddy_bridge {
+        tokio::spawn(inflammatory::run(inflammatory::InflammatoryConfig::default()));
+
+        // Plasmid federation — periodic merge (replaces plasmid-federation cron)
+        tokio::spawn(async {
+            let config = federation::FederationConfig::default();
+            loop {
+                match federation::run_once(&config).await {
+                    Ok(path) => tracing::info!(path = %path.display(), "🧬 plasmid federation cycle complete"),
+                    Err(e) => tracing::warn!(error = %e, "plasmid federation cycle failed"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            }
+        });
     }
 
     // Bloom sensor — afferent signal accumulation (all hosts)
