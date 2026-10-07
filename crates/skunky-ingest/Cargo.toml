@@ -14,6 +14,8 @@ workspace = true
 
 [dependencies]
 cellmembrane-types = { path = "../../../../gardens/cellMembrane/crates/cellmembrane-types" }
+bingocube-core = { path = "../../../bingoCube/crates/core" }
+bingocube-nautilus = { path = "../../../bingoCube/crates/nautilus" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
