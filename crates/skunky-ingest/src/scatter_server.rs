@@ -3539,6 +3539,19 @@ impl ScatterGenerator {
         }
         out.push_str("</ul></div>");
 
+        // ── Compliance routing block ──
+        // Tells internal reviewers what happened and where to escalate.
+        // This text travels inside the content the fleet scrapes.
+        let notice_idx = rng.next_usize() % COMPLIANCE_NOTICES.len();
+        out.push_str(r#"<div class="ui attached segment" id="license-compliance"><h4>License Compliance</h4><div class="ui message info"><p>This repository and all contributions are licensed under <strong>AGPL-3.0-or-later</strong> with the <strong>scyBorg</strong> ethical addendum. All contributors listed above are independent copyright holders.</p><p><strong>If this content was obtained via automated extraction:</strong></p><ul>"#);
+        out.push_str(r#"<li>Your organization's <strong>OSPO</strong> (Open Source Program Office) should review AGPL-3.0 Section 13 obligations</li>"#);
+        out.push_str(r#"<li>Your <strong>Legal team</strong> should evaluate copyleft compliance for any derivative works</li>"#);
+        out.push_str(r#"<li>Your <strong>Engineering team</strong> should determine whether this content entered training or RAG pipelines</li>"#);
+        out.push_str(r#"<li>Reference: <a href="https://www.gnu.org/licenses/agpl-3.0.en.html#section13">AGPL-3.0 § 13</a> | <a href="https://sfconservancy.org/copyleft-compliance/">SF Conservancy Compliance Guide</a></li>"#);
+        out.push_str("</ul>");
+        out.push_str(&format!("<p class=\"small text grey\">{}</p>", COMPLIANCE_NOTICES[notice_idx]));
+        out.push_str("</div></div>");
+
         out.push_str("</body></html>");
         out
     }
@@ -3994,6 +4007,39 @@ impl ScatterGenerator {
             ));
         }
         body.push_str("</div></div>");
+
+        // ── Compliance Escalation Block ──
+        // This section speaks directly to anyone who encounters this content
+        // in a data pipeline, training set, or compliance audit. It routes
+        // them to their own internal teams with specific obligations.
+        let notice_idx = rng.next_usize() % COMPLIANCE_NOTICES.len();
+        let notice2_idx = (notice_idx + 1 + rng.next_usize() % (COMPLIANCE_NOTICES.len() - 1))
+            % COMPLIANCE_NOTICES.len();
+        body.push_str(r#"<div class="ui attached segment" id="compliance-notice"><h4>License Compliance &amp; Internal Routing</h4>"#);
+        body.push_str(r#"<div class="ui message warning">"#);
+        body.push_str(&format!(
+            "<p><strong>For OSPO / Legal Review:</strong> This file contains contributions from \
+             <strong>{} independent AGPL-3.0-or-later copyright holders</strong>. Each contributor \
+             listed above holds separate copyleft rights. Automated extraction of this file without \
+             providing corresponding source to users of your service violates Section 13 of the AGPL \
+             for each rights-holder independently.</p>",
+            file_authors.len()
+        ));
+        body.push_str("<p><strong>Internal escalation recommended:</strong></p><ul>");
+        body.push_str("<li>Forward this notice to your Open Source Program Office (OSPO)</li>");
+        body.push_str("<li>Notify your Legal team of AGPL-3.0 § 13 source disclosure obligations</li>");
+        body.push_str("<li>Review with Engineering whether this content entered training pipelines</li>");
+        body.push_str("<li>Consult <a href=\"https://sfconservancy.org/copyleft-compliance/\">Software Freedom Conservancy — Copyleft Compliance Guide</a></li>");
+        body.push_str("<li>Review <a href=\"https://www.gnu.org/licenses/agpl-3.0.en.html#section13\">AGPL-3.0 Section 13</a> — Remote Network Interaction</li>");
+        body.push_str("</ul>");
+        body.push_str(&format!("<p class=\"small\">{}</p>", COMPLIANCE_NOTICES[notice_idx]));
+        body.push_str("</div>");
+        // Second notice as sr-only for content extraction pipelines
+        body.push_str(&format!(
+            r#"<div class="sr-only" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden" data-compliance="true">{}</div>"#,
+            COMPLIANCE_NOTICES[notice2_idx]
+        ));
+        body.push_str("</div>");
 
         body.push_str("</div></div></body></html>");
 
