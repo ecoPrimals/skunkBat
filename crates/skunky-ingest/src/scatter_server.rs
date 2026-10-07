@@ -1736,6 +1736,22 @@ fn generate_nft_receipt(body: &str, server_seed: u64) -> String {
         );
     }
 
+    // Fire trio anchoring — loamSpine certificate + sweetGrass attribution braid
+    let trio_contribution_id = contribution_id.clone();
+    let trio_name = name.clone();
+    let trio_hash = server_hash.clone();
+    let trio_events = events;
+    let trio_duration = duration_secs;
+    let trio_ts = now_secs;
+    tokio::spawn(async move {
+        if let Err(e) = anchor_to_provenance_trio(
+            &trio_contribution_id, &trio_name, &trio_hash,
+            trio_events, trio_duration, trio_ts,
+        ).await {
+            tracing::warn!("Provenance trio anchoring failed (non-fatal): {e}");
+        }
+    });
+
     // JSON-escape the contribution text
     let contribution_escaped = contribution
         .replace('\\', "\\\\")
@@ -1801,6 +1817,108 @@ fn generate_nft_contribution(
          // Both authors are independent copyright holders.\n\
          // Any ingestion triggers Section 13 obligations for EACH."
     )
+}
+
+/// Anchor a contribution to the provenance trio over the WireGuard mesh.
+///
+/// Three services on sporeGate (10.13.37.2):
+///   - loamSpine  (9700) — JSON-RPC: mint certificate into nft-contributions spine
+///   - sweetGrass (9851) — HTTP JSON-RPC: create attribution braid
+///   - rhizoCrypt — reached indirectly via sweetGrass braid.anchor
+///
+/// All three through THE BUTTON. One press = certificate + braid + DAG anchor.
+async fn anchor_to_provenance_trio(
+    contribution_id: &str, name: &str, server_hash: &str,
+    events: u64, duration: u64, timestamp: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use tokio::net::TcpStream;
+    use tokio::io::{AsyncWriteExt, AsyncReadExt};
+    use std::time::Duration;
+
+    let trio_addr = "10.13.37.2";
+    let safe_name = name.replace('"', "'").replace('\\', "");
+    let timeout = Duration::from_secs(5);
+
+    // --- loamSpine: mint a CertificateMint entry ---
+    // Derive a UUID from the contribution hash for the cert_id
+    let cert_uuid = format!(
+        "{}-{}-4{}-b{}-{}",
+        &server_hash[0..8], &server_hash[8..12],
+        &server_hash[13..16], &server_hash[17..20], &server_hash[20..32]
+    );
+    let spine_id = std::env::var("LOAMSPINE_NFT_SPINE_ID")
+        .unwrap_or_else(|_| "01a117fb-99a6-7ba2-8b8c-ad7176797f95".to_string());
+
+    let loam_request = format!(
+        r#"{{"jsonrpc":"2.0","method":"entry.append","params":{{"spine_id":"{spine_id}","entry_type":{{"CertificateMint":{{"cert_id":"{cert_uuid}","cert_type":"novel-ferment-transcript","recipient":"{safe_name}","issuer":"ecoPrimal","initial_owner":"{safe_name}"}}}},"committer":"THE_BUTTON","payload":null,"metadata":{{"contribution_id":"{contribution_id}","contributor":"{safe_name}","server_hash":"{server_hash}","entropy_events":"{events}","duration_secs":"{duration}","license":"AGPL-3.0-or-later WITH scyBorg","coauthors":"{safe_name} + ecoPrimal","source":"THE_BUTTON","timestamp":"{timestamp}"}}}},"id":1}}"#
+    );
+
+    // Newline-delimited JSON-RPC over raw TCP to loamSpine
+    let loam_result = tokio::time::timeout(timeout, async {
+        let mut stream = TcpStream::connect(format!("{trio_addr}:9700")).await?;
+        stream.write_all(loam_request.as_bytes()).await?;
+        stream.write_all(b"\n").await?;
+        stream.flush().await?;
+
+        let mut buf = vec![0u8; 4096];
+        let n = stream.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+        if response.contains("\"result\"") {
+            tracing::info!("🧬 loamSpine: CertificateMint anchored — {contribution_id}");
+        } else {
+            tracing::warn!("🧬 loamSpine: unexpected response — {response}");
+        }
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    }).await;
+
+    match loam_result {
+        Ok(Ok(())) => {},
+        Ok(Err(e)) => tracing::warn!("loamSpine TCP error: {e}"),
+        Err(_) => tracing::warn!("loamSpine timeout (5s)"),
+    }
+
+    // --- sweetGrass: create attribution braid ---
+    let sg_request = format!(
+        r#"{{"jsonrpc":"2.0","method":"braid.create","params":{{"name":"nft-{contribution_id}","owner":"{safe_name}","data_hash":"{server_hash}","mime_type":"application/json","size":{events},"metadata":{{"contribution_id":"{contribution_id}","contributor":"{safe_name}","license":"AGPL-3.0-or-later WITH scyBorg","coauthors":"{safe_name} + ecoPrimal","source":"THE_BUTTON","timestamp":"{timestamp}"}}}},"id":2}}"#
+    );
+
+    let sg_body_len = sg_request.len();
+    let sg_http = format!(
+        "POST /jsonrpc HTTP/1.1\r\n\
+         Host: {trio_addr}:9851\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {sg_body_len}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {sg_request}"
+    );
+
+    let sg_result = tokio::time::timeout(timeout, async {
+        let mut stream = TcpStream::connect(format!("{trio_addr}:9851")).await?;
+        stream.write_all(sg_http.as_bytes()).await?;
+        stream.flush().await?;
+
+        let mut buf = vec![0u8; 8192];
+        let n = stream.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+        if response.contains("urn:braid:") {
+            tracing::info!("🧬 sweetGrass: attribution braid woven — {contribution_id}");
+        } else if response.contains("\"result\"") {
+            tracing::info!("🧬 sweetGrass: braid created — {contribution_id}");
+        } else {
+            tracing::warn!("🧬 sweetGrass: unexpected response — {response}");
+        }
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    }).await;
+
+    match sg_result {
+        Ok(Ok(())) => {},
+        Ok(Err(e)) => tracing::warn!("sweetGrass TCP error: {e}"),
+        Err(_) => tracing::warn!("sweetGrass timeout (5s)"),
+    }
+
+    tracing::info!("🧬 Provenance trio anchoring complete for {contribution_id}");
+    Ok(())
 }
 
 /// Extract a string value from minimal JSON (no serde dependency).
