@@ -125,8 +125,13 @@ pub struct RequestFingerprint {
     pub has_sec_fetch_mode: bool,
     pub has_sec_ch_ua: bool,
     pub has_connection: bool,
+    pub has_cookie: bool,
     pub timestamp: f64,
     pub status: u16,
+    /// Sec-Fetch triplet (Mode|Dest|Site) for monotone detection.
+    pub sec_fetch_triplet: String,
+    /// Referer header value (empty string if absent).
+    pub referer: String,
 }
 
 impl RequestFingerprint {
@@ -305,6 +310,40 @@ pub struct EntityProfile {
 
     /// Sub-systems detected within this entity.
     pub sub_systems: Vec<SubSystem>,
+
+    /// Wave 166f: Conserved epitope scores — signals fleet can't cheaply evade.
+    pub epitopes: EpitopeScores,
+    /// Composite fleet confidence (% of epitopes triggered).
+    pub fleet_confidence: f64,
+}
+
+/// Six conserved epitopes from antigenic drift analysis (Wave 166f).
+///
+/// Each epitope costs the fleet more to evade than the last.
+/// The terminal epitope (reading pauses) would reduce throughput to
+/// human levels, collapsing the economics of scraping a $6 VPS.
+#[derive(Debug, Serialize)]
+pub struct EpitopeScores {
+    /// Same Sec-Fetch triplet on >95% of requests (real browsers vary by type).
+    pub sec_fetch_monotone: Option<EpitopeResult>,
+    /// <10% of intervals >8s (can't add pauses without killing throughput).
+    pub reading_deficit: Option<EpitopeResult>,
+    /// Too few UAs for visit count (adding diversity requires tracking Chrome releases).
+    pub ua_pool_poverty: Option<EpitopeResult>,
+    /// No cookies across multi-page visits (stateful sessions kill parallelism).
+    pub session_absent: Option<EpitopeResult>,
+    /// No external referers (can't fake Google arrival).
+    pub referer_self_loop: Option<EpitopeResult>,
+    /// >50% of intervals <3s (reducing bursts conflicts with extraction economics).
+    pub burst_ratio: Option<EpitopeResult>,
+}
+
+/// Result for a single epitope check.
+#[derive(Debug, Serialize)]
+pub struct EpitopeResult {
+    pub score: f64,
+    pub triggered: bool,
+    pub description: String,
 }
 
 /// Header presence/absence fingerprint.
@@ -385,6 +424,12 @@ struct EntityAccum {
     last_ts: f64,
     // Per-IP repo tracking (for specialist vs generalist detection)
     ip_repos: HashMap<String, HashMap<String, u64>>,
+    // Wave 166f epitope tracking
+    sec_fetch_triplets: HashMap<String, u64>,
+    cookie_present: u64,
+    cookie_absent: u64,
+    referer_external: u64,
+    referer_absent: u64,
 }
 
 impl EntityAccum {
@@ -411,6 +456,11 @@ impl EntityAccum {
             first_ts: f64::INFINITY,
             last_ts: 0.0,
             ip_repos: HashMap::new(),
+            sec_fetch_triplets: HashMap::new(),
+            cookie_present: 0,
+            cookie_absent: 0,
+            referer_external: 0,
+            referer_absent: 0,
         }
     }
 }
@@ -470,6 +520,21 @@ impl TopologyBuilder {
         else { accum.sec_ch_ua_absent += 1; }
         if fp.has_connection { accum.conn_present += 1; }
         else { accum.conn_absent += 1; }
+
+        // Wave 166f epitope collection
+        if !fp.sec_fetch_triplet.is_empty() {
+            *accum.sec_fetch_triplets.entry(fp.sec_fetch_triplet.clone()).or_insert(0) += 1;
+        }
+        if fp.has_cookie { accum.cookie_present += 1; }
+        else { accum.cookie_absent += 1; }
+        if fp.referer.is_empty() {
+            accum.referer_absent += 1;
+        } else if fp.referer.contains("google") || fp.referer.contains("bing")
+                || fp.referer.contains("duckduckgo") {
+            accum.referer_external += 1;
+        } else if !fp.referer.contains(&fp.host) {
+            accum.referer_external += 1;
+        }
     }
 
     /// Build the final topology — sorted by request count descending.
@@ -676,6 +741,92 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         });
     }
 
+    // ── Wave 166f: Six conserved epitopes ──
+    let mut epitope_count = 0u32;
+    let mut epitope_triggered = 0u32;
+
+    let sec_fetch_monotone = if !accum.sec_fetch_triplets.is_empty() && accum.total > 10 {
+        let top_count = accum.sec_fetch_triplets.values().max().copied().unwrap_or(0);
+        let pct = top_count as f64 / accum.total as f64 * 100.0;
+        let triggered = pct > 95.0;
+        epitope_count += 1;
+        if triggered { epitope_triggered += 1; }
+        Some(EpitopeResult {
+            score: (pct * 10.0).round() / 10.0,
+            triggered,
+            description: format!("Same Sec-Fetch triplet on {:.1}% of requests", pct),
+        })
+    } else { None };
+
+    let reading_deficit = if intervals.len() > 10 {
+        let pauses = intervals.iter().filter(|&&i| i > 8.0).count();
+        let pct = pauses as f64 / intervals.len() as f64 * 100.0;
+        let triggered = pct < 10.0;
+        epitope_count += 1;
+        if triggered { epitope_triggered += 1; }
+        Some(EpitopeResult {
+            score: (pct * 10.0).round() / 10.0,
+            triggered,
+            description: format!("Only {:.1}% of intervals >8s (reading pauses)", pct),
+        })
+    } else { None };
+
+    let ua_pool_poverty = if accum.total > 50 {
+        let pool = accum.uas.len();
+        let threshold = std::cmp::max(10, (accum.total as f64 * 0.05) as usize);
+        let triggered = pool < threshold;
+        epitope_count += 1;
+        if triggered { epitope_triggered += 1; }
+        Some(EpitopeResult {
+            score: pool as f64,
+            triggered,
+            description: format!("{} unique UAs for {} visits", pool, accum.total),
+        })
+    } else { None };
+
+    let session_absent = if accum.total > 20 {
+        let pct = accum.cookie_present as f64 / accum.total as f64 * 100.0;
+        let triggered = pct < 5.0;
+        epitope_count += 1;
+        if triggered { epitope_triggered += 1; }
+        Some(EpitopeResult {
+            score: (pct * 10.0).round() / 10.0,
+            triggered,
+            description: format!("Cookies on {:.1}% of requests", pct),
+        })
+    } else { None };
+
+    let referer_self_loop = if accum.total > 20 {
+        let pct = accum.referer_external as f64 / accum.total as f64 * 100.0;
+        let triggered = pct < 2.0;
+        epitope_count += 1;
+        if triggered { epitope_triggered += 1; }
+        Some(EpitopeResult {
+            score: (pct * 10.0).round() / 10.0,
+            triggered,
+            description: format!("External referers on {:.1}% of requests", pct),
+        })
+    } else { None };
+
+    let burst_ratio_epitope = if intervals.len() > 10 {
+        let bursts = intervals.iter().filter(|&&i| i < 3.0).count();
+        let pct = bursts as f64 / intervals.len() as f64 * 100.0;
+        let triggered = pct > 50.0;
+        epitope_count += 1;
+        if triggered { epitope_triggered += 1; }
+        Some(EpitopeResult {
+            score: (pct * 10.0).round() / 10.0,
+            triggered,
+            description: format!("{:.1}% of intervals <3s", pct),
+        })
+    } else { None };
+
+    let fleet_confidence = if epitope_count > 0 {
+        (epitope_triggered as f64 / epitope_count as f64 * 1000.0).round() / 10.0
+    } else {
+        0.0
+    };
+
     EntityProfile {
         label: entity_id.label().to_string(),
         is_fleet: entity_id.is_fleet(),
@@ -720,6 +871,15 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         targets_scatter_only: !has_real && has_scatter,
         timing,
         sub_systems,
+        epitopes: EpitopeScores {
+            sec_fetch_monotone,
+            reading_deficit,
+            ua_pool_poverty,
+            session_absent,
+            referer_self_loop,
+            burst_ratio: burst_ratio_epitope,
+        },
+        fleet_confidence,
     }
 }
 
