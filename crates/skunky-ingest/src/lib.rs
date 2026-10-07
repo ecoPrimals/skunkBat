@@ -20,6 +20,8 @@ pub mod lysogeny;
 pub mod rpc;
 pub mod abuse_reporter;
 pub mod bloom_sensor;
+pub mod scatter_nft;
+pub mod scatter_rng;
 pub mod scatter_server;
 pub mod scyborg_prism;
 pub mod signal_spine;
