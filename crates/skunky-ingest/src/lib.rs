@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
+//! skunky-ingest — Live traffic log tailer for skunkBat behavioral detection.
+//!
+//! Library crate exposing all modules for reuse (integration tests, federation,
+//! future tooling). The binary crate (`main.rs`) owns the CLI and tail loop.
+
+pub mod aggregator;
+pub mod caddy;
+pub mod caddy_bridge;
+pub mod cloudflare;
+pub mod cursor;
+pub mod error;
+pub mod federation;
+pub mod fleet;
+pub mod inflammatory;
+pub mod lysogeny;
+pub mod rpc;
+pub mod abuse_reporter;
+pub mod bloom_sensor;
+pub mod scatter_server;
+pub mod signal_spine;
+pub mod threat_feed;

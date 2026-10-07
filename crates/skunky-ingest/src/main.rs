@@ -6,23 +6,14 @@
 //! Tails structured JSON access logs (Caddy format), aggregates per-source-IP
 //! metrics over a configurable window, and pushes `baseline.observe` JSON-RPC
 //! calls to skunkBat over TCP.
+//!
+//! Module declarations live in `lib.rs` for reuse; binary owns CLI + tail loop.
 
-#![allow(unreachable_pub, reason = "binary crate — no external consumers")]
-
-mod aggregator;
-mod caddy;
-pub mod caddy_bridge;
-mod cloudflare;
-mod cursor;
-mod error;
-pub mod fleet;
-pub mod lysogeny;
-mod rpc;
-pub mod abuse_reporter;
-pub mod bloom_sensor;
-pub mod scatter_server;
-pub mod signal_spine;
-pub mod threat_feed;
+use skunky_ingest::{
+    aggregator, caddy, caddy_bridge, cloudflare, cursor, error, fleet,
+    lysogeny, rpc, abuse_reporter, bloom_sensor, scatter_server,
+    signal_spine, threat_feed,
+};
 
 use error::IngestError;
 

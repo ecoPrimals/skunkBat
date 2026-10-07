@@ -37,7 +37,7 @@ strip = true
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.40", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "time", "fs", "signal"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "time", "fs", "signal", "process"] }
 
 # Byte buffers
 bytes = "1.8"
@@ -60,6 +60,9 @@ clap = { version = "4", features = ["derive"] }
 tarpc = { version = "0.37", features = ["tokio1", "serde-transport", "serde-transport-bincode", "unix"] }
 tokio-serde = { version = "0.9", features = ["bincode"] }
 futures-util = "0.3"
+
+# HTTP client (plasmid federation)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 # Cryptography (BTSP Phase 3 — ChaCha20-Poly1305 encrypted framing)
 chacha20poly1305 = "0.10"
