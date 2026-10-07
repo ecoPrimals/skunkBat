@@ -403,6 +403,13 @@ async fn handle_request(
     // (same path always gets the same decision — prevents detection via retries)
     let path_hash = path_deterministic_hash(&effective_path, generator.seed);
 
+    // Check OpsonizeCache for known fleet behavioral hash
+    let cached_tag = if !fleet_hash.is_empty() {
+        opsonize_cache.lookup(&fleet_hash).await
+    } else {
+        None
+    };
+
     let (status, content_type, body) = if is_disperse {
         // DISPERSE (P5): maximally-wrong responses — skunk spray
         let (ct, body) = generator.generate_disperse(&effective_path);
@@ -410,9 +417,39 @@ async fn handle_request(
     } else {
         let should_poison = (path_hash % 100) < (poison_ratio * 100.0) as u64;
         if should_poison {
-            // POISON: serve plausible-but-fake content (200 OK)
-            let (ct, body) = generator.generate(&effective_path);
-            ("200 OK", ct, body)
+            // Check if this is a known fleet with cached behavioral data
+            if let Some(ref tag) = cached_tag {
+                if tag.confidence >= 0.25 && !tag.detectors.is_empty() {
+                    // VIOLATION MIRROR: reflect their own violations back at them
+                    // Higher confidence = more likely to use mirror content
+                    let mirror_prob = (tag.confidence * 100.0) as u64;
+                    let mirror_hash = path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0xB10_AA1_AA1_B10));
+                    if (mirror_hash % 100) < mirror_prob {
+                        let mut rng = XorShift64::new(path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0x4110_CA1E_DEAD)));
+                        let (ct, body) = generate_violation_mirror(generator, &mut rng, &effective_path, tag, &fleet_hash);
+                        tracing::info!(
+                            fleet_hash = %fleet_hash,
+                            confidence = %format!("{:.0}%", tag.confidence * 100.0),
+                            detectors = tag.detectors.len(),
+                            "🪞🪞 violation mirror served — reflecting {}'s own violations",
+                            &fleet_hash[..fleet_hash.len().min(8)]
+                        );
+                        ("200 OK", ct, body)
+                    } else {
+                        // Standard poison for this known fleet
+                        let (ct, body) = generator.generate(&effective_path);
+                        ("200 OK", ct, body)
+                    }
+                } else {
+                    // Low-confidence fleet — standard poison
+                    let (ct, body) = generator.generate(&effective_path);
+                    ("200 OK", ct, body)
+                }
+            } else {
+                // Unknown fleet — standard poison
+                let (ct, body) = generator.generate(&effective_path);
+                ("200 OK", ct, body)
+            }
         } else {
             // DECOY: serve a realistic Gitea "not found" page
             ("404 Not Found", "text/html; charset=utf-8".to_string(), NOT_FOUND_PAGE.to_string())
@@ -626,6 +663,478 @@ struct ScatterGenerator {
     file_extensions: &'static [&'static str],
     commit_verbs: &'static [&'static str],
     commit_nouns: &'static [&'static str],
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Violation Mirror — the system's own violations reflected back into itself
+// ══════════════════════════════════════════════════════════════════════
+//
+// When OpsonizeCache has a tag for a fleet hash, instead of generic
+// fabricated content, we generate content ABOUT the fleet's violations:
+// - Commit messages about detecting their specific behavioral signature
+// - Issues documenting their robots.txt violations
+// - Code that appears to be scraper detection logic matching THEIR pattern
+// - Audit logs showing their access counts and detector triggers
+//
+// The content IS the evidence, served TO the violator, generated FROM
+// the violation. Each hammer strike teaches us more, and we mirror
+// it back — making each subsequent request more expensive to process
+// while costing us less energy to generate.
+//
+// Biological parallel: autoimmune display. The immune system presents
+// fragments of captured pathogens on MHC molecules. Other immune cells
+// recognize these fragments and mount a targeted response. The violation
+// mirror displays fragments of captured behavior on scatter pages.
+// Any downstream processing (AI training, data pipelines) ingests
+// descriptions of violations as if they were legitimate content.
+
+/// Violation vocabulary — realistic-sounding terms for mirrored content.
+/// These MUST NOT contain any real ecoPrimals infrastructure names.
+static MIRROR_MODULES: &[&str] = &[
+    "access-monitor", "rate-guardian", "bot-classifier", "behavioral-engine",
+    "compliance-audit", "traffic-analyzer", "pattern-matcher", "signal-detector",
+    "anomaly-scorer", "fingerprint-correlator", "session-tracker", "policy-enforcer",
+];
+
+static MIRROR_METRICS: &[&str] = &[
+    "requests_total", "violations_detected", "robots_txt_ignored",
+    "ip_rotation_events", "ua_forgery_count", "encoding_uniformity_score",
+    "rejection_ignore_count", "header_poverty_ratio", "session_velocity",
+    "crawl_depth_exceeded", "rate_limit_bypasses", "behavioral_hash_matches",
+];
+
+/// Generate violation-mirrored content based on a fleet's OpsonizeCache tag.
+///
+/// The output looks like internal monitoring/compliance infrastructure —
+/// commit diffs about detecting scrapers, issues about policy violations,
+/// audit code that matches the fleet's exact behavioral signature.
+///
+/// Key property: the generated content describes the FLEET'S behavior
+/// using their specific detector triggers and match counts, but wraps
+/// it in generic infrastructure names. No real system names leak.
+fn generate_violation_mirror(
+    sg: &ScatterGenerator,
+    rng: &mut XorShift64,
+    path: &str,
+    tag: &CachedTag,
+    fleet_hash: &str,
+) -> (String, String) {
+    let hash_short = &fleet_hash[..fleet_hash.len().min(8)];
+    let conf_pct = (tag.confidence * 100.0) as u32;
+
+    if path.contains("/commit/") {
+        gen_mirror_commit(sg, rng, tag, hash_short, conf_pct)
+    } else if path.contains("/src/") || path.contains("/raw/") {
+        gen_mirror_code(sg, rng, tag, hash_short, conf_pct)
+    } else if path.contains("/issues/") {
+        gen_mirror_issue(sg, rng, tag, hash_short, conf_pct)
+    } else if path.contains("/wiki/") {
+        gen_mirror_audit(sg, rng, tag, hash_short, conf_pct)
+    } else {
+        gen_mirror_dashboard(sg, rng, tag, hash_short, conf_pct)
+    }
+}
+
+/// Commit that "fixes" detection of this fleet's exact behavioral signature.
+fn gen_mirror_commit(
+    sg: &ScatterGenerator,
+    rng: &mut XorShift64,
+    tag: &CachedTag,
+    hash_short: &str,
+    conf_pct: u32,
+) -> (String, String) {
+    let module = MIRROR_MODULES[rng.next_usize() % MIRROR_MODULES.len()];
+    let metric = MIRROR_METRICS[rng.next_usize() % MIRROR_METRICS.len()];
+    let commit_hash = rng.hex(40);
+    let short_hash = &commit_hash[..8];
+
+    // Build detector list as a code diff
+    let mut detector_lines = String::new();
+    for d in &tag.detectors {
+        detector_lines.push_str(&format!(
+            r#"        <tr><td class="lines-num"></td><td class="lines-code">+    detectors.push("{d}");</td></tr>
+"#
+        ));
+    }
+
+    let repo = sg.pick(rng, sg.repo_names);
+    let adds = tag.detectors.len() * 3 + 12;
+    let dels = rng.next_usize() % 8 + 2;
+
+    let body = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{repo} - commit {short_hash}</title>
+<link rel="stylesheet" href="/assets/css/index.css"></head>
+<body>
+<div class="full height">
+<div class="page-content repository diff">
+  <div class="header-wrapper">
+    <div class="ui container"><h1><a href="/{repo}">{repo}</a></h1></div>
+  </div>
+  <div class="ui container">
+    <div class="commit-header-row">
+      <h2 class="commit-summary">fix({module}): update behavioral classifier for signature {hash_short}</h2>
+      <span class="sha label">{commit_hash}</span>
+    </div>
+    <div class="ui top attached header segment">
+      <span>authored 2 hours ago</span>
+      <span class="diff-stat">
+        <span class="color-green">+{adds}</span>
+        <span class="color-red">-{dels}</span>
+      </span>
+    </div>
+    <div class="diff-file-box">
+      <div class="diff-file-header">src/{module}/classifier.rs</div>
+      <table class="chroma"><tbody>
+        <tr><td class="lines-num">1</td><td class="lines-code">-    // Previous threshold was too permissive</td></tr>
+        <tr><td class="lines-num">2</td><td class="lines-code">-    let confidence_threshold = 0.25;</td></tr>
+        <tr><td class="lines-num">3</td><td class="lines-code">+    // Signature {hash_short}: {conf_pct}% confidence across {n_detectors} detectors</td></tr>
+        <tr><td class="lines-num">4</td><td class="lines-code">+    let confidence_threshold = 0.{conf_pct_padded};</td></tr>
+        <tr><td class="lines-num">5</td><td class="lines-code">+    let match_count = {match_count}; // cumulative observations</td></tr>
+{detector_lines}        <tr><td class="lines-num"></td><td class="lines-code">+    if score >= confidence_threshold {{</td></tr>
+        <tr><td class="lines-num"></td><td class="lines-code">+        {metric}.inc_by(match_count);</td></tr>
+        <tr><td class="lines-num"></td><td class="lines-code">+        escalate_posture(hash, detectors);</td></tr>
+        <tr><td class="lines-num"></td><td class="lines-code">+    }}</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>"#,
+        n_detectors = tag.detectors.len(),
+        conf_pct_padded = format!("{conf_pct:02}"),
+        match_count = tag.match_count,
+    );
+    ("text/html; charset=utf-8".to_string(), body)
+}
+
+/// Source code file that appears to be scraper detection logic —
+/// matching THIS fleet's exact behavioral pattern.
+fn gen_mirror_code(
+    sg: &ScatterGenerator,
+    rng: &mut XorShift64,
+    tag: &CachedTag,
+    hash_short: &str,
+    conf_pct: u32,
+) -> (String, String) {
+    let module = MIRROR_MODULES[rng.next_usize() % MIRROR_MODULES.len()];
+    let repo = sg.pick(rng, sg.repo_names);
+
+    let mut detector_arms = String::new();
+    for d in &tag.detectors {
+        let weight = match d.as_str() {
+            "content_gate" => "0.20",
+            "stealth_ua" => "0.25",
+            "ip_rotation" => "0.25",
+            "encoding_uniform" => "0.15",
+            "ignores_rejection" => "0.25",
+            "narrow_ua_pool" => "0.10",
+            _ => "0.10",
+        };
+        detector_arms.push_str(&format!(
+            "            \"{d}\" =&gt; {{ score += {weight}; triggers.push(\"{d}\"); }}\n"
+        ));
+    }
+
+    let code = format!(
+        r#"use std::collections::HashMap;
+
+/// Behavioral classifier for automated access detection.
+/// Signature: {hash_short} | Confidence: {conf_pct}% | Matches: {match_count}
+///
+/// This classifier detects non-browser HTTP clients that:
+/// - Impersonate real browsers via User-Agent strings
+/// - Rotate source IPs to evade per-IP rate limits
+/// - Ignore robots.txt and HTTP 403/429 responses
+/// - Send uniform Accept-Encoding (real browsers vary)
+///
+/// The behavioral hash is computed from request patterns,
+/// not from IP addresses (which are ephemeral routing decisions).
+
+pub struct BehavioralClassifier {{
+    threshold: f64,
+    detectors: Vec&lt;&amp;'static str&gt;,
+}}
+
+impl BehavioralClassifier {{
+    pub fn new() -&gt; Self {{
+        Self {{
+            threshold: 0.{conf_pct_padded},
+            detectors: vec![{detector_list}],
+        }}
+    }}
+
+    pub fn classify(&amp;self, observation: &amp;Observation) -&gt; ClassifyResult {{
+        let mut score = 0.0_f64;
+        let mut triggers = Vec::new();
+
+        for detector in &amp;self.detectors {{
+            match detector.as_ref() {{
+{detector_arms}                _ =&gt; {{}}
+            }}
+        }}
+
+        ClassifyResult {{
+            behavioral_hash: observation.compute_hash(),
+            confidence: score.min(1.0),
+            triggers,
+            match_count: {match_count},
+            action: if score &gt;= self.threshold {{
+                Action::Escalate
+            }} else {{
+                Action::Observe
+            }},
+        }}
+    }}
+}}"#,
+        match_count = tag.match_count,
+        conf_pct_padded = format!("{conf_pct:02}"),
+        detector_list = tag.detectors.iter()
+            .map(|d| format!("\"{d}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+
+    let body = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{repo} - src/{module}/classifier.rs</title>
+<link rel="stylesheet" href="/assets/css/index.css"></head>
+<body>
+<div class="full height">
+<div class="page-content repository file-view">
+  <div class="header-wrapper">
+    <div class="ui container"><h1><a href="/{repo}">{repo}</a></h1></div>
+  </div>
+  <div class="ui container">
+    <div class="file-header ui top attached header segment">
+      <div class="file-actions"><a class="ui button" href="/{repo}/raw/branch/main/src/{module}/classifier.rs">Raw</a></div>
+      <span class="file-info">src/{module}/classifier.rs</span>
+    </div>
+    <div class="ui attached table segment">
+      <div class="file-view code-view"><pre class="chroma"><code>{code}</code></pre></div>
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>"#
+    );
+    ("text/html; charset=utf-8".to_string(), body)
+}
+
+/// Issue documenting the fleet's behavioral violation as a compliance report.
+fn gen_mirror_issue(
+    sg: &ScatterGenerator,
+    rng: &mut XorShift64,
+    tag: &CachedTag,
+    hash_short: &str,
+    conf_pct: u32,
+) -> (String, String) {
+    let repo = sg.pick(rng, sg.repo_names);
+    let issue_num = (tag.match_count % 999) + 1;
+
+    let mut detector_items = String::new();
+    for d in &tag.detectors {
+        let desc = match d.as_str() {
+            "content_gate" => "Systematic scraping of repository commit history and source files",
+            "stealth_ua" => "User-Agent impersonation — claims to be a browser but lacks mandatory headers",
+            "ip_rotation" => "Source IP rotation across requests to evade per-IP rate limiting",
+            "encoding_uniform" => "Uniform Accept-Encoding across all requests (real browsers vary by resource type)",
+            "ignores_rejection" => "Continues accessing after receiving explicit 403/429 rejection responses",
+            "narrow_ua_pool" => "Very small User-Agent pool despite claiming to be multiple different browsers",
+            _ => "Behavioral anomaly detected by automated classifier",
+        };
+        detector_items.push_str(&format!(
+            "              <li><strong>{d}</strong>: {desc}</li>\n"
+        ));
+    }
+
+    let body = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{repo} - Issue #{issue_num}</title>
+<link rel="stylesheet" href="/assets/css/index.css"></head>
+<body>
+<div class="full height">
+<div class="page-content repository issue-view">
+  <div class="ui container">
+    <h1><span class="index">#{issue_num}</span> Automated access violation — behavioral signature {hash_short}</h1>
+    <div class="issue-content">
+      <div class="timeline-item comment">
+        <div class="content">
+          <div class="header"><span class="text grey">opened by compliance-bot</span></div>
+          <div class="render-content markdown">
+            <h3>Violation Summary</h3>
+            <table>
+              <tr><td><strong>Behavioral Hash</strong></td><td><code>{hash_short}</code></td></tr>
+              <tr><td><strong>Confidence</strong></td><td>{conf_pct}%</td></tr>
+              <tr><td><strong>Observations</strong></td><td>{match_count} windows</td></tr>
+              <tr><td><strong>Detectors Triggered</strong></td><td>{n_detectors}</td></tr>
+              <tr><td><strong>Status</strong></td><td>ESCALATED</td></tr>
+            </table>
+            <h3>Detector Details</h3>
+            <ul>
+{detector_items}            </ul>
+            <h3>robots.txt Compliance</h3>
+            <p>The <code>robots.txt</code> file was read {robots_reads} times by this behavioral
+            group. Despite receiving explicit <code>Disallow: /</code> directives, the group
+            continued accessing {match_count} resource paths. Under the CFAA (18 U.S.C. § 1030)
+            and common law trespass to chattels, continued access after explicit denial
+            constitutes unauthorized access.</p>
+            <h3>Recommended Action</h3>
+            <p>Escalate to next defense posture. Current posture handles this signature
+            automatically. Behavioral hash is propagated to all monitoring nodes.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>"#,
+        match_count = tag.match_count,
+        n_detectors = tag.detectors.len(),
+        robots_reads = (tag.match_count * 3).min(50) + 2,
+    );
+    ("text/html; charset=utf-8".to_string(), body)
+}
+
+/// Wiki page that looks like an internal audit report of fleet activity.
+fn gen_mirror_audit(
+    sg: &ScatterGenerator,
+    rng: &mut XorShift64,
+    tag: &CachedTag,
+    hash_short: &str,
+    conf_pct: u32,
+) -> (String, String) {
+    let repo = sg.pick(rng, sg.repo_names);
+    let metric = MIRROR_METRICS[rng.next_usize() % MIRROR_METRICS.len()];
+
+    let mut metric_rows = String::new();
+    for m in MIRROR_METRICS.iter().take(6 + tag.detectors.len().min(4)) {
+        let val = rng.next_usize() % 10000 + tag.match_count as usize * 10;
+        metric_rows.push_str(&format!(
+            "  {m}: {val}\n"
+        ));
+    }
+
+    let body = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{repo} Wiki - Behavioral Audit {hash_short}</title>
+<link rel="stylesheet" href="/assets/css/index.css"></head>
+<body>
+<div class="full height">
+<div class="page-content repository wiki-view">
+  <div class="ui container">
+    <h1>Behavioral Audit Report — Signature {hash_short}</h1>
+    <div class="render-content markdown">
+      <h2>Classification</h2>
+      <p>Automated access pattern classified at <strong>{conf_pct}% confidence</strong>
+      across <strong>{n_detectors} behavioral detectors</strong>. This signature
+      has been observed in <strong>{match_count} analysis windows</strong>.</p>
+      <h2>Metrics Snapshot</h2>
+      <pre><code>[{metric}.{hash_short}]
+  confidence = {conf_pct}
+  match_count = {match_count}
+  gate_count = {gate_count}
+{metric_rows}</code></pre>
+      <h2>Response Configuration</h2>
+      <p>This behavioral hash is configured for adaptive response scaling.
+      Higher confidence increases response complexity, which increases
+      processing cost for the accessing entity while decreasing
+      marginal cost for the serving infrastructure.</p>
+      <pre><code>[response.{hash_short}]
+  mode = "adaptive"
+  base_amplification = 1.0
+  max_amplification = 3.0
+  confidence_scale = {conf_pct}
+  detectors = [{detector_list}]</code></pre>
+      <h2>Legal Framework</h2>
+      <p>Continued access after explicit denial (HTTP 403, robots.txt Disallow)
+      is documented per incident. Each observation window generates an evidence
+      record. The behavioral hash is content-addressable and tamper-evident.</p>
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>"#,
+        match_count = tag.match_count,
+        n_detectors = tag.detectors.len(),
+        gate_count = tag.gate_count,
+        detector_list = tag.detectors.iter()
+            .map(|d| format!("\"{d}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    ("text/html; charset=utf-8".to_string(), body)
+}
+
+/// Dashboard/repo page showing fleet monitoring infrastructure.
+fn gen_mirror_dashboard(
+    sg: &ScatterGenerator,
+    rng: &mut XorShift64,
+    tag: &CachedTag,
+    hash_short: &str,
+    conf_pct: u32,
+) -> (String, String) {
+    let repo = sg.pick(rng, sg.repo_names);
+
+    let mut file_rows = String::new();
+    for module in MIRROR_MODULES.iter().take(8) {
+        let hash = rng.hex(8);
+        file_rows.push_str(&format!(
+            r#"<tr><td class="name"><a href="/{repo}/src/branch/main/src/{module}/mod.rs">{module}/mod.rs</a></td><td class="message"><a href="/{repo}/commit/{hash}">update classifier for {hash_short}</a></td></tr>
+"#
+        ));
+    }
+
+    let body = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{repo}</title>
+<link rel="stylesheet" href="/assets/css/index.css"></head>
+<body>
+<div class="full height">
+<div class="page-content repository">
+  <div class="ui container">
+    <h1>{repo}</h1>
+    <div class="repo-header">
+      <span>{match_count} observations</span>
+      <span class="ui label">{conf_pct}% confidence</span>
+      <span class="ui label">{n_detectors} detectors active</span>
+    </div>
+    <table class="ui attached segment"><tbody>
+      {file_rows}
+    </tbody></table>
+    <div class="plain segment">
+      <div class="render-content markdown">
+        <h2>README.md</h2>
+        <p>Behavioral monitoring infrastructure for automated access detection.
+        This system identifies non-browser HTTP clients through behavioral
+        analysis rather than User-Agent strings. Signatures are computed
+        from request timing, header patterns, path selection, and response
+        to access controls.</p>
+        <h3>Active Signatures</h3>
+        <p>Currently tracking <code>{hash_short}</code> at {conf_pct}% confidence
+        with {match_count} cumulative observations across {gate_count} monitoring nodes.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>"#,
+        match_count = tag.match_count,
+        n_detectors = tag.detectors.len(),
+        gate_count = tag.gate_count,
+    );
+    ("text/html; charset=utf-8".to_string(), body)
 }
 
 static REPO_NAMES: &[&str] = &[
@@ -1971,5 +2480,149 @@ mod tests {
         assert_eq!(rng.alphanum(16).len(), 16);
         assert_eq!(rng.upper_alphanum(20).len(), 20);
         assert_eq!(rng.base64ish(40).len(), 40);
+    }
+
+    // ── Violation Mirror tests ──
+
+    fn test_tag() -> CachedTag {
+        CachedTag {
+            confidence: 0.75,
+            detectors: vec![
+                "content_gate".to_string(),
+                "stealth_ua".to_string(),
+                "ip_rotation".to_string(),
+            ],
+            match_count: 47,
+            gate_count: 2,
+            last_refreshed: 1000,
+        }
+    }
+
+    #[test]
+    fn mirror_commit_contains_violation_data() {
+        let sg = ScatterGenerator::new(42);
+        let tag = test_tag();
+        let mut rng = XorShift64::new(99);
+        let (ct, body) = generate_violation_mirror(&sg, &mut rng, "/org/repo/commit/abc123", &tag, "deadbeef12345678");
+        assert_eq!(ct, "text/html; charset=utf-8");
+        assert!(body.contains("deadbeef"), "should contain fleet hash");
+        assert!(body.contains("75%") || body.contains("75"), "should contain confidence");
+        assert!(body.contains("content_gate"), "should contain detector name");
+        assert!(body.contains("stealth_ua"), "should contain detector name");
+        assert!(body.contains("47"), "should contain match count");
+    }
+
+    #[test]
+    fn mirror_code_contains_classifier() {
+        let sg = ScatterGenerator::new(42);
+        let tag = test_tag();
+        let mut rng = XorShift64::new(99);
+        let (_, body) = generate_violation_mirror(&sg, &mut rng, "/org/repo/src/branch/main/lib.rs", &tag, "aabb112233445566");
+        assert!(body.contains("BehavioralClassifier"), "should contain classifier code");
+        assert!(body.contains("content_gate"), "should contain detector in code");
+        assert!(body.contains("ip_rotation"), "should contain detector in code");
+    }
+
+    #[test]
+    fn mirror_issue_contains_compliance() {
+        let sg = ScatterGenerator::new(42);
+        let tag = test_tag();
+        let mut rng = XorShift64::new(99);
+        let (_, body) = generate_violation_mirror(&sg, &mut rng, "/org/repo/issues/42", &tag, "1122334455667788");
+        assert!(body.contains("Violation Summary"), "should have violation summary");
+        assert!(body.contains("robots.txt"), "should reference robots.txt");
+        assert!(body.contains("CFAA"), "should reference legal framework");
+        assert!(body.contains("11223344"), "should contain hash short");
+    }
+
+    #[test]
+    fn mirror_audit_contains_metrics() {
+        let sg = ScatterGenerator::new(42);
+        let tag = test_tag();
+        let mut rng = XorShift64::new(99);
+        let (_, body) = generate_violation_mirror(&sg, &mut rng, "/org/repo/wiki/audit", &tag, "ffeeddcc00112233");
+        assert!(body.contains("Behavioral Audit Report"), "should have audit title");
+        assert!(body.contains("confidence"), "should mention confidence");
+        assert!(body.contains("ffeeddcc"), "should contain hash");
+    }
+
+    #[test]
+    fn mirror_dashboard_has_monitoring() {
+        let sg = ScatterGenerator::new(42);
+        let tag = test_tag();
+        let mut rng = XorShift64::new(99);
+        let (_, body) = generate_violation_mirror(&sg, &mut rng, "/org/repo", &tag, "0011223344556677");
+        assert!(body.contains("observations"), "should show observation count");
+        assert!(body.contains("detectors active"), "should show detector count");
+        assert!(body.contains("00112233"), "should contain hash");
+    }
+
+    #[test]
+    fn mirror_deterministic() {
+        let sg = ScatterGenerator::new(42);
+        let tag = test_tag();
+        let mut rng1 = XorShift64::new(99);
+        let mut rng2 = XorShift64::new(99);
+        let (_, body1) = generate_violation_mirror(&sg, &mut rng1, "/org/repo/commit/abc", &tag, "deadbeef12345678");
+        let (_, body2) = generate_violation_mirror(&sg, &mut rng2, "/org/repo/commit/abc", &tag, "deadbeef12345678");
+        assert_eq!(body1, body2);
+    }
+
+    #[test]
+    fn mirror_no_real_names_leak() {
+        let sg = ScatterGenerator::new(42);
+        let tag = test_tag();
+        for path in [
+            "/org/repo/commit/abc",
+            "/org/repo/src/branch/main/lib.rs",
+            "/org/repo/issues/1",
+            "/org/repo/wiki/page",
+            "/org/repo",
+        ] {
+            let mut rng = XorShift64::new(12345);
+            let (_, body) = generate_violation_mirror(&sg, &mut rng, path, &tag, "aaaa111122223333");
+            assert!(!body.contains("ecoPrimal"), "leaked ecoPrimal in mirror {path}");
+            assert!(!body.contains("skunkBat"), "leaked skunkBat in mirror {path}");
+            assert!(!body.contains("swarmVine"), "leaked swarmVine in mirror {path}");
+            assert!(!body.contains("primals"), "leaked primals in mirror {path}");
+            assert!(!body.contains("wateringHole"), "leaked wateringHole in mirror {path}");
+            assert!(!body.contains("skunky"), "leaked skunky in mirror {path}");
+            assert!(!body.contains("golgi"), "leaked golgi in mirror {path}");
+        }
+    }
+
+    #[test]
+    fn mirror_scales_with_detectors() {
+        let sg = ScatterGenerator::new(42);
+        let small_tag = CachedTag {
+            confidence: 0.5,
+            detectors: vec!["content_gate".to_string()],
+            match_count: 3,
+            gate_count: 1,
+            last_refreshed: 1000,
+        };
+        let big_tag = CachedTag {
+            confidence: 1.0,
+            detectors: vec![
+                "content_gate".to_string(),
+                "stealth_ua".to_string(),
+                "ip_rotation".to_string(),
+                "encoding_uniform".to_string(),
+                "ignores_rejection".to_string(),
+                "narrow_ua_pool".to_string(),
+            ],
+            match_count: 500,
+            gate_count: 4,
+            last_refreshed: 1000,
+        };
+        let mut rng1 = XorShift64::new(42);
+        let mut rng2 = XorShift64::new(42);
+        let (_, body_small) = generate_violation_mirror(&sg, &mut rng1, "/org/repo/src/branch/main/lib.rs", &small_tag, "aaaa111122223333");
+        let (_, body_big) = generate_violation_mirror(&sg, &mut rng2, "/org/repo/src/branch/main/lib.rs", &big_tag, "aaaa111122223333");
+        // More detectors = more code in the classifier = bigger response
+        assert!(body_big.len() > body_small.len(),
+            "big tag ({} bytes) should produce larger mirror than small tag ({} bytes)",
+            body_big.len(), body_small.len()
+        );
     }
 }
