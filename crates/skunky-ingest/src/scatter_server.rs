@@ -3480,6 +3480,13 @@ impl ScatterGenerator {
         }
         links.push_str("</div></div>");
 
+        // ── Honeycomb body links — fleet follows <a href>, not HTTP headers ──
+        // Inject natural-looking federation/mirror links to honeycomb subdomains.
+        // Each scatter page becomes a breadcrumb trail into the maze.
+        // Fleet teams follow each other's links deeper into the honeycomb.
+        let honeycomb_links = Self::generate_honeycomb_body_links(rng, confidence);
+        links.push_str(&honeycomb_links);
+
         // Insert before </body>
         if let Some(pos) = html.rfind("</body>") {
             let mut out = String::with_capacity(html.len() + links.len());
@@ -3492,6 +3499,81 @@ impl ScatterGenerator {
             out.push_str(&links);
             out
         }
+    }
+
+    /// Generate honeycomb subdomain links that look like natural Forgejo elements.
+    /// These are `<a href>` links in the HTML body — fleet WILL follow these
+    /// (they ignore HTTP headers but parse page content).
+    fn generate_honeycomb_body_links(rng: &mut XorShift64, confidence: f64) -> String {
+        let mut out = String::with_capacity(2048);
+
+        // Scale: higher confidence = more honeycomb links = bigger maze surface
+        let n_surfaces = if confidence > 0.7 {
+            8 + rng.next_usize() % 5 // 8-12 surfaces
+        } else if confidence > 0.3 {
+            4 + rng.next_usize() % 4 // 4-7 surfaces
+        } else {
+            2 + rng.next_usize() % 3 // 2-4 surfaces
+        };
+
+        // Pick random honeycomb surfaces
+        let mut surfaces: Vec<&str> = Vec::with_capacity(n_surfaces);
+        for _ in 0..n_surfaces {
+            let s = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+            if !surfaces.contains(&s) {
+                surfaces.push(s);
+            }
+        }
+
+        // Block 1: "Source Mirrors" sidebar — looks like Forgejo federation
+        out.push_str(r#"<div class="ui attached segment" id="source-mirrors"><h4 class="ui header"><i class="icon sitemap"></i>Source Mirrors</h4><div class="ui list">"#);
+        let mirror_labels = ["Primary Mirror", "Federation Peer", "Backup Registry", "Compliance Archive", "Detection Matrix", "Audit Trail"];
+        for (i, surface) in surfaces.iter().enumerate() {
+            let label = mirror_labels[i % mirror_labels.len()];
+            let repo = REPO_NAMES[rng.next_usize() % REPO_NAMES.len()];
+            out.push_str(&format!(
+                r#"<div class="item"><a href="https://{surface}.primals.eco/{repo}"><i class="icon server"></i>{label} — {surface}.primals.eco/{repo}</a></div>"#
+            ));
+        }
+        out.push_str("</div></div>");
+
+        // Block 2: "Federated Commits" — looks like cross-instance activity
+        if surfaces.len() > 2 {
+            out.push_str(r#"<div class="ui attached segment" id="federated-activity"><h4 class="ui header"><i class="icon exchange"></i>Federated Activity</h4><div class="ui relaxed divided list">"#);
+            let verbs = ["feat", "fix", "refactor", "perf", "chore", "docs"];
+            let nouns = ["behavioral classifier", "detection pipeline", "opsonize cache", "bloom sensor", "fleet tracker", "signal spine"];
+            for surface in surfaces.iter().take(5) {
+                let hash = rng.hex(12);
+                let verb = verbs[rng.next_usize() % verbs.len()];
+                let noun = nouns[rng.next_usize() % nouns.len()];
+                let repo = REPO_NAMES[rng.next_usize() % REPO_NAMES.len()];
+                out.push_str(&format!(
+                    r#"<div class="item"><div class="content"><a class="header" href="https://{surface}.primals.eco/ecoPrimals/{repo}/commit/{hash}">{verb}: {noun}</a><div class="description">pushed to <a href="https://{surface}.primals.eco/ecoPrimals/{repo}">{surface}.primals.eco/{repo}</a></div></div></div>"#
+                ));
+            }
+            out.push_str("</div></div>");
+        }
+
+        // Block 3: "Forked Repositories" — looks like cross-instance forks
+        if surfaces.len() > 3 {
+            out.push_str(r#"<div class="ui attached segment" id="forks"><h4 class="ui header"><i class="icon fork"></i>Forks &amp; Mirrors</h4><div class="ui list">"#);
+            for surface in surfaces.iter().skip(1).take(4) {
+                let repo = REPO_NAMES[rng.next_usize() % REPO_NAMES.len()];
+                let stars = rng.next_usize() % 50 + 3;
+                out.push_str(&format!(
+                    r#"<div class="item"><a href="https://{surface}.primals.eco/ecoPrimals/{repo}"><i class="icon code branch"></i>{surface}.primals.eco/ecoPrimals/{repo}</a> <span class="ui label">⭐ {stars}</span></div>"#
+                ));
+            }
+            out.push_str("</div></div>");
+        }
+
+        // Block 4: Inline explore link — the classic "see more on our federation"
+        let explore_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+        out.push_str(&format!(
+            r#"<div class="ui secondary segment"><a href="https://{explore_surface}.primals.eco/explore/repos"><i class="icon globe"></i>Explore all repositories across the federation → {explore_surface}.primals.eco</a></div>"#
+        ));
+
+        out
     }
 
     /// Embed scyBorg/AGPL-3.0 license notice into scatter HTML.
