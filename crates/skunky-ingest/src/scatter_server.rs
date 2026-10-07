@@ -152,7 +152,8 @@ impl OpsonizeCache {
 
     /// Update or insert a tag from the local opsonize pipeline.
     /// Also rebuilds the conserved plasmid from the updated population.
-    pub async fn update_from_tag(&self, behavioral_hash: &str, confidence: f64, detectors: Vec<String>, match_count: u64) {
+    /// Returns `true` if this was a **new** behavioral hash (first contact).
+    pub async fn update_from_tag(&self, behavioral_hash: &str, confidence: f64, detectors: Vec<String>, match_count: u64) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -185,6 +186,8 @@ impl OpsonizeCache {
         if is_new_hash || now.saturating_sub(self.plasmid.read().await.last_rebuilt) > 60 {
             self.rebuild_plasmid(now).await;
         }
+
+        is_new_hash
     }
 
     /// Rebuild the conserved plasmid from the entire population.
@@ -1535,6 +1538,7 @@ pub(crate) fn path_deterministic_hash(path: &str, seed: u64) -> u64 {
 }
 
 use crate::scatter_nft::{CONTRIBUTE_PAGE, generate_nft_receipt};
+pub use crate::scatter_nft::{AntibodyReaction, braid_antibody_reaction};
 
 // THE BUTTON code extracted to scatter_nft.rs (Wave 167 refactor)
 // Inline ScatterGenerator — adapted from skunk-bat-core/src/defense/scatter.rs

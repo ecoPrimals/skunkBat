@@ -780,6 +780,20 @@ async fn process_line(
                         matching = %matching_epitopes.join(", "),
                         "🧬 thymic recognition — new hash matches conserved plasmid"
                     );
+
+                    // Braid thymic recognition into sweetGrass — permanent provenance
+                    let braid_hash = bhash.clone();
+                    let braid_epitopes = matching_epitopes.clone();
+                    tokio::spawn(async move {
+                        scatter_server::braid_antibody_reaction(
+                            scatter_server::AntibodyReaction::ThymicRecognition {
+                                behavioral_hash: braid_hash,
+                                matching_epitopes: braid_epitopes,
+                                thymic_confidence: thymic_conf,
+                            }
+                        ).await;
+                    });
+
                     blended
                 } else {
                     base_confidence
@@ -801,7 +815,7 @@ async fn process_line(
                 scatter_confidence.update(tag.confidence);
 
                 // Feed opsonize cache — scatter server uses this for per-hash adaptive responses
-                opsonize_cache.update_from_tag(
+                let is_new_hash = opsonize_cache.update_from_tag(
                     &bhash,
                     tag.confidence,
                     detectors.clone(),
@@ -815,6 +829,22 @@ async fn process_line(
                     effective_ratio = %format!("{:.0}%", scatter_confidence.effective_ratio(base_scatter_ratio) * 100.0),
                     "🏷️ opsonize tag emitted — behavioral hash {bhash}"
                 );
+
+                // Braid first-contact into sweetGrass — new fleet actor appeared
+                if is_new_hash {
+                    let fc_hash = bhash.clone();
+                    let fc_detectors = detectors.clone();
+                    let fc_conf = tag.confidence;
+                    tokio::spawn(async move {
+                        scatter_server::braid_antibody_reaction(
+                            scatter_server::AntibodyReaction::FirstContact {
+                                behavioral_hash: fc_hash,
+                                detectors: fc_detectors,
+                                confidence: fc_conf,
+                            }
+                        ).await;
+                    });
+                }
 
                 // Layer 4: Accumulate threat indicator for daily feed
                 let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -865,6 +895,24 @@ async fn process_line(
                             reason = %event.reason,
                             "🦨 POSTURE ESCALATION"
                         );
+
+                        // Braid escalation into sweetGrass — permanent record
+                        let esc_hash = bhash.clone();
+                        let from_str = format!("{}", event.from);
+                        let to_str = format!("{}", event.to);
+                        let reason_str = event.reason.clone();
+                        let defections = event.defection_count;
+                        tokio::spawn(async move {
+                            scatter_server::braid_antibody_reaction(
+                                scatter_server::AntibodyReaction::Escalation {
+                                    behavioral_hash: esc_hash,
+                                    from_posture: from_str,
+                                    to_posture: to_str,
+                                    reason: reason_str,
+                                    defection_count: defections,
+                                }
+                            ).await;
+                        });
                     }
 
                     // Step 4: Inject fleet IPs into CaddyBridge at current posture

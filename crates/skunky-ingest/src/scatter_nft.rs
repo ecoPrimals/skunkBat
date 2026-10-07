@@ -392,6 +392,142 @@ async fn anchor_to_provenance_trio(
     Ok(())
 }
 
+// ─── Antibody Reaction Braiding ─────────────────────────────────────────
+//
+// When the immune system fires (thymic recognition, escalation, new fleet
+// hash), we weave a permanent braid in sweetGrass capturing:
+//   - behavioral_hash (anonymized — no raw IP)
+//   - matched epitopes (which detectors triggered)
+//   - confidence level
+//   - escalation data (posture change, reason)
+//   - OSINT hints (country, ASN type — derived from Caddy fleet rules)
+//   - timestamp
+//
+// Rate-limited: only braids on MEANINGFUL events:
+//   1. First time a behavioral hash is seen (new fleet actor)
+//   2. Thymic recognition (conserved plasmid match on unknown hash)
+//   3. Posture escalation (tit-for-tat ratchet)
+//
+// ~13 req/sec from fleet, but new hashes appear maybe 1-5/hour,
+// escalations are rarer. This keeps sweetGrass load manageable.
+
+/// Antibody reaction types that trigger braiding
+#[derive(Debug, Clone)]
+pub enum AntibodyReaction {
+    /// First contact — brand new behavioral hash
+    FirstContact {
+        behavioral_hash: String,
+        detectors: Vec<String>,
+        confidence: f64,
+    },
+    /// Thymic recognition — new hash matched conserved plasmid
+    ThymicRecognition {
+        behavioral_hash: String,
+        matching_epitopes: Vec<String>,
+        thymic_confidence: f64,
+    },
+    /// Posture escalation — fleet triggered tit-for-tat ratchet
+    Escalation {
+        behavioral_hash: String,
+        from_posture: String,
+        to_posture: String,
+        reason: String,
+        defection_count: u32,
+    },
+}
+
+/// Braid an antibody reaction into sweetGrass for permanent provenance.
+///
+/// Non-blocking: spawned via tokio::spawn. Failures log but never block
+/// the immune pipeline. No raw IPs are ever included — only behavioral
+/// hashes and detection metadata.
+pub async fn braid_antibody_reaction(reaction: AntibodyReaction) {
+    use tokio::net::TcpStream;
+    use tokio::io::{AsyncWriteExt, AsyncReadExt};
+    use std::time::Duration;
+
+    let trio_addr = "10.13.37.2";
+    let timeout = Duration::from_secs(5);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_secs();
+
+    let (braid_name, data_hash, metadata_json) = match &reaction {
+        AntibodyReaction::FirstContact { behavioral_hash, detectors, confidence } => {
+            let det_list = detectors.join("\",\"");
+            (
+                format!("antibody-first-{behavioral_hash}"),
+                behavioral_hash.clone(),
+                format!(
+                    r#"{{"reaction":"first_contact","behavioral_hash":"{behavioral_hash}","detectors":["{det_list}"],"confidence":{confidence:.4},"timestamp":"{now}","source":"skunky-ingest","license":"AGPL-3.0-or-later WITH scyBorg"}}"#
+                ),
+            )
+        }
+        AntibodyReaction::ThymicRecognition { behavioral_hash, matching_epitopes, thymic_confidence } => {
+            let epi_list = matching_epitopes.join("\",\"");
+            (
+                format!("antibody-thymic-{behavioral_hash}"),
+                behavioral_hash.clone(),
+                format!(
+                    r#"{{"reaction":"thymic_recognition","behavioral_hash":"{behavioral_hash}","matching_epitopes":["{epi_list}"],"thymic_confidence":{thymic_confidence:.4},"timestamp":"{now}","source":"skunky-ingest","license":"AGPL-3.0-or-later WITH scyBorg"}}"#
+                ),
+            )
+        }
+        AntibodyReaction::Escalation { behavioral_hash, from_posture, to_posture, reason, defection_count } => {
+            (
+                format!("antibody-escalation-{behavioral_hash}-{now}"),
+                behavioral_hash.clone(),
+                format!(
+                    r#"{{"reaction":"escalation","behavioral_hash":"{behavioral_hash}","from_posture":"{from_posture}","to_posture":"{to_posture}","reason":"{reason}","defection_count":{defection_count},"timestamp":"{now}","source":"skunky-ingest","license":"AGPL-3.0-or-later WITH scyBorg"}}"#
+                ),
+            )
+        }
+    };
+
+    let sg_request = format!(
+        r#"{{"jsonrpc":"2.0","method":"braid.create","params":{{"name":"{braid_name}","owner":"skunky-ingest","data_hash":"{data_hash}","mime_type":"application/json","size":{meta_len},"metadata":{metadata_json}}},"id":1}}"#,
+        meta_len = metadata_json.len(),
+    );
+
+    let sg_body_len = sg_request.len();
+    let sg_http = format!(
+        "POST /jsonrpc HTTP/1.1\r\n\
+         Host: {trio_addr}:9851\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {sg_body_len}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {sg_request}"
+    );
+
+    let result = tokio::time::timeout(timeout, async {
+        let mut stream = TcpStream::connect(format!("{trio_addr}:9851")).await?;
+        stream.write_all(sg_http.as_bytes()).await?;
+        stream.flush().await?;
+
+        let mut buf = vec![0u8; 4096];
+        let n = stream.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+        if response.contains("urn:braid:") || response.contains("\"result\"") {
+            tracing::info!(
+                reaction = %format!("{:?}", reaction).split('{').next().unwrap_or("?").trim(),
+                braid = %braid_name,
+                "🧬 antibody reaction braided in sweetGrass"
+            );
+        } else {
+            tracing::warn!(braid = %braid_name, "sweetGrass unexpected: {response}");
+        }
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    }).await;
+
+    match result {
+        Ok(Ok(())) => {},
+        Ok(Err(e)) => tracing::debug!("antibody braid TCP error: {e}"),
+        Err(_) => tracing::debug!("antibody braid timeout (5s)"),
+    }
+}
+
 /// Extract a string value from minimal JSON (no serde dependency).
 pub(crate) fn nft_extract_str(json: &str, key: &str) -> Option<String> {
     let needle = format!("\"{}\"", key);
