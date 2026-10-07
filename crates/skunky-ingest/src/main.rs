@@ -825,8 +825,14 @@ async fn process_line(
                     }
 
                     // Step 4: Inject fleet IPs into CaddyBridge at current posture
+                    // Pass behavioral hash so Caddy emits X-Fleet-Hash header
+                    // to scatter_server for per-hash adaptive amplification
                     if let Some(bridge) = bridge {
-                        bridge.add_fleet_ips(&result.ips, state.fleet_posture);
+                        bridge.add_fleet_ips_with_hash(
+                            &result.ips,
+                            state.fleet_posture,
+                            if bhash.is_empty() { None } else { Some(&bhash) },
+                        );
 
                         match bridge.sync() {
                             Ok(true) => {

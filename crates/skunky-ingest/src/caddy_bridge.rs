@@ -54,11 +54,15 @@ impl Default for CaddyBridgeConfig {
     }
 }
 
-/// Tracked fleet IP with expiry and defense posture.
+/// Tracked fleet IP with expiry, defense posture, and behavioral hash.
 #[derive(Debug, Clone)]
 struct TrackedIp {
     last_seen: SystemTime,
     posture: DefensePosture,
+    /// Behavioral hash of the fleet this IP belongs to.
+    /// When present, Caddy passes it as `X-Fleet-Hash` to scatter_server
+    /// so scatter can use per-hash adaptive amplification from OpsonizeCache.
+    behavioral_hash: Option<String>,
 }
 
 /// Caddy bridge state.
@@ -170,9 +174,30 @@ impl CaddyBridge {
 
         let section = &content[start..end];
         let now = SystemTime::now();
+        // Track the most recently parsed IPs so we can backfill
+        // when we encounter their X-Fleet-Hash in a later line
+        let mut last_parsed_ips: Vec<String> = Vec::new();
 
         for line in section.lines() {
             let trimmed = line.trim();
+
+            // Capture X-Fleet-Hash from header_up directive and backfill
+            // the hash onto the IPs from the preceding @fleet_ matcher
+            if trimmed.starts_with("header_up X-Fleet-Hash") {
+                if let Some(hash) = trimmed
+                    .split("X-Fleet-Hash")
+                    .nth(1)
+                    .map(|v| v.trim().trim_matches('"').to_string())
+                    .filter(|s| !s.is_empty())
+                {
+                    for ip in &last_parsed_ips {
+                        if let Some(t) = tracked.get_mut(ip) {
+                            t.behavioral_hash = Some(hash.clone());
+                        }
+                    }
+                }
+                continue;
+            }
 
             let posture = if trimmed.starts_with("@fleet_disperse") {
                 DefensePosture::Disperse
@@ -188,14 +213,17 @@ impl CaddyBridge {
                 continue;
             };
 
-            // Parse: @fleet_{name} remote_ip {ip1} {ip2} ...
+            // Parse: @fleet_{name}[_N] remote_ip {ip1} {ip2} ...
+            last_parsed_ips.clear();
             if let Some(ip_part) = trimmed.split("remote_ip").nth(1) {
                 for ip in ip_part.split_whitespace() {
+                    last_parsed_ips.push(ip.to_string());
                     tracked.insert(
                         ip.to_string(),
                         TrackedIp {
                             last_seen: now,
                             posture,
+                            behavioral_hash: None,
                         },
                     );
                 }
@@ -211,10 +239,25 @@ impl CaddyBridge {
     /// determines what Caddy directive is written (403/429/scatter/abort).
     /// Escalates posture if the same IP is already tracked at a lower level.
     ///
+    /// When `behavioral_hash` is provided, Caddy passes it as `X-Fleet-Hash`
+    /// to scatter_server, enabling per-hash adaptive amplification from
+    /// the OpsonizeCache. This closes the hash loop:
+    /// log → fleet observation → behavioral_hash → Caddy header → scatter → adaptive poison.
+    ///
     /// **Negative selection**: Any IP in the `self_ips` set is silently
     /// filtered — the thymus catches autoimmune antibodies before they
     /// can attack self.
     pub fn add_fleet_ips(&mut self, ips: &[String], posture: DefensePosture) {
+        self.add_fleet_ips_with_hash(ips, posture, None);
+    }
+
+    /// Add fleet IPs with an associated behavioral hash.
+    pub fn add_fleet_ips_with_hash(
+        &mut self,
+        ips: &[String],
+        posture: DefensePosture,
+        behavioral_hash: Option<&str>,
+    ) {
         let now = SystemTime::now();
         let mut self_filtered = 0u32;
         for ip in ips {
@@ -230,10 +273,15 @@ impl CaddyBridge {
                     if posture > t.posture {
                         t.posture = posture;
                     }
+                    // Update hash if we have a newer/better one
+                    if behavioral_hash.is_some() {
+                        t.behavioral_hash = behavioral_hash.map(String::from);
+                    }
                 })
                 .or_insert(TrackedIp {
                     last_seen: now,
                     posture,
+                    behavioral_hash: behavioral_hash.map(String::from),
                 });
         }
         if self_filtered > 0 {
@@ -299,11 +347,43 @@ impl CaddyBridge {
         });
     }
 
-    /// Group tracked IPs by their defense posture.
+    /// Group tracked IPs by their defense posture and behavioral hash.
+    ///
+    /// IPs with different hashes in the same posture are grouped by hash
+    /// so each reverse_proxy block can pass the correct `X-Fleet-Hash`.
+    /// IPs with no hash are grouped under `None`.
+    fn ips_by_posture_and_hash(&self) -> HashMap<DefensePosture, Vec<(Option<String>, Vec<String>)>> {
+        // First pass: group by (posture, hash)
+        let mut raw: HashMap<(DefensePosture, Option<String>), Vec<String>> = HashMap::new();
+        for (ip, tracked) in &self.tracked_ips {
+            if tracked.posture == DefensePosture::Observe {
+                continue;
+            }
+            raw.entry((tracked.posture, tracked.behavioral_hash.clone()))
+                .or_default()
+                .push(ip.clone());
+        }
+        for ips in raw.values_mut() {
+            ips.sort();
+        }
+        // Second pass: regroup by posture
+        let mut result: HashMap<DefensePosture, Vec<(Option<String>, Vec<String>)>> = HashMap::new();
+        for ((posture, hash), ips) in raw {
+            result.entry(posture).or_default().push((hash, ips));
+        }
+        // Sort sub-groups by first IP for deterministic output
+        for groups in result.values_mut() {
+            groups.sort_by(|a, b| {
+                a.1.first().map(String::as_str).cmp(&b.1.first().map(String::as_str))
+            });
+        }
+        result
+    }
+
+    /// Backward-compatible grouping (ignores hash). Used by sync() for change detection.
     fn ips_by_posture(&self) -> HashMap<DefensePosture, Vec<String>> {
         let mut groups: HashMap<DefensePosture, Vec<String>> = HashMap::new();
         for (ip, tracked) in &self.tracked_ips {
-            // Observe means no directive — skip
             if tracked.posture == DefensePosture::Observe {
                 continue;
             }
@@ -318,18 +398,34 @@ impl CaddyBridge {
         groups
     }
 
-    /// Generate Caddy directives for a specific posture + IP set.
-    fn posture_directive(posture: DefensePosture, ips: &[String]) -> String {
+    /// Generate Caddy directives for a posture + hash group.
+    ///
+    /// When `behavioral_hash` is `Some`, the reverse_proxy block includes
+    /// `header_up X-Fleet-Hash {hash}` so scatter_server can use
+    /// per-hash adaptive amplification from the OpsonizeCache.
+    fn posture_directive(
+        posture: DefensePosture,
+        ips: &[String],
+        behavioral_hash: Option<&str>,
+        idx: usize,
+    ) -> String {
         if ips.is_empty() {
             return String::new();
         }
         let ip_list = ips.join(" ");
+        // Use idx suffix to make matcher names unique when same posture has multiple hash groups
+        let suffix = if idx > 0 { format!("_{idx}") } else { String::new() };
+
+        let hash_header = behavioral_hash
+            .map(|h| format!("\t\t\theader_up X-Fleet-Hash \"{h}\"\n"))
+            .unwrap_or_default();
+
         match posture {
             DefensePosture::Observe => String::new(),
 
             DefensePosture::WarnRoute => format!(
-                "\t@fleet_warn remote_ip {ip_list}\n\
-                 \thandle @fleet_warn {{\n\
+                "\t@fleet_warn{suffix} remote_ip {ip_list}\n\
+                 \thandle @fleet_warn{suffix} {{\n\
                  \t\trespond 403 {{\n\
                  \t\t\tbody \"Fleet behavior detected. Use github.com/ecoPrimals for automated access.\"\n\
                  \t\t\tclose\n\
@@ -338,37 +434,40 @@ impl CaddyBridge {
             ),
 
             DefensePosture::SlowDegrade => format!(
-                "\t@fleet_tarpit remote_ip {ip_list}\n\
-                 \thandle @fleet_tarpit {{\n\
+                "\t@fleet_tarpit{suffix} remote_ip {ip_list}\n\
+                 \thandle @fleet_tarpit{suffix} {{\n\
                  \t\trewrite * /tarpit{{uri}}\n\
                  \t\treverse_proxy localhost:9753 {{\n\
                  \t\t\theader_up X-Real-IP {{remote_host}}\n\
+                 {hash_header}\
                  \t\t}}\n\
                  \t}}\n"
             ),
 
             DefensePosture::Scatter => format!(
-                "\t@fleet_scatter remote_ip {ip_list}\n\
-                 \thandle @fleet_scatter {{\n\
+                "\t@fleet_scatter{suffix} remote_ip {ip_list}\n\
+                 \thandle @fleet_scatter{suffix} {{\n\
                  \t\treverse_proxy localhost:9753 {{\n\
                  \t\t\theader_up X-Real-IP {{remote_host}}\n\
+                 {hash_header}\
                  \t\t}}\n\
                  \t}}\n"
             ),
 
             DefensePosture::Vanish => format!(
-                "\t@fleet_vanish remote_ip {ip_list}\n\
-                 \thandle @fleet_vanish {{\n\
+                "\t@fleet_vanish{suffix} remote_ip {ip_list}\n\
+                 \thandle @fleet_vanish{suffix} {{\n\
                  \t\tabort\n\
                  \t}}\n"
             ),
 
             DefensePosture::Disperse => format!(
-                "\t@fleet_disperse remote_ip {ip_list}\n\
-                 \thandle @fleet_disperse {{\n\
+                "\t@fleet_disperse{suffix} remote_ip {ip_list}\n\
+                 \thandle @fleet_disperse{suffix} {{\n\
                  \t\trewrite * /disperse{{uri}}\n\
                  \t\treverse_proxy localhost:9753 {{\n\
                  \t\t\theader_up X-Real-IP {{remote_host}}\n\
+                 {hash_header}\
                  \t\t}}\n\
                  \t}}\n"
             ),
@@ -399,10 +498,13 @@ impl CaddyBridge {
         // (preserves any `\t# ` prefix so the marker stays commented)
         let end_line_start = content[..end].rfind('\n').map_or(0, |i| i + 1);
 
+        let hash_groups = self.ips_by_posture_and_hash();
         let groups = self.ips_by_posture();
 
         // Build directive blocks in escalation order (most aggressive first —
-        // Caddy evaluates matchers top-to-bottom, first match wins)
+        // Caddy evaluates matchers top-to-bottom, first match wins).
+        // Within each posture, IPs are sub-grouped by behavioral hash so
+        // each reverse_proxy block passes the correct X-Fleet-Hash header.
         let mut ip_block = String::new();
         for posture in [
             DefensePosture::Disperse,
@@ -411,8 +513,15 @@ impl CaddyBridge {
             DefensePosture::SlowDegrade,
             DefensePosture::WarnRoute,
         ] {
-            if let Some(ips) = groups.get(&posture) {
-                ip_block.push_str(&Self::posture_directive(posture, ips));
+            if let Some(sub_groups) = hash_groups.get(&posture) {
+                for (idx, (hash, ips)) in sub_groups.iter().enumerate() {
+                    ip_block.push_str(&Self::posture_directive(
+                        posture,
+                        ips,
+                        hash.as_deref(),
+                        idx,
+                    ));
+                }
             }
         }
 
@@ -822,5 +931,120 @@ mod tests {
         bridge.add_fleet_ips(&["57.141.20.1".to_string()], DefensePosture::WarnRoute);
         let changed = bridge.sync().unwrap();
         assert!(changed);
+    }
+
+    #[test]
+    fn fleet_hash_header_in_scatter_directive() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
+        bridge.add_fleet_ips_with_hash(
+            &["57.141.20.1".to_string(), "57.141.20.2".to_string()],
+            DefensePosture::Scatter,
+            Some("abc123deadbeef"),
+        );
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("@fleet_scatter"), "should have scatter matcher");
+        assert!(content.contains("X-Fleet-Hash"), "should have X-Fleet-Hash header");
+        assert!(content.contains("abc123deadbeef"), "should have the behavioral hash value");
+        assert!(content.contains("X-Real-IP"), "should still have X-Real-IP");
+    }
+
+    #[test]
+    fn fleet_hash_survives_sourdough_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        // Session 1: add IPs with hash and write
+        let mut bridge1 = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
+        bridge1.add_fleet_ips_with_hash(
+            &["57.141.20.1".to_string()],
+            DefensePosture::Scatter,
+            Some("deadbeef12345678"),
+        );
+        bridge1.write_caddyfile().unwrap();
+
+        // Verify it was written
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("deadbeef12345678"), "hash should be in Caddyfile");
+
+        // Session 2: new bridge should restore hash from Caddyfile
+        let bridge2 = CaddyBridge::new(test_config(caddyfile), HashSet::new());
+        assert_eq!(bridge2.tracked_count(), 1);
+        assert!(bridge2.tracked_ips.contains_key("57.141.20.1"));
+        assert_eq!(
+            bridge2.tracked_ips["57.141.20.1"].behavioral_hash.as_deref(),
+            Some("deadbeef12345678"),
+            "behavioral hash should survive sourdough restart"
+        );
+    }
+
+    #[test]
+    fn no_fleet_hash_for_warn_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
+        bridge.add_fleet_ips_with_hash(
+            &["57.141.20.1".to_string()],
+            DefensePosture::WarnRoute,
+            Some("abc123"),
+        );
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("@fleet_warn"), "should have warn matcher");
+        // WarnRoute uses respond 403, no reverse_proxy, so no header_up
+        assert!(!content.contains("X-Fleet-Hash"), "warn route has no reverse_proxy, no hash header");
+    }
+
+    #[test]
+    fn no_fleet_hash_for_vanish() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
+        bridge.add_fleet_ips_with_hash(
+            &["57.141.20.1".to_string()],
+            DefensePosture::Vanish,
+            Some("abc123"),
+        );
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("abort"), "vanish should abort");
+        // Vanish aborts — no reverse_proxy, no hash header
+        assert!(!content.contains("X-Fleet-Hash"), "vanish has no reverse_proxy, no hash header");
+    }
+
+    #[test]
+    fn fleet_hash_in_disperse_and_tarpit() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
+        bridge.add_fleet_ips_with_hash(
+            &["10.0.0.1".to_string()],
+            DefensePosture::Disperse,
+            Some("disperse_hash_001"),
+        );
+        bridge.add_fleet_ips_with_hash(
+            &["10.0.0.2".to_string()],
+            DefensePosture::SlowDegrade,
+            Some("tarpit_hash_002"),
+        );
+        bridge.write_caddyfile().unwrap();
+
+        let content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert!(content.contains("disperse_hash_001"), "disperse should have its hash");
+        assert!(content.contains("tarpit_hash_002"), "tarpit should have its hash");
     }
 }
