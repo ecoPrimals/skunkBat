@@ -295,31 +295,62 @@ impl OpsonizeCache {
         }
         epitopes_json.push(']');
 
+        // Compute timing distribution across all known hashes
+        let mut earliest_seen = now;
+        let mut latest_seen = 0u64;
+        let mut total_match_count = 0u64;
+
         let mut hashes_json = String::from("[");
         for (i, (hash, tag)) in entries.iter().enumerate() {
             if i > 0 { hashes_json.push(','); }
             let detectors_str: Vec<String> = tag.detectors.iter()
                 .map(|d| format!("\"{d}\""))
                 .collect();
+
+            // Per-hash velocity: matches per hour since first seen
+            let age_secs = now.saturating_sub(tag.last_refreshed).max(1);
+            let velocity_per_hour = tag.match_count as f64 / (age_secs as f64 / 3600.0);
+
             hashes_json.push_str(&format!(
-                "{{\"hash\":\"{}\",\"confidence\":{:.3},\"match_count\":{},\"detectors\":[{}]}}",
+                "{{\"hash\":\"{}\",\"confidence\":{:.3},\"match_count\":{},\"gate_count\":{},\
+                \"last_seen\":{},\"velocity_per_hour\":{:.1},\"detectors\":[{}]}}",
                 &hash[..hash.len().min(16)],
                 tag.confidence,
                 tag.match_count,
+                tag.gate_count,
+                tag.last_refreshed,
+                velocity_per_hour,
                 detectors_str.join(","),
             ));
+
+            if tag.last_refreshed < earliest_seen { earliest_seen = tag.last_refreshed; }
+            if tag.last_refreshed > latest_seen { latest_seen = tag.last_refreshed; }
+            total_match_count += tag.match_count;
         }
         hashes_json.push(']');
 
+        // Observation window and aggregate velocity
+        let window_secs = if latest_seen > earliest_seen { latest_seen - earliest_seen } else { 0 };
+        let agg_velocity = if window_secs > 0 {
+            total_match_count as f64 / (window_secs as f64 / 3600.0)
+        } else { 0.0 };
+
         format!(
             "{{\
-                \"schema\":\"ecoPrimals/layer-plasmid/v1\",\
+                \"schema\":\"ecoPrimals/layer-plasmid/v2\",\
                 \"layer\":\"{layer_name}\",\
                 \"generated\":{now},\
                 \"population\":{{\
                     \"total_subgroups\":{},\
                     \"total_observations\":{},\
                     \"mean_confidence\":{:.3}\
+                }},\
+                \"timing\":{{\
+                    \"observation_window_secs\":{window_secs},\
+                    \"earliest_seen\":{earliest_seen},\
+                    \"latest_seen\":{latest_seen},\
+                    \"aggregate_velocity_per_hour\":{agg_velocity:.1},\
+                    \"total_match_count\":{total_match_count}\
                 }},\
                 \"conserved_epitopes\":{epitopes_json},\
                 \"behavioral_hashes\":{hashes_json}\
