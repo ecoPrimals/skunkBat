@@ -21,5 +21,6 @@ pub mod rpc;
 pub mod abuse_reporter;
 pub mod bloom_sensor;
 pub mod scatter_server;
+pub mod scyborg_prism;
 pub mod signal_spine;
 pub mod threat_feed;

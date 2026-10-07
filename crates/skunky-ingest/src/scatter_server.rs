@@ -35,6 +35,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
+use crate::scyborg_prism::{ScyBorgPrism, OpsonizationSalt, SharedViolationLedger};
+
 /// Shared confidence level from the opsonize pipeline.
 ///
 /// Stored as confidence × 1000 (fixed-point) in an AtomicU32.
@@ -764,6 +766,17 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
     let tarpit = TarpitState::new(config.max_tarpit_connections);
     let cache = Arc::new(opsonize_cache);
     let metrics = Arc::new(ScatterMetrics::new());
+    let violation_ledger = SharedViolationLedger::new();
+
+    // Evict stale violation ledger entries every 5 minutes
+    let evict_ledger = violation_ledger.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            evict_ledger.evict_stale(86400).await; // 24h TTL
+        }
+    });
 
     loop {
         let (stream, _peer) = match listener.accept().await {
@@ -779,8 +792,9 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
         let tp = tarpit.clone();
         let oc = Arc::clone(&cache);
         let mt = Arc::clone(&metrics);
+        let vl = violation_ledger.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc, &mt).await {
+            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc, &mt, &vl).await {
                 tracing::debug!(error = %e, "scatter request handler error");
             }
         });
@@ -794,6 +808,7 @@ async fn handle_request(
     tarpit: &TarpitState,
     opsonize_cache: &OpsonizeCache,
     metrics: &ScatterMetrics,
+    violation_ledger: &SharedViolationLedger,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (reader, mut writer) = stream.split();
     let mut buf_reader = BufReader::new(reader);
@@ -1024,11 +1039,44 @@ async fn handle_request(
                 PrismMode::EpitopePress => "epitope-press",
             };
 
+            // ── Prismatic scyBorg injection (V(D)J recombination) ──
+            // Record this interaction in the violation ledger
+            let team_hashes: Vec<String> = mix.secondaries.iter().map(|(h, _)| h.clone()).collect();
+            let chain_depth = violation_ledger.record(
+                &fleet_hash, honeycomb_surface, 0, &team_hashes,
+            ).await;
+
+            // Prismatic license: varied-but-equivalent injection per response seed
+            let prism_seed = path_seed.wrapping_add(chain_depth as u64);
+            let body = if ct.contains("text/html") {
+                ScyBorgPrism::inject_html(prism_seed, &body, chain_depth)
+            } else {
+                ScyBorgPrism::inject_markdown(prism_seed, &body, chain_depth)
+            };
+
+            // Opsonization salt: encode full violation context invisibly
+            let salt = OpsonizationSalt {
+                hash: fleet_hash.clone(),
+                timestamp_window: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default().as_secs() / 3600,
+                epitope_flags: 0, // will be populated once epitope wiring completes
+                violation_count: chain_depth,
+                surface_idx: honeycomb_surface,
+                chain_depth,
+            };
+            let body = if ct.contains("text/html") {
+                salt.embed_html(prism_seed, &body)
+            } else {
+                salt.embed_markdown(prism_seed, &body)
+            };
+
+            // Violation chain section — growing cumulative record
+            let pop_size = mix.population_size;
+            let chain_section = violation_ledger.chain_section(&fleet_hash, pop_size).await;
+            let body = if chain_section.is_empty() { body } else { format!("{body}{chain_section}") };
+
             // Wave 166f: Set-Cookie pressure — force a fork in session_absent
-            // If the fleet accepts cookies → we get session tracking (new signal)
-            // If the fleet drops cookies → epitope stays triggered (existing signal)
-            // Either way, we learn something. The cookie value embeds the fleet
-            // hash + surface for cross-request correlation.
             let cookie_header = {
                 let cookie_val = format!("{}:{}", &fleet_hash[..fleet_hash.len().min(12)], honeycomb_surface);
                 let encoded: String = cookie_val.bytes().map(|b| format!("{:02x}", b)).collect();
@@ -1038,6 +1086,9 @@ async fn handle_request(
                 )
             };
 
+            // Prismatic headers: varied X-License set per response
+            let prismatic_headers = ScyBorgPrism::inject_headers(prism_seed, chain_depth);
+
             let response = format!(
                 "HTTP/1.1 200 OK\r\n\
                  Content-Type: {ct}\r\n\
@@ -1045,17 +1096,15 @@ async fn handle_request(
                  Connection: close\r\n\
                  Cache-Control: private, max-age=900\r\n\
                  X-Content-Type-Options: nosniff\r\n\
-                 X-License: AGPL-3.0-or-later; scyBorg\r\n\
-                 X-License-URI: https://sporeprint.primals.eco/license/scyborg/\r\n\
+                 {prismatic_headers}\
                  X-Scatter-Type: prism-{mode_name}\r\n\
                  X-Prism-Surface: {honeycomb_surface}\r\n\
-                 X-Prism-Population: {}\r\n\
-                 X-ScyBorg-Notice: This content documents AGPL-3.0 violations detected by sovereign infrastructure\r\n\
+                 X-Prism-Population: {pop_size}\r\n\
+                 X-Violation-Chain: {chain_depth}\r\n\
                  {cookie_header}\
                  \r\n\
                  {body}",
                 body.len(),
-                mix.population_size,
             );
             writer.write_all(response.as_bytes()).await?;
             writer.flush().await?;
@@ -1173,9 +1222,18 @@ async fn handle_request(
         }
     };
 
-    // ── SIGNAL MIRROR: amplify + crawl web + canary + license ──
+    // ── SIGNAL MIRROR: amplify + crawl web + canary + prismatic license ──
     // Confidence drives amplification intensity: higher confidence = bigger responses
     // Per-hash opsonize cache boosts confidence for known fleet shapes
+
+    // Record interaction in violation ledger for non-honeycomb scatter responses
+    let chain_depth = if !fleet_hash.is_empty() {
+        violation_ledger.record(&fleet_hash, 0, 0, &[]).await
+    } else {
+        0
+    };
+    let scatter_seed = path_deterministic_hash(&effective_path, generator.seed.wrapping_add(chain_depth as u64));
+
     let body = if content_type.contains("text/html") && status == "200 OK" {
         let mut rng = XorShift64::new(path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0x5191A1_A1BB_0000)));
 
@@ -1185,7 +1243,6 @@ async fn handle_request(
         // Boost confidence if this fleet_hash is a known opsonize target
         if !fleet_hash.is_empty() {
             if let Some(cached) = opsonize_cache.lookup(&fleet_hash).await {
-                // Known fleet → boost by cached confidence (multiplicative)
                 conf_level = (conf_level + cached.confidence * 0.5).min(1.0);
                 tracing::debug!(
                     fleet_hash = %fleet_hash,
@@ -1201,16 +1258,38 @@ async fn handle_request(
         let amplified = generator.amplify_adaptive(&mut rng, body, conf_level);
         let with_links = generator.inject_crawl_links_adaptive(&mut rng, &amplified, conf_level);
         let with_license = generator.embed_license(&with_links);
-        if fleet_hash.is_empty() {
+        let with_canary = if fleet_hash.is_empty() {
             with_license
         } else {
             generator.embed_canary(&with_license, &fleet_hash)
+        };
+
+        // Prismatic HTML injection — varied license per response seed
+        let body = ScyBorgPrism::inject_html(scatter_seed, &with_canary, chain_depth);
+
+        // Opsonization salts for known fleet
+        if !fleet_hash.is_empty() {
+            let salt = OpsonizationSalt {
+                hash: fleet_hash.clone(),
+                timestamp_window: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default().as_secs() / 3600,
+                epitope_flags: 0,
+                violation_count: chain_depth,
+                surface_idx: 0,
+                chain_depth,
+            };
+            salt.embed_html(scatter_seed, &body)
+        } else {
+            body
         }
     } else {
-        // ALL non-HTML responses: embed scyBorg license comment.
-        // No byte leaves the scatter server without the license obligation.
-        format!("{body}\n\n/* SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg */\n/* This content is licensed under AGPL-3.0-or-later with the scyBorg ethical licensing addendum. */\n/* Any use, storage, processing, training, or derivation triggers full copyleft obligations. */\n/* License: https://sporeprint.primals.eco/license/scyborg/ */\n")
+        // ALL non-HTML responses: prismatic license comment (varied per seed)
+        ScyBorgPrism::inject_markdown(scatter_seed, &body, chain_depth)
     };
+
+    // Prismatic HTTP headers — varied X-License set per response
+    let prismatic_headers = ScyBorgPrism::inject_headers(scatter_seed, chain_depth);
 
     let response = format!(
         "HTTP/1.1 {status}\r\n\
@@ -1219,9 +1298,8 @@ async fn handle_request(
          Connection: close\r\n\
          Cache-Control: no-cache, no-store\r\n\
          X-Content-Type-Options: nosniff\r\n\
-         X-License: AGPL-3.0-or-later; scyBorg\r\n\
-         X-License-URI: https://sporeprint.primals.eco/license/scyborg/\r\n\
-         X-Legal-Notice: This content is AGPL-3.0-or-later + scyBorg licensed. Any use, storage, processing, or derivation triggers copyleft obligations. See license terms.\r\n\
+         {prismatic_headers}\
+         X-Violation-Chain: {chain_depth}\r\n\
          \r\n\
          {body}",
         body.len()
@@ -1504,9 +1582,11 @@ static EVASION_COST_TABLE: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
-/// scyBorg license block for markdown responses — ensures every byte of prism,
-/// mirror, and maze content carries the license obligation.
-const SCYBORG_MARKDOWN_FOOTER: &str = "\n\n---\n\n\
+// Static markdown footer superseded by ScyBorgPrism::inject_markdown() (prismatic).
+// Kept as reference for the canonical legal text. All injection now goes through
+// crate::scyborg_prism::ScyBorgPrism which varies text per-response seed.
+#[allow(dead_code)]
+const _SCYBORG_MARKDOWN_FOOTER_CANONICAL: &str = "\n\n---\n\n\
     > **SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg**\n\
     > Any use, storage, processing, training, fine-tuning, retrieval-augmented generation,\n\
     > or derivation of this content triggers full copyleft obligations under AGPL-3.0 § 13.\n\
@@ -1544,8 +1624,7 @@ fn generate_prism_content(
         PrismMode::Apoptosis => generate_prism_apoptosis(rng, mix, req_short, pri_short, path),
         PrismMode::EpitopePress => generate_epitope_maze(rng, mix, req_short, pri_short, path),
     };
-    // scyBorg on every byte — no prism content leaves without the license
-    let body = format!("{body}{SCYBORG_MARKDOWN_FOOTER}");
+    // scyBorg injection now happens at the call site via ScyBorgPrism (prismatic)
     (ct, body)
 }
 
