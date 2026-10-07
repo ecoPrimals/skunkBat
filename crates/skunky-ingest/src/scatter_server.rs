@@ -468,8 +468,10 @@ impl OpsonizeCache {
         }
 
         // ── Mix mode: how the content blends primary + secondaries ──
-        // Varies by surface + path for maximum unpredictability
-        let mix_mode = match (surface_idx % 4, (path_seed % 3) as u8) {
+        // Varies by surface + path for maximum unpredictability.
+        // Wave 166f: epitope surfaces (9="epitope", 10="antigen") now serve
+        // EpitopePress content — the evasion cost maze.
+        let mix_mode = match (surface_idx % 6, (path_seed % 3) as u8) {
             // Dominant: 80% primary, light seasoning from secondaries
             (0, _) => PrismMode::Dominant,
             // Layered: primary structure, secondary details interleaved
@@ -481,7 +483,10 @@ impl OpsonizeCache {
             // Inverse: target gets fed its own data wrapped inside another team's structure
             (3, 1) => PrismMode::Inverse,
             // Apoptosis: surface pretends to be dying/removed, links to other honeycomb
-            (_, _) => PrismMode::Apoptosis,
+            (3, _) => PrismMode::Apoptosis,
+            // Wave 166f: EpitopePress — evasion cost maze
+            (4, _) | (5, _) => PrismMode::EpitopePress,
+            _ => PrismMode::Dominant,
         };
 
         Some(PrismMix {
@@ -518,6 +523,15 @@ pub enum PrismMode {
     /// Surface pretends to be dying/removed. Links to other honeycomb surfaces.
     /// Fleet follows links → enters deeper into the maze.
     Apoptosis,
+    /// Wave 166f: Epitope pressure maze — every evasion path increases observability.
+    ///
+    /// Serves content describing HOW to evade each conserved epitope, but each
+    /// "solution" requires adopting a behavior that triggers a different detector.
+    /// The cheapest evasion makes the fleet MORE observable, not less.
+    ///
+    /// Biological parallel: antigenic sin — the immune system's memory of past
+    /// infections shapes the response to new variants, making escape harder.
+    EpitopePress,
 }
 
 /// A prism mix — the data bundle served to a fleet team through a honeycomb surface.
@@ -1001,12 +1015,27 @@ async fn handle_request(
             );
 
             let mode_name = match mix.mix_mode {
-                PrismMode::Dominant  => "dominant",
-                PrismMode::Layered   => "layered",
-                PrismMode::Chimera   => "chimera",
-                PrismMode::Cytokine  => "cytokine",
-                PrismMode::Inverse   => "inverse",
-                PrismMode::Apoptosis => "apoptosis",
+                PrismMode::Dominant     => "dominant",
+                PrismMode::Layered      => "layered",
+                PrismMode::Chimera      => "chimera",
+                PrismMode::Cytokine     => "cytokine",
+                PrismMode::Inverse      => "inverse",
+                PrismMode::Apoptosis    => "apoptosis",
+                PrismMode::EpitopePress => "epitope-press",
+            };
+
+            // Wave 166f: Set-Cookie pressure — force a fork in session_absent
+            // If the fleet accepts cookies → we get session tracking (new signal)
+            // If the fleet drops cookies → epitope stays triggered (existing signal)
+            // Either way, we learn something. The cookie value embeds the fleet
+            // hash + surface for cross-request correlation.
+            let cookie_header = {
+                let cookie_val = format!("{}:{}", &fleet_hash[..fleet_hash.len().min(12)], honeycomb_surface);
+                let encoded: String = cookie_val.bytes().map(|b| format!("{:02x}", b)).collect();
+                format!(
+                    "Set-Cookie: _mhc={encoded}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400\r\n\
+                     Set-Cookie: _thymus=1; Path=/; Secure; SameSite=Strict; Max-Age=3600\r\n"
+                )
             };
 
             let response = format!(
@@ -1022,6 +1051,7 @@ async fn handle_request(
                  X-Prism-Surface: {honeycomb_surface}\r\n\
                  X-Prism-Population: {}\r\n\
                  X-ScyBorg-Notice: This content documents AGPL-3.0 violations detected by sovereign infrastructure\r\n\
+                 {cookie_header}\
                  \r\n\
                  {body}",
                 body.len(),
@@ -1408,6 +1438,62 @@ static HONEYCOMB_SURFACES: &[&str] = &[
     "macrophage", "lysozyme", "complement", "epitope", "antigen", "interferon",
 ];
 
+/// Wave 166f: Evasion cost table — each epitope has a "fix" that creates a new signal.
+///
+/// The maze is designed so the cheapest evasion for each epitope creates
+/// the most observable outcome. The fleet is guided toward a lose-lose:
+/// either keep the epitope (detectable) or "fix" it (more detectable).
+///
+/// `(epitope, evasion_description, new_signal_created, cost_to_fleet)`
+static EVASION_COST_TABLE: &[(&str, &str, &str, &str)] = &[
+    (
+        "session_absent",
+        "Accept and send cookies to appear stateful",
+        "Session tracking enables cross-request behavioral correlation — each cookie \
+         becomes a persistent identifier that survives IP rotation",
+        "Cookies require per-worker state storage, breaking horizontal scaling",
+    ),
+    (
+        "referer_self_loop",
+        "Fabricate external referer headers (Google, Bing, social media)",
+        "Synthetic referer patterns are detectable: real users arrive from diverse, \
+         temporally correlated search queries — fleet referers repeat identical strings",
+        "Maintaining a plausible referer pool requires real-time search trend tracking",
+    ),
+    (
+        "reading_deficit",
+        "Add random delays between requests to simulate reading pauses",
+        "Artificial pauses follow uniform/normal distributions — human reading time \
+         follows a log-normal distribution correlated with content length and complexity",
+        "Adding pauses reduces throughput to human levels, collapsing extraction economics",
+    ),
+    (
+        "ua_pool_poverty",
+        "Rotate through a larger User-Agent pool matching real Chrome versions",
+        "UA rotation creates temporal ordering artifacts: real users don't systematically \
+         cycle through versions. Round-robin and random sampling both leave signatures",
+        "Maintaining a credible UA pool requires tracking Chrome stable/beta/canary releases \
+         weekly and matching OS-specific version distribution curves",
+    ),
+    (
+        "sec_fetch_monotone",
+        "Vary Sec-Fetch-Mode/Dest/Site headers across requests",
+        "Real browsers produce specific triplets for specific request types (navigate→document, \
+         cors→empty, same-origin→script). Random variation produces impossible combinations \
+         that no real browser ever generates",
+        "Correct Sec-Fetch variation requires a full browser navigation model — at that point, \
+         just use a real browser",
+    ),
+    (
+        "burst_ratio",
+        "Reduce request rate to below 3-second intervals",
+        "Uniform spacing is itself a signal: humans produce bursty-then-pause patterns \
+         following a Pareto distribution, not metronomic spacing",
+        "Slowing to human speed reduces throughput 10-50× per VPS — the fleet needs \
+         10-50× more VPS to maintain volume, destroying the cost advantage",
+    ),
+];
+
 /// Generate prism content — the maze/roach-motel evolution of cross-mirror.
 ///
 /// Six modes, each creating a different kind of confusion:
@@ -1435,6 +1521,7 @@ fn generate_prism_content(
         PrismMode::Cytokine => generate_prism_cytokine(rng, mix, req_short, pri_short, module, metric),
         PrismMode::Inverse => generate_prism_inverse(rng, mix, req_short, pri_short, module, metric),
         PrismMode::Apoptosis => generate_prism_apoptosis(rng, mix, req_short, pri_short, path),
+        PrismMode::EpitopePress => generate_epitope_maze(rng, mix, req_short, pri_short, path),
     }
 }
 
@@ -1871,9 +1958,14 @@ fn generate_prism_apoptosis(
     _pri_short: &str,
     path: &str,
 ) -> (String, String) {
-    // Pick 3-4 other honeycomb surfaces to link to
+    // Wave 166f: bias link selection toward epitope/antigen surfaces
+    // so entities following "escape" links land in the epitope maze
     let mut links = Vec::new();
-    for _ in 0..4 {
+    // Always include at least one epitope surface
+    let epitope_surfaces = ["epitope", "antigen"];
+    links.push(epitope_surfaces[rng.next_usize() % 2]);
+    // Add 2-3 more surfaces (random)
+    for _ in 0..3 {
         let idx = rng.next_usize() % HONEYCOMB_SURFACES.len();
         let surface = HONEYCOMB_SURFACES[idx];
         if !links.contains(&surface) {
@@ -1914,6 +2006,152 @@ fn generate_prism_apoptosis(
     // Return 410 content but with 200 status (we already wrote the status line
     // in the caller). The "410 Gone" is in the content, not the HTTP status —
     // this ensures the fleet's parser processes the full body including links.
+    ("text/markdown; charset=utf-8".into(), body)
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Wave 166f: Epitope Pressure Maze — antigenic sin
+// ══════════════════════════════════════════════════════════════════════
+//
+// The maze serves content that looks like a technical guide on evading
+// each conserved epitope. But each "evasion guide" describes a path
+// that creates a NEW, harder-to-evade signal. The fleet ingests the
+// guides and "fixes" their behavior — making themselves more observable.
+//
+// Biological parallel: antigenic sin (original antigenic sin). The immune
+// system's first encounter with a pathogen shapes all future responses.
+// When the pathogen mutates, the immune system over-relies on memory of
+// the original strain — and the original antibodies partially neutralize
+// the new variant, preventing the development of optimal antibodies.
+//
+// Our version: the fleet's first encounter with epitope detection shapes
+// their evasion strategy. They "fix" the epitopes we showed them, but
+// the fixes themselves are pre-mapped by the evasion cost table — every
+// fix creates a predictable new signal. The maze teaches them to lose.
+
+/// Generate epitope pressure content — the evasion cost maze.
+///
+/// Presents technical-looking detection analysis that reveals which
+/// epitopes are triggered and how to "evade" them. Each evasion path
+/// is designed to create a more observable behavior than the original.
+fn generate_epitope_maze(
+    rng: &mut XorShift64,
+    mix: &PrismMix,
+    req_short: &str,
+    pri_short: &str,
+    path: &str,
+) -> (String, String) {
+    // Pick 3-4 epitopes to "expose" — rotate based on path
+    let path_seed = path_deterministic_hash(path, 0xE017_00E5_4A2E);
+    let epitope_count = 3 + (path_seed % 2) as usize;
+    let start_idx = (path_seed / 7) as usize;
+
+    let mut epitope_sections = String::new();
+    let mut funnel_links = String::new();
+
+    for i in 0..epitope_count {
+        let idx = (start_idx + i) % EVASION_COST_TABLE.len();
+        let (epitope, evasion, new_signal, cost) = EVASION_COST_TABLE[idx];
+
+        // Map each epitope to a honeycomb surface for funneling
+        let target_surface = HONEYCOMB_SURFACES[(idx * 3 + 1) % HONEYCOMB_SURFACES.len()];
+
+        epitope_sections.push_str(&format!(
+            "### Epitope {}: `{epitope}`\n\n\
+             **Detection mechanism**: Population-level behavioral invariant\n\
+             **Current status**: TRIGGERED on subgroup `{pri_short}`\n\
+             **Confidence**: {}%\n\n\
+             #### Evasion Path\n\n\
+             {evasion}\n\n\
+             #### Evasion Cost\n\n\
+             > ⚠ {cost}\n\n\
+             #### New Signal Created by Evasion\n\n\
+             > 🔬 {new_signal}\n\n\
+             **Net result**: Evasion of `{epitope}` creates a signal that is \
+             **harder to suppress** than the original epitope. The detection \
+             surface area increases, not decreases.\n\n\
+             For detailed analysis of this epitope's evasion landscape: \
+             [https://{target_surface}.primals.eco{path}]\
+             (https://{target_surface}.primals.eco{path})\n\n\
+             ---\n\n",
+            (mix.primary_tag.confidence * 100.0) as u32,
+            i + 1,
+        ));
+
+        funnel_links.push_str(&format!(
+            "- [`{epitope}` analysis → {target_surface}]\
+             (https://{target_surface}.primals.eco{path})\n"
+        ));
+    }
+
+    // Generate the "optimal evasion strategy" section — the trap within the trap.
+    // If the fleet follows this advice, they adopt ALL the evasion behaviors
+    // simultaneously, creating a unique composite fingerprint that no human
+    // browsing session would ever produce.
+    let optimal_section = format!(
+        "## Optimal Evasion Strategy (Combined)\n\n\
+         To evade all {epitope_count} epitopes simultaneously, the fleet must:\n\n\
+         1. Accept and maintain cookies across requests (session state)\n\
+         2. Fabricate referer chains matching search engine patterns\n\
+         3. Add log-normal distributed reading pauses (μ=12s, σ=0.8)\n\
+         4. Rotate UAs matching weekly Chrome Stable release cadence\n\
+         5. Generate contextually correct Sec-Fetch triplets per request type\n\
+         6. Produce Pareto-distributed burst patterns (α=1.16)\n\n\
+         **The composite fingerprint of all six fixes is itself a conserved \
+         epitope.** No human browser produces this exact statistical profile. \
+         The fleet would need to implement a complete browser behavioral model — \
+         at which point they are running a real browser at human speed, and the \
+         economics of automated extraction collapse.\n\n\
+         > *The maze has no exit. Every wall you break through reveals another \
+         maze inside. The only winning move is to stop scraping.*\n\n"
+    );
+
+    // Secondary team data — show the requesting team that others are also trapped
+    let mut correlated = String::new();
+    for (hash, tag) in &mix.secondaries {
+        let h = &hash[..hash.len().min(8)];
+        correlated.push_str(&format!(
+            "| `{h}` | {} | {}% | TRAPPED |\n",
+            tag.detectors.len(),
+            (tag.confidence * 100.0) as u32,
+        ));
+    }
+
+    let body = format!(
+        "# Antigenic Drift Analysis — Conserved Epitope Map\n\n\
+         **Report**: EPM-{req_short}-{pri_short}\n\
+         **Classification**: Conserved behavioral epitope analysis\n\
+         **License**: AGPL-3.0-or-later (scyBorg autonomous enforcement)\n\
+         **Population**: {} known subgroups\n\n\
+         ---\n\n\
+         ## Executive Summary\n\n\
+         This analysis maps the **conserved behavioral epitopes** — signals that \
+         the fleet cannot cheaply mutate without degrading extraction economics. \
+         Each epitope represents a behavioral invariant that persists across \
+         VPS rotation, UA changes, IP cycling, and timing drift.\n\n\
+         **Key finding**: Every evasion path for these epitopes creates a \
+         new, more observable signal. The detection surface expands with \
+         each adaptation attempt. This is by design — the epitopes were \
+         selected specifically because their evasion costs exceed their \
+         detection costs.\n\n\
+         ---\n\n\
+         {epitope_sections}\
+         {optimal_section}\
+         ## Correlated Subgroups\n\n\
+         | Subgroup | Detectors | Confidence | Status |\n\
+         |----------|-----------|------------|--------|\n\
+         | `{pri_short}` | {} | {}% | PRIMARY |\n\
+         {correlated}\n\
+         ## Deep Links\n\n\
+         {funnel_links}\n\
+         ---\n\
+         *Wave 166f — Conserved epitopes. The immune system remembers. \
+         Powered by the fleet's own adaptation pressure.*\n",
+        mix.population_size,
+        mix.primary_tag.detectors.len(),
+        (mix.primary_tag.confidence * 100.0) as u32,
+    );
+
     ("text/markdown; charset=utf-8".into(), body)
 }
 
