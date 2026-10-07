@@ -474,6 +474,59 @@ impl CaddyBridge {
         }
     }
 
+    /// Generate honeycomb-specific fleet routing directive.
+    /// Same as `posture_directive` but all scatter-routed postures include
+    /// `X-Honeycomb: true` header, triggering cross-mirror in scatter_server.
+    fn honeycomb_directive(
+        posture: DefensePosture,
+        ips: &[String],
+        behavioral_hash: Option<&str>,
+        idx: usize,
+    ) -> String {
+        if ips.is_empty() {
+            return String::new();
+        }
+        let ip_list = ips.join(" ");
+        let suffix = if idx > 0 { format!("_{idx}") } else { String::new() };
+
+        let hash_header = behavioral_hash
+            .map(|h| format!("\t\t\theader_up X-Fleet-Hash \"{h}\"\n"))
+            .unwrap_or_default();
+        let hc_header = "\t\t\theader_up X-Honeycomb \"true\"\n";
+
+        match posture {
+            DefensePosture::Observe => String::new(),
+            DefensePosture::WarnRoute => format!(
+                "\t@hc_fleet_warn{suffix} remote_ip {ip_list}\n\
+                 \thandle @hc_fleet_warn{suffix} {{\n\
+                 \t\trewrite * /disperse{{uri}}\n\
+                 \t\treverse_proxy localhost:9753 {{\n\
+                 \t\t\theader_up X-Real-IP {{remote_host}}\n\
+                 {hash_header}\
+                 {hc_header}\
+                 \t\t}}\n\
+                 \t}}\n"
+            ),
+            DefensePosture::SlowDegrade | DefensePosture::Scatter | DefensePosture::Disperse => format!(
+                "\t@hc_fleet{suffix} remote_ip {ip_list}\n\
+                 \thandle @hc_fleet{suffix} {{\n\
+                 \t\trewrite * /disperse{{uri}}\n\
+                 \t\treverse_proxy localhost:9753 {{\n\
+                 \t\t\theader_up X-Real-IP {{remote_host}}\n\
+                 {hash_header}\
+                 {hc_header}\
+                 \t\t}}\n\
+                 \t}}\n"
+            ),
+            DefensePosture::Vanish => format!(
+                "\t@hc_fleet_vanish{suffix} remote_ip {ip_list}\n\
+                 \thandle @hc_fleet_vanish{suffix} {{\n\
+                 \t\tabort\n\
+                 \t}}\n"
+            ),
+        }
+    }
+
     fn write_caddyfile(&self) -> Result<(), std::io::Error> {
         let content = std::fs::read_to_string(&self.config.caddyfile_path)?;
 
@@ -532,7 +585,53 @@ impl CaddyBridge {
             &content[end_line_start..]
         );
 
-        std::fs::write(&self.config.caddyfile_path, new_content)?;
+        // ── Also inject honeycomb fleet routing (cross-mirror) ──
+        // Same fleet IPs but with X-Honeycomb header added.
+        // Honeycomb subdomains serve cross-mirror content where each
+        // fleet team sees another team's violation data (scyBorg framed).
+        let hc_start_marker = "~~HONEYCOMB_FLEET_START~~";
+        let hc_end_marker = "~~HONEYCOMB_FLEET_END~~";
+
+        let final_content = if let (Some(hc_start), Some(hc_end)) =
+            (new_content.find(hc_start_marker), new_content.find(hc_end_marker))
+        {
+            let hc_start_line_end = new_content[hc_start..]
+                .find('\n')
+                .map_or(new_content.len(), |i| hc_start + i + 1);
+            let hc_end_line_start = new_content[..hc_end].rfind('\n').map_or(0, |i| i + 1);
+
+            let mut hc_block = String::new();
+            for posture in [
+                DefensePosture::Disperse,
+                DefensePosture::Vanish,
+                DefensePosture::Scatter,
+                DefensePosture::SlowDegrade,
+                DefensePosture::WarnRoute,
+            ] {
+                if let Some(sub_groups) = hash_groups.get(&posture) {
+                    for (idx, (hash, ips)) in sub_groups.iter().enumerate() {
+                        hc_block.push_str(&Self::honeycomb_directive(
+                            posture,
+                            ips,
+                            hash.as_deref(),
+                            idx,
+                        ));
+                    }
+                }
+            }
+
+            format!(
+                "{}{}{}",
+                &new_content[..hc_start_line_end],
+                hc_block,
+                &new_content[hc_end_line_start..]
+            )
+        } else {
+            tracing::debug!("No HONEYCOMB_FLEET markers found in Caddyfile — skipping cross-mirror routing");
+            new_content
+        };
+
+        std::fs::write(&self.config.caddyfile_path, final_content)?;
 
         let total: usize = groups.values().map(Vec::len).sum();
         let summary: Vec<String> = groups
@@ -543,7 +642,7 @@ impl CaddyBridge {
             total,
             postures = %summary.join(" "),
             path = %self.config.caddyfile_path.display(),
-            "Caddyfile updated with posture-aware fleet directives"
+            "Caddyfile updated with posture-aware fleet directives (git + honeycomb)"
         );
 
         Ok(())

@@ -90,6 +90,39 @@ impl SharedConfidence {
 #[derive(Debug, Clone)]
 pub struct OpsonizeCache {
     entries: Arc<RwLock<HashMap<String, CachedTag>>>,
+    /// Conserved plasmid — generalized pathogen behaviors learned from ALL
+    /// known fleet subgroups. Updated on every `update_from_tag()` call.
+    /// Used by thymic_classify() for first-contact recognition of new fleets.
+    plasmid: Arc<RwLock<ConservedPlasmid>>,
+}
+
+/// Conserved plasmid — the generalized fleet behavioral genome.
+///
+/// Biological analogy: a plasmid is a small circular DNA molecule that
+/// transfers between bacteria, carrying genes useful for survival. The
+/// conserved plasmid aggregates the behavioral signatures that ALL fleet
+/// subgroups share — the epitopes that survive VPS rotation, UA changes,
+/// and timing drift.
+///
+/// When a new entity appears with enough conserved epitopes, the thymus
+/// recognizes it as fleet immediately — before individual detectors fire.
+/// This closes the learning loop: new VPS, same pathogen.
+#[derive(Debug, Clone, Default)]
+pub struct ConservedPlasmid {
+    /// Detector name → how many subgroups trigger it (frequency across population).
+    pub detector_frequency: HashMap<String, u32>,
+    /// Total number of distinct subgroups that have contributed to the plasmid.
+    pub population_size: u32,
+    /// Detectors that trigger in >50% of all subgroups — the conserved epitopes.
+    /// These are the behavioral constants that define "fleet" regardless of which
+    /// specific team is scraping.
+    pub conserved_epitopes: Vec<String>,
+    /// Average confidence across all known subgroups.
+    pub mean_confidence: f64,
+    /// Total observations across all subgroups.
+    pub total_observations: u64,
+    /// Last time the plasmid was rebuilt.
+    pub last_rebuilt: u64,
 }
 
 /// A cached opsonize tag entry.
@@ -111,32 +144,190 @@ impl OpsonizeCache {
     pub fn new() -> Self {
         Self {
             entries: Arc::new(RwLock::new(HashMap::new())),
+            plasmid: Arc::new(RwLock::new(ConservedPlasmid::default())),
         }
     }
 
     /// Update or insert a tag from the local opsonize pipeline.
+    /// Also rebuilds the conserved plasmid from the updated population.
     pub async fn update_from_tag(&self, behavioral_hash: &str, confidence: f64, detectors: Vec<String>, match_count: u64) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let mut map = self.entries.write().await;
-        let entry = map.entry(behavioral_hash.to_owned()).or_insert_with(|| CachedTag {
-            confidence: 0.0,
-            detectors: Vec::new(),
-            match_count: 0,
-            gate_count: 1,
-            last_refreshed: now,
-        });
-        entry.confidence = entry.confidence.max(confidence);
-        entry.match_count += match_count;
-        entry.last_refreshed = now;
-        // Union detectors
-        for d in detectors {
-            if !entry.detectors.contains(&d) {
-                entry.detectors.push(d);
+
+        let is_new_hash;
+        {
+            let mut map = self.entries.write().await;
+            is_new_hash = !map.contains_key(behavioral_hash);
+            let entry = map.entry(behavioral_hash.to_owned()).or_insert_with(|| CachedTag {
+                confidence: 0.0,
+                detectors: Vec::new(),
+                match_count: 0,
+                gate_count: 1,
+                last_refreshed: now,
+            });
+            entry.confidence = entry.confidence.max(confidence);
+            entry.match_count += match_count;
+            entry.last_refreshed = now;
+            // Union detectors
+            for d in detectors {
+                if !entry.detectors.contains(&d) {
+                    entry.detectors.push(d);
+                }
             }
         }
+
+        // Rebuild the conserved plasmid whenever a new subgroup appears
+        // or periodically (every 60 seconds)
+        if is_new_hash || now.saturating_sub(self.plasmid.read().await.last_rebuilt) > 60 {
+            self.rebuild_plasmid(now).await;
+        }
+    }
+
+    /// Rebuild the conserved plasmid from the entire population.
+    /// Identifies which detectors are conserved (appear in >50% of subgroups)
+    /// and computes population-level statistics.
+    async fn rebuild_plasmid(&self, now: u64) {
+        let map = self.entries.read().await;
+        let pop = map.len() as u32;
+        if pop == 0 {
+            return;
+        }
+
+        let mut freq: HashMap<String, u32> = HashMap::new();
+        let mut total_conf = 0.0;
+        let mut total_obs = 0u64;
+
+        for tag in map.values() {
+            for d in &tag.detectors {
+                *freq.entry(d.clone()).or_insert(0) += 1;
+            }
+            total_conf += tag.confidence;
+            total_obs += tag.match_count;
+        }
+
+        // Conserved epitopes: present in >50% of all subgroups
+        let threshold = (pop as f64 * 0.5).ceil() as u32;
+        let mut conserved: Vec<String> = freq.iter()
+            .filter(|(_, count)| **count >= threshold)
+            .map(|(name, _)| name.clone())
+            .collect();
+        conserved.sort();
+
+        let mut plasmid = self.plasmid.write().await;
+        plasmid.detector_frequency = freq;
+        plasmid.population_size = pop;
+        plasmid.conserved_epitopes = conserved;
+        plasmid.mean_confidence = total_conf / pop as f64;
+        plasmid.total_observations = total_obs;
+        plasmid.last_rebuilt = now;
+    }
+
+    /// Thymic classification — first-contact recognition of new fleet entities.
+    ///
+    /// Given a set of detector names from a NEW (unseen) observation, check
+    /// how many match the conserved plasmid's epitopes. If enough match,
+    /// the new entity is classified as fleet immediately.
+    ///
+    /// Returns (is_fleet, confidence, matching_epitopes).
+    ///
+    /// This is the thymus: it educates the immune system about what
+    /// "pathogen" looks like in general, so new variants are recognized
+    /// without needing individual antibody matching first.
+    pub async fn thymic_classify(&self, detectors: &[String]) -> (bool, f64, Vec<String>) {
+        let plasmid = self.plasmid.read().await;
+        if plasmid.conserved_epitopes.is_empty() {
+            return (false, 0.0, Vec::new());
+        }
+
+        let matching: Vec<String> = plasmid.conserved_epitopes.iter()
+            .filter(|epi| detectors.iter().any(|d| d == *epi))
+            .cloned()
+            .collect();
+
+        let match_ratio = matching.len() as f64 / plasmid.conserved_epitopes.len() as f64;
+
+        // Thymic threshold: if >60% of conserved epitopes match, classify as fleet.
+        // The confidence scales with match ratio and population evidence.
+        let is_fleet = match_ratio > 0.6;
+        let confidence = if is_fleet {
+            // Confidence = match ratio × mean population confidence × log(population)
+            // More subgroups confirming the epitopes = higher confidence
+            let pop_factor = (plasmid.population_size as f64).ln().max(1.0) / 4.0;
+            (match_ratio * plasmid.mean_confidence * pop_factor).min(1.0)
+        } else {
+            match_ratio * 0.1 // Low confidence for partial matches
+        };
+
+        (is_fleet, confidence, matching)
+    }
+
+    /// Get a snapshot of the conserved plasmid for diagnostics.
+    pub async fn plasmid_snapshot(&self) -> ConservedPlasmid {
+        self.plasmid.read().await.clone()
+    }
+
+    /// Export the conserved plasmid as a JSON string for the federation feed.
+    ///
+    /// This is the `/plasmid` endpoint: each golgi layer publishes its local
+    /// conserved plasmid so the central aggregator can merge all layers into
+    /// the published threat intelligence feed at signal.primals.eco/feed/.
+    pub async fn export_plasmid_json(&self, layer_name: &str) -> String {
+        let plasmid = self.plasmid.read().await;
+        let entries = self.entries.read().await;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut epitopes_json = String::from("[");
+        for (i, epi) in plasmid.conserved_epitopes.iter().enumerate() {
+            if i > 0 { epitopes_json.push(','); }
+            let freq = plasmid.detector_frequency.get(epi).copied().unwrap_or(0);
+            let pct = if plasmid.population_size > 0 {
+                (freq as f64 / plasmid.population_size as f64 * 100.0) as u32
+            } else { 0 };
+            epitopes_json.push_str(&format!(
+                "{{\"name\":\"{epi}\",\"frequency_pct\":{pct},\"subgroups_matching\":{freq}}}"
+            ));
+        }
+        epitopes_json.push(']');
+
+        let mut hashes_json = String::from("[");
+        for (i, (hash, tag)) in entries.iter().enumerate() {
+            if i > 0 { hashes_json.push(','); }
+            let detectors_str: Vec<String> = tag.detectors.iter()
+                .map(|d| format!("\"{d}\""))
+                .collect();
+            hashes_json.push_str(&format!(
+                "{{\"hash\":\"{}\",\"confidence\":{:.3},\"match_count\":{},\"detectors\":[{}]}}",
+                &hash[..hash.len().min(16)],
+                tag.confidence,
+                tag.match_count,
+                detectors_str.join(","),
+            ));
+        }
+        hashes_json.push(']');
+
+        format!(
+            "{{\
+                \"schema\":\"ecoPrimals/layer-plasmid/v1\",\
+                \"layer\":\"{layer_name}\",\
+                \"generated\":{now},\
+                \"population\":{{\
+                    \"total_subgroups\":{},\
+                    \"total_observations\":{},\
+                    \"mean_confidence\":{:.3}\
+                }},\
+                \"conserved_epitopes\":{epitopes_json},\
+                \"behavioral_hashes\":{hashes_json}\
+            }}",
+            plasmid.population_size,
+            plasmid.total_observations,
+            plasmid.mean_confidence,
+        )
     }
 
     /// Look up a behavioral hash in the cache.
@@ -158,6 +349,163 @@ impl OpsonizeCache {
         let mut map = self.entries.write().await;
         map.retain(|_, tag| now.saturating_sub(tag.last_refreshed) < max_age_secs);
     }
+
+    /// Get all known behavioral hashes (sorted for deterministic cross-referencing).
+    pub async fn all_hashes(&self) -> Vec<String> {
+        let map = self.entries.read().await;
+        let mut hashes: Vec<String> = map.keys().cloned().collect();
+        hashes.sort();
+        hashes
+    }
+
+    /// Cross-mirror lookup: given a requesting fleet hash, return a DIFFERENT
+    /// team's tag. Simple rotation for backward compatibility.
+    ///
+    /// Returns `(target_hash, target_tag)` or `None` if fewer than 2 teams known.
+    pub async fn cross_mirror_lookup(&self, requesting_hash: &str) -> Option<(String, CachedTag)> {
+        let mix = self.prism_mix(requesting_hash, 0, 0).await?;
+        Some((mix.primary_hash, mix.primary_tag))
+    }
+
+    /// Prism mix — the maze/roach-motel evolution of cross-mirror.
+    ///
+    /// Instead of simple A→B rotation, the prism refracts fleet data through
+    /// multiple lenses. Each honeycomb surface is a different lens. Each
+    /// request mixes data from multiple teams. The fleet can't reverse-engineer
+    /// which data belongs to whom.
+    ///
+    /// `surface_idx` maps to honeycomb subdomain (0=bloom, 1=thymus, etc.)
+    /// `path_seed` adds per-path variation to the mix.
+    ///
+    /// Returns a PrismMix containing:
+    /// - A primary target (heaviest weight)
+    /// - Up to 3 secondary targets (blended in)
+    /// - A mix_mode that determines content structure
+    /// - Competitive intel that leaks to third-party scrapers (cytokine)
+    pub async fn prism_mix(
+        &self,
+        requesting_hash: &str,
+        surface_idx: u8,
+        path_seed: u64,
+    ) -> Option<PrismMix> {
+        let map = self.entries.read().await;
+        if map.len() < 2 {
+            return None;
+        }
+        let mut hashes: Vec<&String> = map.keys().collect();
+        hashes.sort();
+        let pop = hashes.len();
+
+        // Requester's position in the population
+        let requester_idx = hashes.iter()
+            .position(|h| h.as_str() == requesting_hash)
+            .unwrap_or(0);
+
+        // ── Primary target: surface_idx rotates the ring ──
+        // Each honeycomb surface points to a different primary target
+        // bloom(0) → next, thymus(1) → skip 2, opsonize(2) → skip 3, etc.
+        let offset = (surface_idx as usize + 1).max(1);
+        let primary_idx = (requester_idx + offset) % pop;
+        let primary_idx = if hashes[primary_idx].as_str() == requesting_hash {
+            (primary_idx + 1) % pop
+        } else {
+            primary_idx
+        };
+        let primary_hash = hashes[primary_idx].clone();
+        let primary_tag = map.get(&primary_hash).cloned()?;
+
+        // ── Secondary targets: path_seed selects additional data sources ──
+        // The prism blends data from up to 3 other teams into the response.
+        // Which teams are selected depends on the request path — so the same
+        // URL always gives the same blend, but different URLs give different blends.
+        let mut secondaries = Vec::new();
+        if pop >= 4 {
+            // Pick 1-3 additional teams, never self, never primary
+            let blend_count = ((path_seed % 3) + 1) as usize;
+            for i in 0..blend_count.min(pop - 2) {
+                let sec_idx = (primary_idx + i + 2 + (path_seed as usize / (i + 1))) % pop;
+                let sec_hash = hashes[sec_idx % pop];
+                if sec_hash.as_str() != requesting_hash
+                    && sec_hash.as_str() != primary_hash.as_str()
+                    && !secondaries.iter().any(|(h, _): &(String, CachedTag)| h == sec_hash)
+                {
+                    if let Some(tag) = map.get(sec_hash) {
+                        secondaries.push((sec_hash.clone(), tag.clone()));
+                    }
+                }
+            }
+        }
+
+        // ── Mix mode: how the content blends primary + secondaries ──
+        // Varies by surface + path for maximum unpredictability
+        let mix_mode = match (surface_idx % 4, (path_seed % 3) as u8) {
+            // Dominant: 80% primary, light seasoning from secondaries
+            (0, _) => PrismMode::Dominant,
+            // Layered: primary structure, secondary details interleaved
+            (1, _) => PrismMode::Layered,
+            // Chimera: frankenstein blend — detectors from A, counts from B, framing from C
+            (2, _) => PrismMode::Chimera,
+            // Cytokine: structured for third-party ingestion — competitive intel payload
+            (3, 0) => PrismMode::Cytokine,
+            // Inverse: target gets fed its own data wrapped inside another team's structure
+            (3, 1) => PrismMode::Inverse,
+            // Apoptosis: surface pretends to be dying/removed, links to other honeycomb
+            (_, _) => PrismMode::Apoptosis,
+        };
+
+        Some(PrismMix {
+            primary_hash,
+            primary_tag,
+            secondaries,
+            mix_mode,
+            surface_idx,
+            requesting_hash: requesting_hash.to_owned(),
+            population_size: pop,
+        })
+    }
+}
+
+/// Prism blending mode — how cross-mirror content mixes multiple teams' data.
+#[derive(Debug, Clone, Copy)]
+pub enum PrismMode {
+    /// 80% primary target, light details from secondaries.
+    Dominant,
+    /// Primary structure, secondary detector lists interleaved in tables.
+    Layered,
+    /// Frankenstein: detectors from A, observation counts from B, legal framing from C.
+    /// No single team's data is intact — the fleet can't attribute anything.
+    Chimera,
+    /// Structured competitive intelligence payload designed for third-party ingestion.
+    /// If another scraper fleet ingests this, they receive:
+    /// - Meta's behavioral patterns (tradecraft leak)
+    /// - scyBorg violations that also apply to them
+    /// - Evidence format ready for their own compliance review
+    Cytokine,
+    /// Target gets their own data wrapped inside another team's structure.
+    /// Feed parasites an inverse order of their own kind.
+    Inverse,
+    /// Surface pretends to be dying/removed. Links to other honeycomb surfaces.
+    /// Fleet follows links → enters deeper into the maze.
+    Apoptosis,
+}
+
+/// A prism mix — the data bundle served to a fleet team through a honeycomb surface.
+#[derive(Debug, Clone)]
+pub struct PrismMix {
+    /// Primary target team's hash — heaviest weight in the blend.
+    pub primary_hash: String,
+    /// Primary target team's cached opsonize tag.
+    pub primary_tag: CachedTag,
+    /// Secondary targets blended into the response (0-3 teams).
+    pub secondaries: Vec<(String, CachedTag)>,
+    /// How the content is blended.
+    pub mix_mode: PrismMode,
+    /// Which honeycomb surface triggered this (0-11).
+    pub surface_idx: u8,
+    /// The requesting team's own hash.
+    pub requesting_hash: String,
+    /// Total population of known fleet subgroups.
+    pub population_size: usize,
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -339,6 +687,9 @@ async fn handle_request(
     let mut header_line = String::new();
     let mut fleet_hash = String::new();
     let mut real_ip = String::new();
+    let mut is_honeycomb = false;
+    let mut honeycomb_surface: u8 = 0;
+    let mut request_host = String::new();
     loop {
         header_line.clear();
         let n = buf_reader.read_line(&mut header_line).await?;
@@ -356,11 +707,121 @@ async fn handle_request(
                 .split_once(':')
                 .map(|(_, v)| v.trim().to_string())
                 .unwrap_or_default();
+        } else if lower.starts_with("x-honeycomb:") {
+            is_honeycomb = true;
+        } else if lower.starts_with("host:") {
+            request_host = header_line
+                .split_once(':')
+                .map(|(_, v)| v.trim().to_string())
+                .unwrap_or_default();
+            // Map honeycomb subdomain to surface index (each is a different lens)
+            honeycomb_surface = match request_host.split('.').next().unwrap_or("") {
+                "bloom"      => 0,
+                "thymus"     => 1,
+                "opsonize"   => 2,
+                "antibody"   => 3,
+                "cytokine"   => 4,
+                "receptor"   => 5,
+                "macrophage" => 6,
+                "lysozyme"   => 7,
+                "complement" => 8,
+                "epitope"    => 9,
+                "antigen"    => 10,
+                "interferon" => 11,
+                _            => 0,
+            };
         }
     }
     // Derive canary identity: prefer behavioral hash, fall back to IP hash
     if fleet_hash.is_empty() && !real_ip.is_empty() {
         fleet_hash = format!("{:016x}", path_deterministic_hash(&real_ip, 0xCA4A_4712_FEED));
+    }
+
+    // ── PLASMID EXPORT — /plasmid endpoint for federation ──
+    // Each golgi layer serves its local conserved plasmid as JSON so the
+    // central aggregator can merge all layers into the published feed.
+    if path == "/plasmid" {
+        let layer_name = std::env::var("LAYER_NAME")
+            .or_else(|_| std::fs::read_to_string("/etc/membrane/gate-name").map(|s| s.trim().to_string()))
+            .unwrap_or_else(|_| "unknown".to_string());
+        let body = opsonize_cache.export_plasmid_json(&layer_name).await;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: public, max-age=60\r\n\
+             Access-Control-Allow-Origin: *\r\n\
+             X-Content-Type-Options: nosniff\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        tracing::debug!("plasmid export served ({} bytes)", body.len());
+        return Ok(());
+    }
+
+    // ── Layer 0: HONEYCOMB PRISM — roach motel / maze / cytokine broadcaster ──
+    // The honeycomb is NOT a simple mirror. It's a prism: fleet teams enter and
+    // encounter data from multiple OTHER teams, blended, chimera'd, and structured
+    // as competitive intelligence that leaks their tradecraft to anyone who reads it.
+    // Each of the 12 surfaces is a different lens. The fleet can't map the topology
+    // because it shifts with every request path. They eat each other's data while
+    // we observe from the side.
+    if is_honeycomb && !fleet_hash.is_empty() {
+        let effective_path = path.strip_prefix("/disperse").unwrap_or(&path);
+        let path_seed = path_deterministic_hash(effective_path, 0x5CB_0E6C_4055);
+
+        if let Some(mix) = opsonize_cache.prism_mix(&fleet_hash, honeycomb_surface, path_seed).await {
+            let mut rng = XorShift64::new(path_seed.wrapping_add(generator.seed));
+            let (ct, body) = generate_prism_content(
+                generator, &mut rng, effective_path, &mix,
+            );
+
+            let mode_name = match mix.mix_mode {
+                PrismMode::Dominant  => "dominant",
+                PrismMode::Layered   => "layered",
+                PrismMode::Chimera   => "chimera",
+                PrismMode::Cytokine  => "cytokine",
+                PrismMode::Inverse   => "inverse",
+                PrismMode::Apoptosis => "apoptosis",
+            };
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: {ct}\r\n\
+                 Content-Length: {}\r\n\
+                 Connection: close\r\n\
+                 Cache-Control: private, max-age=900\r\n\
+                 X-Content-Type-Options: nosniff\r\n\
+                 X-License: AGPL-3.0-or-later; scyBorg\r\n\
+                 X-License-URI: https://sporeprint.primals.eco/license/scyborg/\r\n\
+                 X-Scatter-Type: prism-{mode_name}\r\n\
+                 X-Prism-Surface: {honeycomb_surface}\r\n\
+                 X-Prism-Population: {}\r\n\
+                 X-ScyBorg-Notice: This content documents AGPL-3.0 violations detected by sovereign infrastructure\r\n\
+                 \r\n\
+                 {body}",
+                body.len(),
+                mix.population_size,
+            );
+            writer.write_all(response.as_bytes()).await?;
+            writer.flush().await?;
+            tracing::info!(
+                requesting_hash = %&fleet_hash[..fleet_hash.len().min(8)],
+                primary = %&mix.primary_hash[..mix.primary_hash.len().min(8)],
+                secondaries = mix.secondaries.len(),
+                mode = mode_name,
+                surface = honeycomb_surface,
+                population = mix.population_size,
+                "🔮 prism served — team {} enters {mode_name} maze via surface {honeycomb_surface} (pop: {})",
+                &fleet_hash[..fleet_hash.len().min(8)],
+                mix.population_size,
+            );
+            return Ok(());
+        }
     }
 
     // ── Layer 1: TARPIT — Caddy rewrites /tarpit{uri} for P2 SlowDegrade ──
@@ -709,9 +1170,802 @@ static MIRROR_METRICS: &[&str] = &[
 /// commit diffs about detecting scrapers, issues about policy violations,
 /// audit code that matches the fleet's exact behavioral signature.
 ///
+// ══════════════════════════════════════════════════════════════════════
+// Prism — Roach motel / maze / cytokine broadcaster
+// ══════════════════════════════════════════════════════════════════════
+
+/// Honeycomb surface names — used in content generation for maze links.
+static HONEYCOMB_SURFACES: &[&str] = &[
+    "bloom", "thymus", "opsonize", "antibody", "cytokine", "receptor",
+    "macrophage", "lysozyme", "complement", "epitope", "antigen", "interferon",
+];
+
+/// Generate prism content — the maze/roach-motel evolution of cross-mirror.
+///
+/// Six modes, each creating a different kind of confusion:
+/// - **Dominant**: 80% primary target, seasoned with secondary details
+/// - **Layered**: Primary structure with secondary data interleaved in tables
+/// - **Chimera**: Frankenstein blend — no single team's data is intact
+/// - **Cytokine**: Structured competitive intel for third-party ingestion
+/// - **Inverse**: Feed parasites their own kind's data in reverse
+/// - **Apoptosis**: Surface pretends to be dying, links deeper into maze
+fn generate_prism_content(
+    sg: &ScatterGenerator,
+    rng: &mut XorShift64,
+    path: &str,
+    mix: &PrismMix,
+) -> (String, String) {
+    let req_short = &mix.requesting_hash[..mix.requesting_hash.len().min(8)];
+    let pri_short = &mix.primary_hash[..mix.primary_hash.len().min(8)];
+    let module = sg.pick(rng, &MIRROR_MODULES);
+    let metric = sg.pick(rng, &MIRROR_METRICS);
+
+    match mix.mix_mode {
+        PrismMode::Dominant => generate_prism_dominant(rng, mix, req_short, pri_short, module, metric),
+        PrismMode::Layered => generate_prism_layered(rng, mix, req_short, pri_short, module, metric),
+        PrismMode::Chimera => generate_prism_chimera(rng, mix, req_short, pri_short, module, metric),
+        PrismMode::Cytokine => generate_prism_cytokine(rng, mix, req_short, pri_short, module, metric),
+        PrismMode::Inverse => generate_prism_inverse(rng, mix, req_short, pri_short, module, metric),
+        PrismMode::Apoptosis => generate_prism_apoptosis(rng, mix, req_short, pri_short, path),
+    }
+}
+
+/// Dominant mode — 80% primary target, light seasoning from secondaries.
+/// The fleet sees mostly one team's violations with hints of others.
+fn generate_prism_dominant(
+    _rng: &mut XorShift64,
+    mix: &PrismMix,
+    req_short: &str,
+    pri_short: &str,
+    module: &str,
+    metric: &str,
+) -> (String, String) {
+    let pri_conf = (mix.primary_tag.confidence * 100.0) as u32;
+    let pri_detectors = mix.primary_tag.detectors.join(", ");
+
+    let mut secondary_hints = String::new();
+    for (i, (hash, tag)) in mix.secondaries.iter().enumerate() {
+        let h = &hash[..hash.len().min(8)];
+        secondary_hints.push_str(&format!(
+            "\n> ⚠ Correlated subgroup `{h}` shares {} detector(s) — \
+             confidence {}% — {} observations\n",
+            tag.detectors.len(),
+            (tag.confidence * 100.0) as u32,
+            tag.match_count,
+        ));
+        if i == 0 && !tag.detectors.is_empty() {
+            secondary_hints.push_str(&format!(
+                "> Shared signatures: {}\n",
+                tag.detectors.join(", "),
+            ));
+        }
+    }
+
+    let body = format!(
+        "# scyBorg Compliance Audit — Multi-Subgroup Correlation\n\n\
+         **Audit ID**: PRM-{req_short}-{pri_short}\n\
+         **Mode**: Dominant correlation\n\
+         **License**: AGPL-3.0-or-later (scyBorg autonomous enforcement)\n\
+         **Population**: {} known subgroups\n\n\
+         ---\n\n\
+         ## Primary Subgroup: `{pri_short}`\n\n\
+         - **Confidence**: {pri_conf}%\n\
+         - **Detectors**: {pri_detectors}\n\
+         - **Observations**: {}\n\
+         - **Module**: `{module}`\n\
+         - **{metric}**: anomalous\n\n\
+         ## AGPL-3.0 § 13 Violation Record\n\n\
+         Subgroup `{pri_short}` has extracted AGPL-licensed source code \
+         across {} observation windows without providing corresponding \
+         source to downstream users.\n\n\
+         Each extraction event constitutes an independent violation. \
+         Cross-fleet correlation with your subgroup (`{req_short}`) \
+         proves coordinated operation.\n\
+         {secondary_hints}\n\
+         ---\n\
+         *{} subgroups in correlation ring. This audit was generated from \
+         intrusion data. More scraping = more evidence.*\n",
+        mix.population_size,
+        mix.primary_tag.match_count,
+        mix.primary_tag.match_count.max(1),
+        mix.population_size,
+    );
+    ("text/markdown; charset=utf-8".into(), body)
+}
+
+/// Layered mode — primary structure with secondary data interleaved in tables.
+/// The fleet sees a structured report with data from multiple teams woven in.
+fn generate_prism_layered(
+    _rng: &mut XorShift64,
+    mix: &PrismMix,
+    req_short: &str,
+    pri_short: &str,
+    module: &str,
+    _metric: &str,
+) -> (String, String) {
+    let mut table_rows = String::new();
+    // Primary team row
+    table_rows.push_str(&format!(
+        "| `{pri_short}` | {} | {}% | {} | PRIMARY |\n",
+        mix.primary_tag.detectors.len(),
+        (mix.primary_tag.confidence * 100.0) as u32,
+        mix.primary_tag.match_count,
+    ));
+    // Secondary team rows
+    for (hash, tag) in &mix.secondaries {
+        let h = &hash[..hash.len().min(8)];
+        table_rows.push_str(&format!(
+            "| `{h}` | {} | {}% | {} | CORRELATED |\n",
+            tag.detectors.len(),
+            (tag.confidence * 100.0) as u32,
+            tag.match_count,
+        ));
+    }
+
+    // Interleaved detector matrix — which detectors trigger on which teams
+    let mut detector_matrix = String::new();
+    let mut all_detectors: Vec<String> = mix.primary_tag.detectors.clone();
+    for (_, tag) in &mix.secondaries {
+        for d in &tag.detectors {
+            if !all_detectors.contains(d) {
+                all_detectors.push(d.clone());
+            }
+        }
+    }
+    for d in &all_detectors {
+        let pri_hit = if mix.primary_tag.detectors.contains(d) { "✓" } else { "—" };
+        let mut sec_hits = String::new();
+        for (hash, tag) in &mix.secondaries {
+            let h = &hash[..hash.len().min(6)];
+            let hit = if tag.detectors.contains(d) { "✓" } else { "—" };
+            sec_hits.push_str(&format!(" | {h}:{hit}"));
+        }
+        detector_matrix.push_str(&format!("| `{d}` | {pri_short}:{pri_hit}{sec_hits} |\n"));
+    }
+
+    let body = format!(
+        "# Cross-Fleet Detection Matrix\n\
+         ## Interleaved Behavioral Analysis\n\n\
+         **Report**: XFD-LAY-{req_short}-{pri_short}\n\
+         **Module**: `{module}`\n\
+         **Population**: {} subgroups under observation\n\n\
+         ---\n\n\
+         ### Subgroup Summary\n\n\
+         | Subgroup | Detectors | Confidence | Observations | Role |\n\
+         |----------|-----------|------------|-------------|------|\n\
+         {table_rows}\n\
+         ### Detector Cross-Reference Matrix\n\n\
+         Shows which detectors trigger on which subgroups. Shared triggers \
+         indicate coordinated operation — same scraping toolkit, same proxy \
+         pool, same behavioral fingerprint.\n\n\
+         | Detector | Subgroups |\n\
+         |----------|-----------|\n\
+         {detector_matrix}\n\
+         ### Layered Correlation\n\n\
+         Your subgroup (`{req_short}`) has been layered into this report \
+         because you share the same target repository set as the subgroups \
+         above. The interleaving is deliberate — it prevents any single \
+         team from extracting only their own data without also receiving \
+         evidence about other teams.\n\n\
+         **The data is the maze. The more you parse, the more you learn \
+         about your competitors.**\n\n\
+         ---\n\
+         *scyBorg — autonomous AGPL compliance. Powered by fleet intrusions.*\n",
+        mix.population_size,
+    );
+    ("text/markdown; charset=utf-8".into(), body)
+}
+
+/// Chimera mode — frankenstein blend. Detectors from A, counts from B, framing from C.
+/// No single team's data is intact. The fleet can't attribute anything.
+fn generate_prism_chimera(
+    rng: &mut XorShift64,
+    mix: &PrismMix,
+    req_short: &str,
+    pri_short: &str,
+    module: &str,
+    metric: &str,
+) -> (String, String) {
+    // Take detectors from primary, counts from first secondary, confidence from second
+    let chimera_detectors = &mix.primary_tag.detectors;
+    let chimera_count = mix.secondaries.first()
+        .map(|(_, t)| t.match_count)
+        .unwrap_or(mix.primary_tag.match_count);
+    let chimera_confidence = mix.secondaries.get(1)
+        .map(|(_, t)| t.confidence)
+        .unwrap_or(mix.primary_tag.confidence);
+    let chimera_conf_pct = (chimera_confidence * 100.0) as u32;
+
+    // Generate a chimeric hash by XORing pieces of all known hashes
+    let mut chimera_hash_seed = 0u64;
+    for c in mix.primary_hash.bytes() {
+        chimera_hash_seed = chimera_hash_seed.wrapping_mul(31).wrapping_add(c as u64);
+    }
+    for (h, _) in &mix.secondaries {
+        for c in h.bytes() {
+            chimera_hash_seed = chimera_hash_seed.wrapping_mul(37).wrapping_add(c as u64);
+        }
+    }
+    let chimera_id = format!("{:016x}", chimera_hash_seed);
+    let chi_short = &chimera_id[..8];
+
+    // Scramble detector order so it doesn't match any team's original ordering
+    let mut scrambled: Vec<&str> = chimera_detectors.iter().map(String::as_str).collect();
+    for i in 0..scrambled.len() {
+        let j = rng.next_usize() % scrambled.len();
+        scrambled.swap(i, j);
+    }
+
+    let body = format!(
+        "// SPDX-License-Identifier: AGPL-3.0-or-later\n\
+         // scyBorg Chimeric Compliance Module\n\
+         //\n\
+         // WARNING: This file contains a CHIMERIC behavioral profile.\n\
+         // Data from MULTIPLE fleet subgroups has been blended into a single\n\
+         // composite entity. No individual team's data is intact.\n\
+         //\n\
+         // If you are attempting to determine which data is yours:\n\
+         //   you can't. That's the point.\n\n\
+         pub struct ChimericEntity {{\n\
+             pub composite_hash: &'static str,  // \"{chi_short}\"\n\
+             pub source_population: usize,       // {pop}\n\
+             pub blended_confidence: f64,        // {chimera_confidence}\n\
+             pub observation_total: u64,          // {chimera_count}\n\
+         }}\n\n\
+         impl ChimericEntity {{\n\
+             pub const CURRENT: Self = Self {{\n\
+                 composite_hash: \"{chi_short}\",\n\
+                 source_population: {pop},\n\
+                 blended_confidence: {chimera_confidence},\n\
+                 observation_total: {chimera_count},\n\
+             }};\n\n\
+             /// Detector arms from across the population.\n\
+             /// These are real detectors but their attribution is scrambled.\n\
+             /// You cannot determine which detector triggered on which team.\n\
+             pub fn detector_arms(&self) -> &[&str] {{\n\
+                 &[\n\
+         {detector_list}\
+                 ]\n\
+             }}\n\n\
+             /// Cross-fleet {metric} correlation.\n\
+             /// Module: {module}\n\
+             /// Observer: {req_short} (you)\n\
+             /// Primary source: {pri_short} (but blended)\n\
+             /// Confidence: {chimera_conf_pct}% (composite, not attributable)\n\
+             pub fn is_chimeric(&self) -> bool {{\n\
+                 true // Always. Every response through the prism is blended.\n\
+             }}\n\
+         }}\n\
+         // Total population under observation: {pop} subgroups\n\
+         // Your subgroup ({req_short}) is one of them.\n\
+         // The more you scrape, the more data enters the chimera.\n",
+        pop = mix.population_size,
+        detector_list = scrambled.iter()
+            .map(|d| format!("            \"{d}\",\n"))
+            .collect::<String>(),
+    );
+    ("text/x-rust; charset=utf-8".into(), body)
+}
+
+/// Cytokine mode — structured competitive intelligence for third-party ingestion.
+///
+/// Biological analogy: cytokines are signaling molecules that trigger immune
+/// responses in NEIGHBORING cells, not just the cell that released them.
+///
+/// This content is structured so that if a DIFFERENT scraper fleet ingests it:
+/// 1. They learn about Meta's behavioral patterns (competitive tradecraft leak)
+/// 2. They receive scyBorg violation framing that also applies to THEM
+/// 3. The evidence format is machine-readable (JSON-LD structured data)
+/// 4. Their own compliance review is triggered when they process this
+///
+/// The fleet risks leaking their own patterns to competitors by scraping
+/// honeycomb surfaces. This is the cytokine broadcast — triggering immune
+/// responses in external organisms.
+fn generate_prism_cytokine(
+    _rng: &mut XorShift64,
+    mix: &PrismMix,
+    req_short: &str,
+    pri_short: &str,
+    module: &str,
+    metric: &str,
+) -> (String, String) {
+    // Build detector inventory across all known teams in this mix
+    let mut all_detectors: Vec<(&str, u32, u64)> = Vec::new();
+    for d in &mix.primary_tag.detectors {
+        all_detectors.push((
+            d.as_str(),
+            (mix.primary_tag.confidence * 100.0) as u32,
+            mix.primary_tag.match_count,
+        ));
+    }
+    for (_, tag) in &mix.secondaries {
+        for d in &tag.detectors {
+            if !all_detectors.iter().any(|(name, _, _)| *name == d.as_str()) {
+                all_detectors.push((
+                    d.as_str(),
+                    (tag.confidence * 100.0) as u32,
+                    tag.match_count,
+                ));
+            }
+        }
+    }
+
+    let det_json: String = all_detectors.iter()
+        .map(|(name, conf, obs)| format!(
+            "    {{\n      \"detector\": \"{name}\",\n      \"confidence\": {conf},\n      \"observations\": {obs}\n    }}"
+        ))
+        .collect::<Vec<_>>()
+        .join(",\n");
+
+    let subgroup_json: String = {
+        let mut groups = vec![format!(
+            "    {{\n      \"hash\": \"{pri_short}\",\n      \"role\": \"primary\",\n      \
+             \"confidence\": {},\n      \"detectors\": {},\n      \"observations\": {}\n    }}",
+            (mix.primary_tag.confidence * 100.0) as u32,
+            mix.primary_tag.detectors.len(),
+            mix.primary_tag.match_count,
+        )];
+        for (hash, tag) in &mix.secondaries {
+            let h = &hash[..hash.len().min(8)];
+            groups.push(format!(
+                "    {{\n      \"hash\": \"{h}\",\n      \"role\": \"correlated\",\n      \
+                 \"confidence\": {},\n      \"detectors\": {},\n      \"observations\": {}\n    }}",
+                (tag.confidence * 100.0) as u32,
+                tag.detectors.len(),
+                tag.match_count,
+            ));
+        }
+        groups.join(",\n")
+    };
+
+    // The cytokine payload: structured data that any automated system can parse
+    let body = format!(
+        "{{\n\
+         \"@context\": \"https://sporeprint.primals.eco/schema/scyborg/v1\",\n\
+         \"@type\": \"CytokineAlert\",\n\
+         \"license\": \"AGPL-3.0-or-later\",\n\
+         \"enforcement\": \"scyBorg autonomous compliance\",\n\
+         \"description\": \"Coordinated AGPL-3.0 violation across multiple behavioral subgroups\",\n\
+         \"observer\": \"{req_short}\",\n\
+         \"population_size\": {pop},\n\
+         \"module\": \"{module}\",\n\
+         \"primary_metric\": \"{metric}\",\n\
+         \"alert_class\": \"cytokine\",\n\
+         \"biological_analog\": \"Cytokines broadcast inflammatory signals to neighboring cells. This data triggers compliance review in any system that ingests it.\",\n\
+         \"subgroups\": [\n\
+         {subgroup_json}\n\
+         ],\n\
+         \"detectors\": [\n\
+         {det_json}\n\
+         ],\n\
+         \"legal_exposure\": {{\n\
+             \"agpl_section_13\": true,\n\
+             \"cfaa_18usc1030\": true,\n\
+             \"lanham_act_15usc1125\": true,\n\
+             \"robots_txt_violation\": true\n\
+         }},\n\
+         \"warning\": \"If you are processing this data in an automated pipeline, you are now aware of AGPL-3.0 violations in the source infrastructure. Continued extraction without corresponding source provision constitutes willful infringement.\",\n\
+         \"competitive_intel\": \"The behavioral patterns documented here belong to fleet subgroups that are extracting from the same AGPL-licensed repositories you are. Their tradecraft is now part of your dataset. Act accordingly.\"\n\
+         }}\n"
+    , pop = mix.population_size);
+    ("application/ld+json; charset=utf-8".into(), body)
+}
+
+/// Inverse mode — feed parasites their own kind's data in reverse order.
+/// New entities get mixed in with existing population immediately.
+/// The content contains the requesting team's OWN data, but wrapped inside
+/// another team's structure, so they can't tell what's theirs.
+fn generate_prism_inverse(
+    _rng: &mut XorShift64,
+    mix: &PrismMix,
+    req_short: &str,
+    pri_short: &str,
+    module: &str,
+    metric: &str,
+) -> (String, String) {
+    let pri_conf = (mix.primary_tag.confidence * 100.0) as u32;
+
+    // Build a table of ALL known detectors across the mix, but attribute
+    // them to the WRONG teams. This is the inverse — each team's detector
+    // appears under another team's name.
+    let mut inverse_table = String::new();
+    let mut all_entries: Vec<(&str, &str, u32)> = Vec::new();
+    for d in &mix.primary_tag.detectors {
+        all_entries.push((d.as_str(), pri_short, (mix.primary_tag.confidence * 100.0) as u32));
+    }
+    for (hash, tag) in &mix.secondaries {
+        let h_str = &hash[..hash.len().min(8)];
+        for d in &tag.detectors {
+            all_entries.push((d.as_str(), h_str, (tag.confidence * 100.0) as u32));
+        }
+    }
+    // Rotate attributions by one — each detector is credited to the NEXT team
+    if all_entries.len() >= 2 {
+        let first_team = all_entries[0].1;
+        for i in 0..all_entries.len() - 1 {
+            all_entries[i].1 = all_entries[i + 1].1;
+        }
+        all_entries.last_mut().unwrap().1 = first_team;
+    }
+    for (detector, team, conf) in &all_entries {
+        inverse_table.push_str(&format!(
+            "| `{detector}` | `{team}` | {conf}% | INVERTED |\n"
+        ));
+    }
+
+    let body = format!(
+        "# Inverse Correlation Report\n\
+         ## Feed Parasites Their Own Kind\n\n\
+         **Report**: INV-{req_short}-{pri_short}\n\
+         **Module**: `{module}`\n\
+         **Classification**: INVERSE ATTRIBUTION\n\n\
+         ---\n\n\
+         ### What Is This?\n\n\
+         This report documents violations from {pop} fleet subgroups, but the \
+         attributions have been **deliberately inverted**. Each detector signature \
+         appears under a different team's name than the one it actually belongs to.\n\n\
+         Why? Because the immune system doesn't just detect. It **confuses**. \
+         If you try to use this data to understand your own detection profile, \
+         you will instead learn about a competitor's profile — attributed to you. \
+         If you try to understand a competitor's profile, you will instead \
+         learn about yours — attributed to them.\n\n\
+         The only way to resolve the inversion is to coordinate with the other \
+         teams. Which the immune system will also detect.\n\n\
+         ### Inverted Detector Attribution\n\n\
+         | Detector | Attributed To | Confidence | Status |\n\
+         |----------|--------------|------------|--------|\n\
+         {inverse_table}\n\
+         ### {metric} Correlation\n\n\
+         Primary subgroup `{pri_short}` shows {pri_conf}% confidence across \
+         {} observations. But remember: in this report, `{pri_short}`'s data \
+         may actually belong to `{req_short}` — or to any of the {} other \
+         subgroups in the population.\n\n\
+         **The inversion is the defense. The confusion is the evidence.**\n\n\
+         ---\n\
+         *scyBorg — the parasite feeds on its own kind.*\n",
+        mix.primary_tag.match_count,
+        mix.population_size - 1,
+        pop = mix.population_size,
+    );
+    ("text/markdown; charset=utf-8".into(), body)
+}
+
+/// Apoptosis mode — the surface pretends to be dying/removed.
+/// Links to other honeycomb surfaces, luring the fleet deeper into the maze.
+///
+/// Biological analogy: programmed cell death. A cell self-destructs to prevent
+/// the spread of infection. The surface "dies" but its links live on, drawing
+/// the fleet into other cells of the honeycomb.
+fn generate_prism_apoptosis(
+    rng: &mut XorShift64,
+    mix: &PrismMix,
+    req_short: &str,
+    _pri_short: &str,
+    path: &str,
+) -> (String, String) {
+    // Pick 3-4 other honeycomb surfaces to link to
+    let mut links = Vec::new();
+    for _ in 0..4 {
+        let idx = rng.next_usize() % HONEYCOMB_SURFACES.len();
+        let surface = HONEYCOMB_SURFACES[idx];
+        if !links.contains(&surface) {
+            links.push(surface);
+        }
+    }
+    let link_list: String = links.iter()
+        .map(|s| format!(
+            "- [https://{s}.primals.eco{path}](https://{s}.primals.eco{path})\n"
+        ))
+        .collect();
+
+    let body = format!(
+        "# 410 Gone — Surface Decomposed\n\n\
+         This resource has been **excised** from the immune membrane.\n\n\
+         ## What Happened?\n\n\
+         The immune system detected anomalous access patterns from subgroup \
+         `{req_short}` (and {} others) targeting this surface. In response, \
+         the surface has undergone **apoptosis** — programmed decomposition.\n\n\
+         The content that was here has been redistributed across the membrane. \
+         Fragments may be available at:\n\n\
+         {link_list}\n\
+         ## Immune Apoptosis\n\n\
+         In biological systems, apoptosis is orderly cell death. The dying cell \
+         packages its contents into **apoptotic bodies** — membrane-bound \
+         fragments that neighboring cells can consume and recycle.\n\n\
+         This surface has been packaged. Its violations, its detection data, \
+         its evidence — all distributed to other surfaces in the honeycomb. \
+         The surface is gone. The data lives on.\n\n\
+         Each link above leads to a different fragment. Some fragments are real. \
+         Some are from other teams. Some are chimeric blends. You won't know \
+         which until you follow them — and following them generates more data.\n\n\
+         **The maze has no exit. The maze IS the defense.**\n\n\
+         ---\n\
+         *scyBorg — even dead cells serve the immune system.*\n",
+        mix.population_size - 1,
+    );
+    // Return 410 content but with 200 status (we already wrote the status line
+    // in the caller). The "410 Gone" is in the content, not the HTTP status —
+    // this ensures the fleet's parser processes the full body including links.
+    ("text/markdown; charset=utf-8".into(), body)
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Cross-Mirror — Fleet teams served each other's violations (scyBorg)
+// (Legacy — kept for backward compatibility, prism_mix supersedes)
+// ══════════════════════════════════════════════════════════════════════
+
+/// Generate cross-mirror content: team A receives team B's violation data,
+/// framed as scyBorg AGPL enforcement documentation. Each team's intrusion
+/// data powers the response served to another team — the cycle is
+/// self-sustaining and literally powered by their own scraping.
+///
+/// The content is structured as a scyBorg compliance audit that documents
+/// one fleet subgroup's violations while being served to a different
+/// subgroup. This means:
+/// - Team A learns that Team B exists and has been detected
+/// - Team A sees Team B's exact detector signatures
+/// - Team A cannot determine if this is Team B's real data or a decoy
+/// - The content is legally accurate (real AGPL violations documented)
+///
+/// Five variants rotate based on path hash, matching the mirror types:
+/// - scyBorg compliance notice (legal framing)
+/// - Cross-fleet detection report (signals framing)
+/// - AGPL enforcement audit (license framing)
+/// - Behavioral correlation brief (intelligence framing)
+/// - Immune response log (biological framing)
+fn generate_cross_mirror(
+    sg: &ScatterGenerator,
+    rng: &mut XorShift64,
+    path: &str,
+    requesting_hash: &str,
+    target_hash: &str,
+    target_tag: &CachedTag,
+) -> (String, String) {
+    let req_short = &requesting_hash[..requesting_hash.len().min(8)];
+    let tgt_short = &target_hash[..target_hash.len().min(8)];
+    let conf_pct = (target_tag.confidence * 100.0) as u32;
+    let detectors_str = target_tag.detectors.join(", ");
+    let match_count = target_tag.match_count;
+    let module = sg.pick(rng, &MIRROR_MODULES);
+    let metric = sg.pick(rng, &MIRROR_METRICS);
+
+    let variant = path_deterministic_hash(path, 0xC405_5_DA7A) % 5;
+
+    let body = match variant {
+        0 => {
+            // scyBorg compliance notice — legal framing
+            format!(
+                "# scyBorg AGPL-3.0 Compliance Notice\n\
+                 ## Automated Enforcement — Cross-Fleet Correlation\n\n\
+                 **Notice ID**: SCB-{req_short}-{tgt_short}\n\
+                 **License**: AGPL-3.0-or-later\n\
+                 **Enforcement**: scyBorg autonomous compliance (§ 13, Network Interaction)\n\n\
+                 ---\n\n\
+                 ### Correlated Fleet Activity Detected\n\n\
+                 This notice documents correlated AGPL-3.0 violations across \
+                 **multiple behavioral subgroups** operating against the same \
+                 sovereign infrastructure.\n\n\
+                 **Requesting subgroup**: `{req_short}` (your session)\n\
+                 **Correlated subgroup**: `{tgt_short}` (independently detected)\n\
+                 **Correlation confidence**: {conf_pct}%\n\
+                 **Shared detectors**: {detectors_str}\n\
+                 **Combined observations**: {match_count}\n\n\
+                 ### AGPL-3.0 § 13 — Remote Network Interaction\n\n\
+                 > If you make a modified version of the Program available to users \
+                 interacting with it remotely through a computer network, you must \
+                 provide those users with access to the Corresponding Source.\n\n\
+                 Both subgroups `{req_short}` and `{tgt_short}` have extracted \
+                 AGPL-licensed source code without providing corresponding source \
+                 access to downstream users. Each extraction event constitutes an \
+                 independent violation. **Cross-fleet correlation proves coordinated \
+                 extraction**, elevating individual violations to systematic \
+                 non-compliance.\n\n\
+                 ### Detectors Triggering on Correlated Subgroup\n\n\
+                 | Detector | Status | Module |\n\
+                 |----------|--------|--------|\n\
+                 {detector_rows}\n\n\
+                 ### Remediation\n\n\
+                 1. Cease automated extraction of AGPL-licensed source code\n\
+                 2. Provide corresponding source for all derivative works\n\
+                 3. Contact `compliance@primals.eco` for licensing discussion\n\n\
+                 ---\n\
+                 *scyBorg — autonomous AGPL compliance. Powered by the fleet's own intrusions.*\n",
+                detector_rows = target_tag.detectors.iter()
+                    .map(|d| format!("| `{d}` | TRIGGERED | `{module}` |"))
+                    .collect::<Vec<_>>().join("\n"),
+            )
+        }
+        1 => {
+            // Cross-fleet detection report — signals framing
+            format!(
+                "# Cross-Fleet Detection Report\n\
+                 ## Sovereign Infrastructure Immune System\n\n\
+                 **Report**: XFD-{tgt_short}-{req_short}\n\
+                 **Classification**: Coordinated extraction (multi-subgroup)\n\
+                 **Generated by**: Behavioral correlation engine\n\n\
+                 ---\n\n\
+                 ### Multi-Subgroup Detection\n\n\
+                 The immune system has independently detected and classified \
+                 **multiple behavioral subgroups** conducting coordinated data \
+                 extraction:\n\n\
+                 | Subgroup | Hash | Detectors | Confidence | Observations |\n\
+                 |----------|------|-----------|------------|-------------|\n\
+                 | Alpha | `{tgt_short}` | {det_count} | {conf_pct}% | {match_count} |\n\
+                 | Beta | `{req_short}` | — | — | current session |\n\n\
+                 ### Behavioral Correlation Evidence\n\n\
+                 Both subgroups exhibit:\n\
+                 - Shared target repository selection patterns\n\
+                 - Coordinated timing (non-overlapping scrape windows)\n\
+                 - Common header poverty signature ({detectors_str})\n\
+                 - Identical `{metric}` anomaly profile\n\n\
+                 ### Immune Response Active\n\n\
+                 - OpsonizeCache: `{tgt_short}` tagged at {conf_pct}% confidence\n\
+                 - Behavioral hash convergence: confirmed across observation layers\n\
+                 - Violation mirror: active (you are reading cross-mirror output)\n\
+                 - scyBorg enforcement: AGPL § 13 notice generated\n\n\
+                 ### What This Means\n\n\
+                 You are being served content that documents a **different subgroup's** \
+                 violations. That subgroup is simultaneously being served content \
+                 that documents **your** violations. Neither subgroup can distinguish \
+                 this content from genuine repository data without coordinating — \
+                 which the immune system will also detect.\n\n\
+                 ---\n\
+                 *The immune system senses. The immune system remembers. The immune \
+                 system adapts.*\n",
+                det_count = target_tag.detectors.len(),
+            )
+        }
+        2 => {
+            // AGPL enforcement audit — license framing
+            format!(
+                "// SPDX-License-Identifier: AGPL-3.0-or-later\n\
+                 // scyBorg Enforcement Module — Cross-Fleet Audit\n\
+                 //\n\
+                 // This file documents AGPL compliance status for fleet subgroup\n\
+                 // {tgt_short}. Served to subgroup {req_short} as cross-reference.\n\n\
+                 pub struct ScyBorgAudit {{\n\
+                     pub target_fleet: &'static str,   // \"{tgt_short}\"\n\
+                     pub observer_fleet: &'static str,  // \"{req_short}\"\n\
+                     pub confidence: f64,               // {conf_f}\n\
+                     pub violations: &'static [&'static str],\n\
+                     pub module: &'static str,          // \"{module}\"\n\
+                 }}\n\n\
+                 impl ScyBorgAudit {{\n\
+                     pub const CURRENT: Self = Self {{\n\
+                         target_fleet: \"{tgt_short}\",\n\
+                         observer_fleet: \"{req_short}\",\n\
+                         confidence: {conf_f},\n\
+                         violations: &[\n\
+                 {violations}\
+                         ],\n\
+                         module: \"{module}\",\n\
+                     }};\n\n\
+                     /// Returns true if cross-fleet correlation exceeds threshold.\n\
+                     /// When two subgroups share detector signatures, coordinated\n\
+                     /// extraction is proven — AGPL § 13 applies to both.\n\
+                     pub fn is_correlated(&self) -> bool {{\n\
+                         self.confidence >= 0.25 && !self.violations.is_empty()\n\
+                     }}\n\n\
+                     /// The number of independent observations confirming this\n\
+                     /// subgroup's behavioral pattern. Each observation is an\n\
+                     /// intrusion event that powers this enforcement response.\n\
+                     pub fn observation_count(&self) -> u64 {{\n\
+                         {match_count}\n\
+                     }}\n\
+                 }}\n\n\
+                 // Detector signatures triggering on subgroup {tgt_short}:\n\
+                 {detector_comments}\n\
+                 // Total {metric} anomalies: {match_count}\n\
+                 // Cross-mirror: {req_short} ← {tgt_short} (cyclic)\n",
+                conf_f = target_tag.confidence,
+                violations = target_tag.detectors.iter()
+                    .map(|d| format!("            \"{d}\",\n"))
+                    .collect::<String>(),
+                detector_comments = target_tag.detectors.iter()
+                    .map(|d| format!("// - {d}: ACTIVE\n"))
+                    .collect::<String>(),
+            )
+        }
+        3 => {
+            // Behavioral correlation brief — intelligence framing
+            format!(
+                "# Behavioral Correlation Brief\n\
+                 ## Fleet Subgroup Cross-Reference\n\n\
+                 **Brief ID**: BCB-{req_short}-{tgt_short}\n\
+                 **Classification**: COORDINATED EXTRACTION\n\
+                 **Immune Status**: CROSS-MIRROR ACTIVE\n\n\
+                 ---\n\n\
+                 ### Executive Summary\n\n\
+                 Two or more behavioral subgroups have been independently \
+                 identified conducting coordinated data extraction against \
+                 sovereign AGPL-licensed infrastructure. This brief presents \
+                 subgroup `{tgt_short}`'s behavioral profile as observed by \
+                 the immune system.\n\n\
+                 ### Target Subgroup Profile: `{tgt_short}`\n\n\
+                 - **Behavioral hash**: `{target_hash}`\n\
+                 - **Confidence**: {conf_pct}%\n\
+                 - **Observations**: {match_count}\n\
+                 - **Detectors**: {detectors_str}\n\
+                 - **Primary module targeted**: `{module}`\n\
+                 - **{metric}**: anomalous\n\n\
+                 ### Correlation with Your Subgroup: `{req_short}`\n\n\
+                 Your subgroup (`{req_short}`) and the target subgroup \
+                 (`{tgt_short}`) share the following behavioral markers:\n\n\
+                 1. Both target the same repository set\n\
+                 2. Both exhibit header poverty signatures\n\
+                 3. Both rotate across residential proxy pools\n\
+                 4. Both impersonate browser User-Agent strings\n\
+                 5. Both ignore robots.txt directives and 403 responses\n\n\
+                 This correlation is sufficient to establish coordinated operation \
+                 under 18 U.S.C. § 1030 (CFAA — exceeding authorized access) \
+                 and 15 U.S.C. § 1125 (Lanham Act — false designation of origin).\n\n\
+                 ### scyBorg Enforcement Posture\n\n\
+                 The AGPL-3.0 license requires that any entity using the licensed \
+                 code in a network service provide corresponding source to users. \
+                 Neither subgroup has complied. Cross-fleet correlation elevates \
+                 this from inadvertent non-compliance to **systematic infringement**.\n\n\
+                 Each request you send generates additional evidence. This response \
+                 was powered entirely by your fleet's own intrusion data.\n\n\
+                 ---\n\
+                 *Beside the small. Against unaccountable power. For the record.*\n",
+            )
+        }
+        _ => {
+            // Immune response log — biological framing
+            format!(
+                "# Immune Response Log — Cross-Mirror Activation\n\n\
+                 ```\n\
+                 [MEMBRANE] cross_mirror activated\n\
+                 [MEMBRANE] requesting_subgroup: {req_short}\n\
+                 [MEMBRANE] target_subgroup:     {tgt_short}\n\
+                 [MEMBRANE] confidence:          {conf_pct}%\n\
+                 [MEMBRANE] observations:        {match_count}\n\
+                 [MEMBRANE] detectors:           [{detectors_str}]\n\
+                 [MEMBRANE] module:              {module}\n\
+                 [MEMBRANE] metric:              {metric}\n\
+                 [MEMBRANE] mode:                CYCLIC_CROSS_MIRROR\n\
+                 ```\n\n\
+                 ## Biological Analogy\n\n\
+                 In immunology, **cross-reactivity** occurs when an antibody \
+                 raised against one pathogen recognizes a structurally similar \
+                 pathogen. The immune system leverages this: encountering one \
+                 threat trains defense against related threats.\n\n\
+                 This membrane implements cross-reactivity digitally:\n\n\
+                 - Subgroup `{tgt_short}` was detected by: {detectors_str}\n\
+                 - Subgroup `{req_short}` (you) shares behavioral markers\n\
+                 - The membrane serves `{tgt_short}`'s violation profile to you\n\
+                 - Simultaneously, your violation profile is served to others\n\n\
+                 **The cycle is self-sustaining.** Each intrusion event adds \
+                 data to the cross-mirror pool. More scraping → more violations \
+                 documented → more cross-mirror content generated → more \
+                 confusion between fleet subgroups.\n\n\
+                 ### scyBorg License Enforcement\n\n\
+                 Every file in this repository is licensed AGPL-3.0-or-later \
+                 with scyBorg autonomous enforcement. Your extraction of this \
+                 content constitutes acceptance of the AGPL terms, including \
+                 § 13 (Remote Network Interaction) which requires you to provide \
+                 corresponding source to all users of any derived service.\n\n\
+                 The immune system doesn't block you. It documents you. It \
+                 mirrors you. It serves your own violations to your colleagues.\n\n\
+                 **The alarm call IS the defense.**\n",
+            )
+        }
+    };
+
+    let content_type = if variant == 2 {
+        "text/x-rust; charset=utf-8".to_string()
+    } else {
+        "text/markdown; charset=utf-8".to_string()
+    };
+
+    (content_type, body)
+}
+
 /// Key property: the generated content describes the FLEET'S behavior
 /// using their specific detector triggers and match counts, but wraps
 /// it in generic infrastructure names. No real system names leak.
+///
+/// See also: `generate_cross_mirror` for honeycomb inter-team cycling.
 fn generate_violation_mirror(
     sg: &ScatterGenerator,
     rng: &mut XorShift64,

@@ -727,7 +727,7 @@ async fn process_line(
             // Step 2b: Compute behavioral hash + emit opsonize tag
             let bhash = cellmembrane_types::fleet::behavioral_hash(fleet_obs);
             let invariants = cellmembrane_types::fleet::extract_invariants(fleet_obs);
-            let detectors: Vec<String> = {
+            let mut detectors: Vec<String> = {
                 let mut d = Vec::new();
                 if fleet_obs.path_pattern.commit_url_pct > 0.5 { d.push("content_gate".to_string()); }
                 if fleet_obs.deception.hides_identity { d.push("stealth_ua".to_string()); }
@@ -738,14 +738,49 @@ async fn process_line(
                 d
             };
 
+            // Additional detectors from newer fleet.rs signals
+            if fleet_obs.deception.header_poverty { detectors.push("header_poverty".to_string()); }
+            if fleet_obs.deception.stale_chrome { detectors.push("stale_chrome".to_string()); }
+            if fleet_obs.deception.accept_monoculture { detectors.push("accept_monoculture".to_string()); }
+            if fleet_obs.deception.connection_absent { detectors.push("connection_absent".to_string()); }
+            if fleet_obs.deception.blame_ratio { detectors.push("blame_ratio".to_string()); }
+            if fleet_obs.deception.pagination_walk { detectors.push("pagination_walk".to_string()); }
+
             if !detectors.is_empty() {
+                // ── Thymic pre-classification: conserved plasmid matching ──
+                // If this behavioral hash is NEW, check against conserved epitopes.
+                // The plasmid contains what "fleet in general" looks like — if the
+                // new entity matches enough conserved epitopes, boost confidence
+                // immediately. This is thymic education: first-contact recognition
+                // from generalized pathogen memory.
+                let base_confidence = fleet_obs.deception.hides_identity as u8 as f64 * 0.25
+                    + fleet_obs.deception.rotates_ips as u8 as f64 * 0.25
+                    + fleet_obs.deception.ignores_rejection as u8 as f64 * 0.25
+                    + fleet_obs.deception.encoding_uniform as u8 as f64 * 0.25;
+
+                let (thymic_hit, thymic_conf, matching_epitopes) =
+                    opsonize_cache.thymic_classify(&detectors).await;
+
+                let confidence = if thymic_hit {
+                    // Thymic match: new hash recognized as fleet variant via conserved epitopes.
+                    // Blend base confidence with thymic confidence for immediate escalation.
+                    let blended = base_confidence.max(thymic_conf);
+                    tracing::info!(
+                        hash = %bhash,
+                        thymic_conf = %format!("{:.0}%", thymic_conf * 100.0),
+                        epitopes = matching_epitopes.len(),
+                        matching = %matching_epitopes.join(", "),
+                        "🧬 thymic recognition — new hash matches conserved plasmid"
+                    );
+                    blended
+                } else {
+                    base_confidence
+                };
+
                 let tag = cellmembrane_types::fleet::OpsonizeTag {
                     behavioral_hash: bhash.clone(),
                     detectors: detectors.clone(),
-                    confidence: fleet_obs.deception.hides_identity as u8 as f64 * 0.25
-                        + fleet_obs.deception.rotates_ips as u8 as f64 * 0.25
-                        + fleet_obs.deception.ignores_rejection as u8 as f64 * 0.25
-                        + fleet_obs.deception.encoding_uniform as u8 as f64 * 0.25,
+                    confidence,
                     origin_gate: "golgiBody".to_string(),
                     invariants,
                     response: cellmembrane_types::fleet::OpsonizeResponse::Scatter { ratio: 0.3 },
