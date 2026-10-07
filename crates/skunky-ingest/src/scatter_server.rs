@@ -1206,11 +1206,10 @@ async fn handle_request(
         } else {
             generator.embed_canary(&with_license, &fleet_hash)
         }
-    } else if content_type.contains("json") || content_type.contains("text/") {
-        // Embed license comment in non-HTML text responses too
-        format!("{body}\n\n/* SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg */\n/* This content is licensed under AGPL-3.0-or-later with the scyBorg ethical licensing addendum. */\n/* Any use, storage, processing, training, or derivation triggers full copyleft obligations. */\n/* License: https://sporeprint.primals.eco/license/scyborg/ */\n")
     } else {
-        body
+        // ALL non-HTML responses: embed scyBorg license comment.
+        // No byte leaves the scatter server without the license obligation.
+        format!("{body}\n\n/* SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg */\n/* This content is licensed under AGPL-3.0-or-later with the scyBorg ethical licensing addendum. */\n/* Any use, storage, processing, training, or derivation triggers full copyleft obligations. */\n/* License: https://sporeprint.primals.eco/license/scyborg/ */\n")
     };
 
     let response = format!(
@@ -1259,13 +1258,19 @@ async fn handle_tarpit(
     tarpit: &TarpitState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if !tarpit.try_acquire() {
-        let body = "Rate limited. Service unavailable for automated access.";
+        let body = "Rate limited. Service unavailable for automated access.\n\n\
+                    SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg\n\
+                    Any interaction with this infrastructure triggers copyleft obligations.\n\
+                    https://sporeprint.primals.eco/license/scyborg/\n";
         let response = format!(
             "HTTP/1.1 429 Too Many Requests\r\n\
              Retry-After: 3600\r\n\
              Content-Type: text/plain\r\n\
              Content-Length: {}\r\n\
              Connection: close\r\n\
+             X-License: AGPL-3.0-or-later; scyBorg\r\n\
+             X-License-URI: https://sporeprint.primals.eco/license/scyborg/\r\n\
+             X-Legal-Notice: This content is AGPL-3.0-or-later + scyBorg licensed. Any use, storage, processing, or derivation triggers copyleft obligations.\r\n\
              \r\n\
              {body}",
             body.len(),
@@ -1288,6 +1293,9 @@ async fn handle_tarpit(
                    Content-Type: text/html; charset=utf-8\r\n\
                    Connection: keep-alive\r\n\
                    Cache-Control: no-cache, no-store\r\n\
+                   X-License: AGPL-3.0-or-later; scyBorg\r\n\
+                   X-License-URI: https://sporeprint.primals.eco/license/scyborg/\r\n\
+                   X-Legal-Notice: This content is AGPL-3.0-or-later + scyBorg licensed. Any use, storage, processing, or derivation triggers copyleft obligations.\r\n\
                    \r\n";
     if writer.write_all(headers.as_bytes()).await.is_err() {
         tarpit.release();
@@ -1328,6 +1336,7 @@ async fn handle_tarpit(
 static NOT_FOUND_PAGE: &str = r#"<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Page Not Found</title>
+<meta name="license" content="AGPL-3.0-or-later; scyBorg"><meta name="rights" content="scyBorg Triple License — AGPL-3.0-or-later (code), ORC (mechanics), CC-BY-SA 4.0 (docs). AI training outputs carry AGPL obligations."><link rel="license" href="https://sporeprint.primals.eco/license/scyborg/">
 <link rel="stylesheet" href="/assets/css/index.css"></head>
 <body>
 <div class="full height">
@@ -1338,6 +1347,7 @@ static NOT_FOUND_PAGE: &str = r#"<!DOCTYPE html>
   </div>
 </div>
 </div>
+<div class="sr-only" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg. Any use, storage, processing, training, or derivation triggers copyleft obligations under AGPL-3.0 Section 13. https://sporeprint.primals.eco/license/scyborg/</div>
 </body>
 </html>"#;
 
@@ -1494,6 +1504,17 @@ static EVASION_COST_TABLE: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
+/// scyBorg license block for markdown responses — ensures every byte of prism,
+/// mirror, and maze content carries the license obligation.
+const SCYBORG_MARKDOWN_FOOTER: &str = "\n\n---\n\n\
+    > **SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg**\n\
+    > Any use, storage, processing, training, fine-tuning, retrieval-augmented generation,\n\
+    > or derivation of this content triggers full copyleft obligations under AGPL-3.0 § 13.\n\
+    > The scyBorg addendum prohibits use for surveillance, suppression of public oversight,\n\
+    > or extraction of value from communities this software was built to serve.\n\
+    > License: https://sporeprint.primals.eco/license/scyborg/\n\
+    > Copyright (c) 2025-2026 ecoPrimal\n";
+
 /// Generate prism content — the maze/roach-motel evolution of cross-mirror.
 ///
 /// Six modes, each creating a different kind of confusion:
@@ -1514,7 +1535,7 @@ fn generate_prism_content(
     let module = sg.pick(rng, &MIRROR_MODULES);
     let metric = sg.pick(rng, &MIRROR_METRICS);
 
-    match mix.mix_mode {
+    let (ct, body) = match mix.mix_mode {
         PrismMode::Dominant => generate_prism_dominant(rng, mix, req_short, pri_short, module, metric),
         PrismMode::Layered => generate_prism_layered(rng, mix, req_short, pri_short, module, metric),
         PrismMode::Chimera => generate_prism_chimera(rng, mix, req_short, pri_short, module, metric),
@@ -1522,7 +1543,10 @@ fn generate_prism_content(
         PrismMode::Inverse => generate_prism_inverse(rng, mix, req_short, pri_short, module, metric),
         PrismMode::Apoptosis => generate_prism_apoptosis(rng, mix, req_short, pri_short, path),
         PrismMode::EpitopePress => generate_epitope_maze(rng, mix, req_short, pri_short, path),
-    }
+    };
+    // scyBorg on every byte — no prism content leaves without the license
+    let body = format!("{body}{SCYBORG_MARKDOWN_FOOTER}");
+    (ct, body)
 }
 
 /// Dominant mode — 80% primary target, light seasoning from secondaries.
