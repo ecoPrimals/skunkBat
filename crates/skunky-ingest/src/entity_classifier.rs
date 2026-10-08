@@ -39,6 +39,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::caddy;
 
+use crate::epitope_defs::*;
+
 /// Chrome stable version. Updated when Chrome releases.
 const CHROME_CURRENT_STABLE: u16 = 155;
 
@@ -854,10 +856,10 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
     let mut epitope_count = 0u32;
     let mut epitope_triggered = 0u32;
 
-    let sec_fetch_monotone = if !accum.sec_fetch_triplets.is_empty() && accum.total > 10 {
+    let sec_fetch_monotone = if !accum.sec_fetch_triplets.is_empty() && accum.total > MIN_REQUESTS_SEC_FETCH {
         let top_count = accum.sec_fetch_triplets.values().max().copied().unwrap_or(0);
         let pct = top_count as f64 / accum.total as f64 * 100.0;
-        let triggered = pct > 95.0;
+        let triggered = pct > SEC_FETCH_MONOTONE_THRESHOLD;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
         Some(EpitopeResult {
@@ -867,10 +869,10 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         })
     } else { None };
 
-    let reading_deficit = if intervals.len() > 10 {
-        let pauses = intervals.iter().filter(|&&i| i > 8.0).count();
+    let reading_deficit = if intervals.len() > MIN_INTERVALS {
+        let pauses = intervals.iter().filter(|&&i| i > READING_PAUSE_SECONDS).count();
         let pct = pauses as f64 / intervals.len() as f64 * 100.0;
-        let triggered = pct < 10.0;
+        let triggered = pct < READING_DEFICIT_THRESHOLD;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
         Some(EpitopeResult {
@@ -880,9 +882,9 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         })
     } else { None };
 
-    let ua_pool_poverty = if accum.total > 50 {
+    let ua_pool_poverty = if accum.total > MIN_REQUESTS_UA_POOL {
         let pool = accum.uas.len();
-        let threshold = std::cmp::max(10, (accum.total as f64 * 0.05) as usize);
+        let threshold = std::cmp::max(UA_POOL_MIN_ABSOLUTE, (accum.total as f64 * UA_POOL_MIN_RATIO) as usize);
         let triggered = pool < threshold;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
@@ -893,9 +895,9 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         })
     } else { None };
 
-    let session_absent = if accum.total > 20 {
+    let session_absent = if accum.total > MIN_REQUESTS_SESSION {
         let pct = accum.cookie_present as f64 / accum.total as f64 * 100.0;
-        let triggered = pct < 5.0;
+        let triggered = pct < SESSION_ABSENT_THRESHOLD;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
         Some(EpitopeResult {
@@ -905,9 +907,9 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         })
     } else { None };
 
-    let referer_self_loop = if accum.total > 20 {
+    let referer_self_loop = if accum.total > MIN_REQUESTS_REFERER {
         let pct = accum.referer_external as f64 / accum.total as f64 * 100.0;
-        let triggered = pct < 2.0;
+        let triggered = pct < REFERER_SELF_LOOP_THRESHOLD;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
         Some(EpitopeResult {
@@ -917,10 +919,10 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         })
     } else { None };
 
-    let burst_ratio_epitope = if intervals.len() > 10 {
-        let bursts = intervals.iter().filter(|&&i| i < 3.0).count();
+    let burst_ratio_epitope = if intervals.len() > MIN_INTERVALS {
+        let bursts = intervals.iter().filter(|&&i| i < BURST_INTERVAL_SECONDS).count();
         let pct = bursts as f64 / intervals.len() as f64 * 100.0;
-        let triggered = pct > 50.0;
+        let triggered = pct > BURST_RATIO_THRESHOLD;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
         Some(EpitopeResult {

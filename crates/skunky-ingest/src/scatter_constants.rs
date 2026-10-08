@@ -3,6 +3,8 @@
 
 //! Static constant tables for scatter mirror content generation.
 
+use crate::epitope_defs::*;
+
 /// Violation vocabulary — realistic-sounding terms for mirrored content.
 /// These MUST NOT contain any real ecoPrimals infrastructure names.
 pub(crate) static MIRROR_MODULES: &[&str] = &[
@@ -40,21 +42,21 @@ pub(crate) static EVASION_COST_TABLE: &[(&str, &str, &str, &str)] = &[
         "Cookies require per-worker state storage, breaking horizontal scaling",
     ),
     (
-        "referer_self_loop",
+        REFERER_SELF_LOOP,
         "Fabricate external referer headers (Google, Bing, social media)",
         "Synthetic referer patterns are detectable: real users arrive from diverse, \
          temporally correlated search queries — fleet referers repeat identical strings",
         "Maintaining a plausible referer pool requires real-time search trend tracking",
     ),
     (
-        "reading_deficit",
+        READING_DEFICIT,
         "Add random delays between requests to simulate reading pauses",
         "Artificial pauses follow uniform/normal distributions — human reading time \
          follows a log-normal distribution correlated with content length and complexity",
         "Adding pauses reduces throughput to human levels, collapsing extraction economics",
     ),
     (
-        "ua_pool_poverty",
+        UA_POOL_POVERTY,
         "Rotate through a larger User-Agent pool matching real Chrome versions",
         "UA rotation creates temporal ordering artifacts: real users don't systematically \
          cycle through versions. Round-robin and random sampling both leave signatures",
@@ -62,7 +64,7 @@ pub(crate) static EVASION_COST_TABLE: &[(&str, &str, &str, &str)] = &[
          weekly and matching OS-specific version distribution curves",
     ),
     (
-        "sec_fetch_monotone",
+        SEC_FETCH_MONOTONE,
         "Vary Sec-Fetch-Mode/Dest/Site headers across requests",
         "Real browsers produce specific triplets for specific request types (navigate→document, \
          cors→empty, same-origin→script). Random variation produces impossible combinations \
@@ -71,7 +73,7 @@ pub(crate) static EVASION_COST_TABLE: &[(&str, &str, &str, &str)] = &[
          just use a real browser",
     ),
     (
-        "burst_ratio",
+        BURST_RATIO,
         "Reduce request rate to below 3-second intervals",
         "Uniform spacing is itself a signal: humans produce bursty-then-pause patterns \
          following a Pareto distribution, not metronomic spacing",
