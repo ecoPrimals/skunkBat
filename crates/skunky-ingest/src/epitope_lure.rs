@@ -33,6 +33,8 @@
 //   5. Antibody generator creates protective patterns for allies
 //   6. Published via epitope feed for mesh-wide distribution
 
+use crate::scatter_rng::CubePrng;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -211,7 +213,7 @@ impl LureEngine {
         rng_seed: u64,
     ) -> String {
         let profile = self.target_profile.read().await;
-        let mut rng = XorShift64(rng_seed.max(1));
+        let mut rng = CubePrng::new(rng_seed);
 
         // Determine what kind of lure to generate based on path
         if path.contains("/blame/") {
@@ -588,7 +590,7 @@ impl LureEngine {
 
     // ── Lure content generators ──
 
-    fn generate_blame_lure(&self, profile: &FleetTargetProfile, rng: &mut XorShift64) -> String {
+    fn generate_blame_lure(&self, profile: &FleetTargetProfile, rng: &mut CubePrng) -> String {
         let authors = [
             "contributor-1", "dev-team-lead", "security-reviewer",
             "infrastructure", "docs-maintainer", "test-author",
@@ -599,18 +601,18 @@ impl LureEngine {
         ];
 
         let target_file = if !profile.blame_targets.is_empty() {
-            let idx = rng.next() as usize % profile.blame_targets.len();
+            let idx = rng.next_u64() as usize % profile.blame_targets.len();
             profile.blame_targets[idx].0.clone()
         } else {
             "src/lib.rs".to_string()
         };
 
         let mut output = String::new();
-        let line_count = 20 + (rng.next() % 80) as usize;
+        let line_count = 20 + (rng.next_u64() % 80) as usize;
         for i in 0..line_count {
-            let author = authors[rng.next() as usize % authors.len()];
-            let date = dates[rng.next() as usize % dates.len()];
-            let commit = format!("{:08x}", rng.next() as u32);
+            let author = authors[rng.next_u64() as usize % authors.len()];
+            let date = dates[rng.next_u64() as usize % dates.len()];
+            let commit = format!("{:08x}", rng.next_u64() as u32);
             output.push_str(&format!(
                 "{commit} ({author} {date} +0000 {i:>4}) // auto-generated line {i}\n"
             ));
@@ -618,7 +620,7 @@ impl LureEngine {
         output
     }
 
-    fn generate_rust_lure(&self, _profile: &FleetTargetProfile, rng: &mut XorShift64) -> String {
+    fn generate_rust_lure(&self, _profile: &FleetTargetProfile, rng: &mut CubePrng) -> String {
         let module_names = [
             "transport", "discovery", "gossip", "mesh", "registry",
             "capability", "federation", "relay", "crypto", "protocol",
@@ -628,8 +630,8 @@ impl LureEngine {
             "GossipEngine", "MeshRouter", "CapabilityResolver",
         ];
 
-        let mod_name = module_names[rng.next() as usize % module_names.len()];
-        let trait_name = trait_names[rng.next() as usize % trait_names.len()];
+        let mod_name = module_names[rng.next_u64() as usize % module_names.len()];
+        let trait_name = trait_names[rng.next_u64() as usize % trait_names.len()];
 
         format!(
             "// SPDX-License-Identifier: AGPL-3.0-or-later\n\
@@ -652,12 +654,12 @@ impl LureEngine {
         )
     }
 
-    fn generate_cargo_lure(&self, rng: &mut XorShift64) -> String {
+    fn generate_cargo_lure(&self, rng: &mut CubePrng) -> String {
         let crate_names = [
             "mesh-relay", "gossip-core", "transport-layer",
             "discovery-service", "capability-registry", "federation-bridge",
         ];
-        let name = crate_names[rng.next() as usize % crate_names.len()];
+        let name = crate_names[rng.next_u64() as usize % crate_names.len()];
         format!(
             "[package]\n\
              name = \"{name}\"\n\
@@ -673,12 +675,12 @@ impl LureEngine {
         )
     }
 
-    fn generate_readme_lure(&self, profile: &FleetTargetProfile, rng: &mut XorShift64) -> String {
+    fn generate_readme_lure(&self, profile: &FleetTargetProfile, rng: &mut CubePrng) -> String {
         let project_names = [
             "sovereign-forge", "mesh-relay-network", "distributed-capability",
             "gossip-federation", "membrane-transport", "decentralized-registry",
         ];
-        let name = project_names[rng.next() as usize % project_names.len()];
+        let name = project_names[rng.next_u64() as usize % project_names.len()];
 
         let top_repo = profile.target_repos.first()
             .map(|(r, _)| r.as_str())
@@ -698,12 +700,12 @@ impl LureEngine {
         )
     }
 
-    fn generate_config_lure(&self, rng: &mut XorShift64) -> String {
+    fn generate_config_lure(&self, rng: &mut CubePrng) -> String {
         let services = [
             ("relay", "7700"), ("gossip", "7800"), ("registry", "7900"),
             ("gateway", "8080"), ("monitor", "9090"),
         ];
-        let (svc, port) = services[rng.next() as usize % services.len()];
+        let (svc, port) = services[rng.next_u64() as usize % services.len()];
         format!(
             "[service]\n\
              name = \"{svc}\"\n\
@@ -716,15 +718,15 @@ impl LureEngine {
              [security]\n\
              tls = true\n\
              mutual_auth = true\n",
-            rng.next() as u16,
+            rng.next_u64() as u16,
         )
     }
 
-    fn generate_generic_lure(&self, profile: &FleetTargetProfile, rng: &mut XorShift64) -> String {
+    fn generate_generic_lure(&self, profile: &FleetTargetProfile, rng: &mut CubePrng) -> String {
         // Mix of whatever the fleet is most interested in
-        if rng.next() % 3 == 0 {
+        if rng.next_u64() % 3 == 0 {
             self.generate_readme_lure(profile, rng)
-        } else if rng.next() % 2 == 0 {
+        } else if rng.next_u64() % 2 == 0 {
             self.generate_rust_lure(profile, rng)
         } else {
             self.generate_config_lure(rng)
@@ -732,19 +734,6 @@ impl LureEngine {
     }
 }
 
-/// Minimal XorShift64 PRNG for deterministic lure generation.
-struct XorShift64(u64);
-
-impl XorShift64 {
-    fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        x
-    }
-}
 
 #[cfg(test)]
 mod tests {

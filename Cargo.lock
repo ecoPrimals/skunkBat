@@ -1674,6 +1674,7 @@ version = "0.2.18"
 dependencies = [
  "bingocube-core",
  "bingocube-nautilus",
+ "blake3",
  "cellmembrane-types",
  "chrono",
  "clap",
