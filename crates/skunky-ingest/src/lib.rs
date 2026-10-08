@@ -12,6 +12,7 @@ pub mod caddy_bridge;
 pub mod cloudflare;
 pub mod cursor;
 pub mod entity_classifier;
+pub mod epitope_inversion;
 pub mod error;
 pub mod federation;
 pub mod fleet;

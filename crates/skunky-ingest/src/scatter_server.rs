@@ -1133,6 +1133,76 @@ async fn handle_request(
         return Ok(());
     }
 
+    // ── EPITOPE INVERSION — fleet crawl graph reconstruction ──
+    //
+    // The inversion endpoint exposes the cross-forge movement graph.
+    // When epitope hashes appear in feeds from multiple forges, we can
+    // reconstruct where the fleet is crawling — all spy holes at once.
+    if path == "/epitope-inversion.json" || path == "/epitope-inversion" {
+        // For now, read the local epitope feed and present it as a single-node
+        // inversion. When peer feeds are ingested via gossip.pool, this will
+        // contain multi-forge correlations automatically.
+        let feed_path = std::path::Path::new("/opt/membrane/live-terminal/epitope-feed.json");
+        let body = match std::fs::read_to_string(feed_path) {
+            Ok(s) => {
+                // Wrap in inversion format
+                let feed: serde_json::Value = serde_json::from_str(&s).unwrap_or_default();
+                let clusters = feed.get("epitope_clusters")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let node_id = feed.get("node_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let entries: Vec<serde_json::Value> = clusters.iter()
+                    .filter_map(|c| {
+                        let hash = c.get("hash")?.as_str()?;
+                        Some(serde_json::json!({
+                            "epitope_hash": hash,
+                            "forges_observed": 1,
+                            "forge_list": [node_id],
+                            "ua_pool_size": c.get("ua_pool_size"),
+                            "blame_ratio": c.get("blame_ratio"),
+                            "cluster_size": c.get("cluster_size").or(c.get("ips")),
+                        }))
+                    })
+                    .collect();
+                serde_json::to_string(&serde_json::json!({
+                    "schema": "ecoPrimals/epitope-inversion/v1",
+                    "node_id": node_id,
+                    "generated_epoch": now,
+                    "total_tracked_epitopes": entries.len(),
+                    "multi_forge_epitopes": 0,
+                    "fleet_movements": entries,
+                    "status": "single_node",
+                    "usage": "Connect peer forges via gossip.pool to see cross-forge \
+                              fleet movement patterns. Currently showing local-only view.",
+                })).unwrap_or_else(|_| "{}".to_string())
+            }
+            Err(_) => "{}".to_string(),
+        };
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json; charset=utf-8\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: public, max-age=30\r\n\
+             Access-Control-Allow-Origin: *\r\n\
+             X-Content-Type-Options: nosniff\r\n\
+             X-Epitope-Schema: ecoPrimals/epitope-inversion/v1\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        return Ok(());
+    }
+
     // ── Layer 0: HONEYCOMB PRISM — roach motel / maze / cytokine broadcaster ──
     // The honeycomb is NOT a simple mirror. It's a prism: fleet teams enter and
     // encounter data from multiple OTHER teams, blended, chimera'd, and structured
