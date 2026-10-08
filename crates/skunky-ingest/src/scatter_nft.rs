@@ -177,7 +177,7 @@ pub(crate) fn generate_nft_receipt(body: &str, server_seed: u64) -> String {
     let events: u64 = nft_extract_num(body, "entropy_events").unwrap_or(0);
     let duration_ms: u64 = nft_extract_num(body, "duration_ms").unwrap_or(0);
 
-    let mixed_seed = super::scatter_server::path_deterministic_hash(&client_hash, server_seed);
+    let mixed_seed = super::scatter_mirror::path_deterministic_hash(&client_hash, server_seed);
     let h1 = mixed_seed;
     let h2 = mixed_seed.wrapping_mul(0x517cc1b727220a95);
     let h3 = mixed_seed.wrapping_mul(0x6c62272e07bb0142);
