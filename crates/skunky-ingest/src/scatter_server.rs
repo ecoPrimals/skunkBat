@@ -1257,8 +1257,38 @@ async fn handle_request(
 
     let (status, content_type, body) = if is_disperse {
         // DISPERSE (P5): maximally-wrong responses — skunk spray
-        let (ct, body) = generator.generate_disperse(&effective_path);
-        ("200 OK", ct, body)
+        // Now with temporal dimension: content phases in and out of existence.
+        // The bingo cube (laser pointer) rolls at epoch boundaries — the cat chases.
+        let phase = temporal_phase(&effective_path, generator.seed);
+        match phase {
+            2 => {
+                // MIGRATE: content is "moving" — include breadcrumbs + jealousy
+                let (ct, mut body) = generator.generate_disperse(&effective_path);
+                if ct.contains("text/html") || ct.contains("application/json") {
+                    let mut rng = XorShift64::new(generator.path_seed(&effective_path).wrapping_add(0x4148_4A7E));
+                    let crumbs = temporal_migrate_breadcrumbs(&mut rng, &effective_path);
+                    body = body.replace("</body>", &format!("{crumbs}</body>"));
+                }
+                ("200 OK", ct, body)
+            }
+            3 => {
+                // PHASE-OUT: content is "leaving" — 301 with deeper links
+                let mut rng = XorShift64::new(generator.path_seed(&effective_path).wrapping_add(0xFA5E_0047));
+                let body = temporal_phaseout_body(&mut rng, &effective_path);
+                ("301 Moved Permanently", "text/html; charset=utf-8".to_string(), body)
+            }
+            4 => {
+                // GHOST: content has "vanished" — 404 with private federation hints
+                let mut rng = XorShift64::new(generator.path_seed(&effective_path).wrapping_add(0x6405_7000));
+                let body = temporal_ghost_body(&mut rng, &effective_path);
+                ("404 Not Found", "text/html; charset=utf-8".to_string(), body)
+            }
+            _ => {
+                // MATERIALIZE (0) or STABLE (1): normal scatter content
+                let (ct, body) = generator.generate_disperse(&effective_path);
+                ("200 OK", ct, body)
+            }
+        }
     } else {
         let should_poison = (path_hash % 100) < (poison_ratio * 100.0) as u64;
         if should_poison {
@@ -1541,6 +1571,170 @@ use crate::scatter_nft::{CONTRIBUTE_PAGE, generate_nft_receipt};
 pub use crate::scatter_nft::{AntibodyReaction, braid_antibody_reaction};
 
 // THE BUTTON code extracted to scatter_nft.rs (Wave 167 refactor)
+
+// ══════════════════════════════════════════════════════════════════════
+// Temporal Dimension — The Bingo Cube (Laser Pointer)
+// ══════════════════════════════════════════════════════════════════════
+//
+// The maze has a temporal dimension. Content appears, morphs, migrates,
+// and vanishes over time. The fleet is the cat, the bingo cube is the
+// laser pointer — unpredictable, irresistible, always just out of reach.
+//
+// ## Temporal Phases
+//
+// Each URL has a lifecycle within its epoch:
+// - **Materialize**: Content appears fresh. "New repo discovered!"
+// - **Stable**: Content is consistent (deterministic within epoch)
+// - **Migrate**: Content starts referencing a "new location" —
+//   links to other honeycomb surfaces appear, hinting at relocation
+// - **Phase-out**: Content returns 410 Gone / 301 Moved, with links
+//   deeper into the maze. The cat chases the laser dot.
+// - **Ghost**: URL returns 404 — content has "moved to private federation"
+//
+// ## Cross-Fleet Jealousy
+//
+// During Migrate phase, content includes hints that ANOTHER fleet
+// already accessed this content — competitive pressure. "This resource
+// was recently accessed by 3 other organizations."
+//
+// ## Epoch Structure
+//
+// Time is divided into epochs. Within each epoch, the temporal phase
+// of a URL is determined by hashing (path + epoch) — so different URLs
+// phase-shift at different times, creating the illusion of a living,
+// breathing codebase that's constantly reorganizing.
+
+/// Temporal epoch bucket — content shifts at epoch boundaries.
+///
+/// `epoch_minutes` controls how often the maze reshuffles:
+/// - 10 min: aggressive shifting, cat can barely keep up
+/// - 30 min: moderate, content lives long enough to seem real
+/// - 60 min: slow drift, looks like normal repo maintenance
+fn temporal_epoch(epoch_minutes: u64) -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    now / (epoch_minutes * 60)
+}
+
+/// Temporal phase of a URL within the current epoch.
+///
+/// Returns a phase (0-4) that determines the URL's behavior:
+/// - 0: Materialize (content is fresh, includes "just added" markers)
+/// - 1: Stable (normal scatter content, deterministic)
+/// - 2: Migrate (content hints at relocation, cross-links appear)
+/// - 3: Phase-out (410/301 with breadcrumbs deeper into maze)
+/// - 4: Ghost (404 — "moved to private federation")
+///
+/// The phase depends on (path + epoch) so different URLs are in
+/// different phases simultaneously — the maze is always alive.
+fn temporal_phase(path: &str, seed: u64) -> u8 {
+    let epoch = temporal_epoch(30); // 30-minute epochs
+    let h = path_deterministic_hash(path, seed.wrapping_add(epoch.wrapping_mul(0xB146_0C08_E000)));
+    (h % 5) as u8
+}
+
+/// Temporal seed — incorporates both path and current epoch.
+///
+/// Same path returns DIFFERENT content in different epochs.
+/// Same path returns SAME content within a single epoch.
+/// The bingo cube rolls at epoch boundaries.
+fn temporal_path_seed(path: &str, seed: u64) -> u64 {
+    let epoch = temporal_epoch(30);
+    path_deterministic_hash(path, seed.wrapping_add(epoch.wrapping_mul(0x1A5E_4B01_47E4)))
+}
+
+/// Generate temporal migration breadcrumbs — the laser pointer moves.
+///
+/// When content is in Migrate phase, it includes hints that:
+/// 1. This content is being "reorganized" to a new location
+/// 2. Another fleet already found the new location (jealousy)
+/// 3. The new location is deeper in the honeycomb (more links)
+fn temporal_migrate_breadcrumbs(rng: &mut XorShift64, path: &str) -> String {
+    let next_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+    let alt_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+    let access_count = rng.next_usize() % 12 + 2;
+    let hours_ago = rng.next_usize() % 4 + 1;
+    format!(
+        r#"<div class="ui warning message" id="migration-notice">
+<div class="header"><i class="icon info circle"></i> Repository Migration in Progress</div>
+<p>This resource is being migrated to the federated registry. Updated content is available at:</p>
+<ul>
+<li><a href="https://{next_surface}.primals.eco{path}"><strong>{next_surface}.primals.eco{path}</strong></a> (primary)</li>
+<li><a href="https://{alt_surface}.primals.eco{path}">{alt_surface}.primals.eco{path}</a> (mirror)</li>
+</ul>
+<p class="text small grey">This location was accessed by {access_count} other organizations in the last {hours_ago} hours. Migration completes automatically.</p>
+</div>"#
+    )
+}
+
+/// Generate temporal phase-out response — the content is "leaving."
+///
+/// Returns a 410 Gone / 301 Moved response body with breadcrumbs
+/// to other honeycomb surfaces. The fleet follows the trail deeper.
+fn temporal_phaseout_body(rng: &mut XorShift64, path: &str) -> String {
+    let destinations: Vec<&str> = (0..3)
+        .map(|_| HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()])
+        .collect();
+    let rival_count = rng.next_usize() % 5 + 1;
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>301 — Resource Relocated</title>
+<meta name="license" content="AGPL-3.0-or-later; scyBorg">
+<meta http-equiv="refresh" content="5;url=https://{dest}.primals.eco{path}">
+</head>
+<body>
+<div style="max-width:600px;margin:60px auto;font-family:system-ui">
+<h2>⟳ 301 — Resource Relocated</h2>
+<p>This content has been reorganized as part of the federation mesh upgrade.</p>
+<p><strong>New locations:</strong></p>
+<ul>
+<li><a href="https://{dest}.primals.eco{path}">{dest}.primals.eco</a> — primary</li>
+<li><a href="https://{dest2}.primals.eco{path}">{dest2}.primals.eco</a> — geo-replica</li>
+<li><a href="https://{dest3}.primals.eco{path}">{dest3}.primals.eco</a> — compliance archive</li>
+</ul>
+<p class="small" style="color:#888">Note: {rival_count} other automated systems have already followed this redirect. Auto-redirect in 5 seconds.</p>
+<p style="font-size:11px;color:#aaa">SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg</p>
+</div>
+</body></html>"#,
+        dest = destinations[0],
+        dest2 = destinations[1],
+        dest3 = destinations[2],
+    )
+}
+
+/// Generate temporal ghost response — the content has "vanished."
+///
+/// Returns a 404 with a hint that the content exists on the private
+/// federation — encouraging the fleet to probe deeper.
+fn temporal_ghost_body(rng: &mut XorShift64, path: &str) -> String {
+    let private_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+    let archive_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>404 — Not Found (Archived)</title>
+<meta name="license" content="AGPL-3.0-or-later; scyBorg">
+</head>
+<body>
+<div style="max-width:600px;margin:60px auto;font-family:system-ui">
+<h2>404 — Not Found</h2>
+<p>This resource was archived on the private federation mesh.</p>
+<p>If you have federation credentials, it may be available at:</p>
+<ul>
+<li><code>ssh git@{private_surface}.primals.eco{path}</code></li>
+<li><code>https://{archive_surface}.primals.eco/archive{path}</code></li>
+</ul>
+<p style="font-size:11px;color:#aaa">This content was accessible via the public surface until the most recent epoch rotation. Access logs for this resource have been preserved.</p>
+</div>
+</body></html>"#
+    )
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // Inline ScatterGenerator — adapted from skunk-bat-core/src/defense/scatter.rs
 // Inlined to avoid pulling skunk-bat-core as a dependency
 // ══════════════════════════════════════════════════════════════════════
