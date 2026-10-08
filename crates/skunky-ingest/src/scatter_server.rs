@@ -661,6 +661,7 @@ pub struct ScatterMetrics {
     pub tarpit_served: Arc<AtomicU32>,
     pub honeytoken_served: Arc<AtomicU32>,
     pub plasmid_served: Arc<AtomicU32>,
+    pub nft_contributions: Arc<AtomicU32>,
     pub bytes_served: Arc<std::sync::atomic::AtomicU64>,
     pub started_at: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -679,6 +680,7 @@ impl ScatterMetrics {
             tarpit_served: Arc::new(AtomicU32::new(0)),
             honeytoken_served: Arc::new(AtomicU32::new(0)),
             plasmid_served: Arc::new(AtomicU32::new(0)),
+            nft_contributions: Arc::new(AtomicU32::new(0)),
             bytes_served: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             started_at: Arc::new(std::sync::atomic::AtomicU64::new(now)),
         }
@@ -769,6 +771,12 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
     let tarpit = TarpitState::new(config.max_tarpit_connections);
     let cache = Arc::new(opsonize_cache);
     let metrics = Arc::new(ScatterMetrics::new());
+    if let Ok(s) = std::fs::read_to_string("/var/lib/skunky-ingest/nft-count") {
+        if let Ok(n) = s.trim().parse::<u32>() {
+            metrics.nft_contributions.store(n, Ordering::Relaxed);
+            tracing::info!("🔴 Loaded {n} NFT contribution(s) from persistent state");
+        }
+    }
     let violation_ledger = SharedViolationLedger::new();
 
     // Evict stale violation ledger entries every 5 minutes
@@ -1056,6 +1064,8 @@ async fn handle_request(
                 writer.write_all(response.as_bytes()).await?;
                 writer.flush().await?;
                 tracing::info!("🧬 NFT contribution received — human entropy fermented");
+                let new_count = metrics.nft_contributions.fetch_add(1, Ordering::Relaxed) + 1;
+                let _ = std::fs::write("/var/lib/skunky-ingest/nft-count", new_count.to_string());
                 metrics.scatter_served.fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }
@@ -1088,6 +1098,26 @@ async fn handle_request(
         writer.write_all(response.as_bytes()).await?;
         writer.flush().await?;
         tracing::info!("🔴 THE BUTTON served to human");
+        return Ok(());
+    }
+
+    // NFT contribution counter — lightweight JSON for live display
+    if path == "/nft-count" || path == "/nft-count/" {
+        let count = metrics.nft_contributions.load(Ordering::Relaxed);
+        let body = format!(r#"{{"count":{count}}}"#);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: no-cache, no-store\r\n\
+             Access-Control-Allow-Origin: *\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
         return Ok(());
     }
 
