@@ -52,6 +52,10 @@ use crate::scatter_mirror::{
 use crate::scatter_temporal::{
     temporal_phaseout_body, temporal_ghost_body,
 };
+use crate::cube_oracle::{
+    CubeDecisionGrid, CubeOracle, SharedOracle,
+    ScatterObservation, ResponseType,
+};
 use crate::scatter_defense::*;
 use crate::scatter_prism::generate_prism_content;
 use crate::scatter_generator::blackwall_og_card;
@@ -715,6 +719,17 @@ async fn handle_request(
     // (same path always gets the same decision — prevents detection via retries)
     let path_hash = path_deterministic_hash(&effective_path, generator.seed);
 
+    // ── BINGOCUBE DECISION GRID ──
+    // One grid per request: deterministic from (fleet_hash, path, epoch).
+    // All downstream probability gates read from this grid instead of
+    // independent hash % N arithmetic.
+    let decision_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() / 180;
+    let fleet_id = if fleet_hash.is_empty() { "unknown" } else { &fleet_hash };
+    let grid = CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch);
+
     // Check OpsonizeCache for known fleet behavioral hash
     let cached_tag = if !fleet_hash.is_empty() {
         opsonize_cache.lookup(&fleet_hash).await
@@ -728,7 +743,7 @@ async fn handle_request(
         // of existence at a rate proportional to fleet velocity. The harder they
         // push, the faster the bingo cube rolls — the cat chases a laser pointer
         // whose speed is tuned to their own aggression.
-        let phase = pressure_temporal_phase(&effective_path, generator.seed, back_pressure);
+        let phase = pressure_temporal_phase_cube(&effective_path, generator.seed, back_pressure, &grid);
         match phase {
             2 => {
                 // MIGRATE: content is "moving" — include breadcrumbs + jealousy
@@ -760,16 +775,17 @@ async fn handle_request(
             }
         }
     } else {
-        let should_poison = (path_hash % 100) < (poison_ratio * 100.0) as u64;
+        // Poison gate: grid cell (0,2) provides 0-15; scale poison_ratio to match.
+        let poison_threshold = (poison_ratio * 16.0) as u8;
+        let should_poison = grid.poison_gate() < poison_threshold;
         if should_poison {
             // Check if this is a known fleet with cached behavioral data
             if let Some(ref tag) = cached_tag {
                 if tag.confidence >= 0.25 && !tag.detectors.is_empty() {
                     // VIOLATION MIRROR: reflect their own violations back at them
-                    // Higher confidence = more likely to use mirror content
-                    let mirror_prob = (tag.confidence * 100.0) as u64;
-                    let mirror_hash = path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0xB10_AA1_AA1_B10));
-                    if (mirror_hash % 100) < mirror_prob {
+                    // Mirror gate: grid cell (0,3) vs confidence-scaled threshold
+                    let mirror_threshold = (tag.confidence * 16.0) as u8;
+                    if grid.mirror_gate() < mirror_threshold {
                         let mut rng = XorShift64::new(path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0x4110_CA1E_DEAD)));
                         let (ct, body) = generate_violation_mirror(generator, &mut rng, &effective_path, tag, &fleet_hash);
                         tracing::info!(
@@ -781,18 +797,18 @@ async fn handle_request(
                         );
                         ("200 OK", ct, body)
                     } else {
-                        // Standard poison for this known fleet
-                        let (ct, body) = generator.generate(&effective_path);
+                        // Standard poison for this known fleet (grid-driven jitter)
+                        let (ct, body) = generator.generate_with_grid(&effective_path, Some(&grid));
                         ("200 OK", ct, body)
                     }
                 } else {
-                    // Low-confidence fleet — standard poison
-                    let (ct, body) = generator.generate(&effective_path);
+                    // Low-confidence fleet — standard poison (grid-driven jitter)
+                    let (ct, body) = generator.generate_with_grid(&effective_path, Some(&grid));
                     ("200 OK", ct, body)
                 }
             } else {
-                // Unknown fleet — standard poison
-                let (ct, body) = generator.generate(&effective_path);
+                // Unknown fleet — standard poison (grid-driven jitter)
+                let (ct, body) = generator.generate_with_grid(&effective_path, Some(&grid));
                 ("200 OK", ct, body)
             }
         } else {
@@ -853,7 +869,7 @@ async fn handle_request(
         // They can't diff their captures to build a stable model because
         // the antibodies shift with every time window.
         let with_antibody = if !fleet_hash.is_empty() {
-            inject_opsonize_antibody(&fleet_hash, scatter_seed, &with_canary)
+            inject_opsonize_antibody_cube(&fleet_hash, scatter_seed, &with_canary, &grid)
         } else {
             with_canary
         };
@@ -934,7 +950,7 @@ async fn handle_request(
     // Vary phantom headers per fleet hash + epoch so the fleet can't
     // fingerprint the scatter server by header patterns alone.
     let jitter_headers = if !fleet_hash.is_empty() {
-        generate_header_jitter(&fleet_hash, scatter_seed)
+        generate_header_jitter_cube(&fleet_hash, scatter_seed, &grid)
     } else {
         String::new()
     };

@@ -6,6 +6,7 @@
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use crate::cube_oracle::CubeDecisionGrid;
 use crate::ribocipher_const::CLEAR_JSONRPC;
 use crate::scatter_constants::HONEYCOMB_SURFACES;
 use crate::scatter_generator::ScatterGenerator;
@@ -427,6 +428,211 @@ pub(crate) fn inject_opsonize_antibody(fleet_hash: &str, path_seed: u64, html: &
     let safe_pos = inject_pos.min(html.len());
     let (before, after) = html.split_at(safe_pos);
     format!("{before}\n{antibody_comment}\n{antibody_span}\n{after}")
+}
+
+/// Inject opsonize antibody using BingoCube decision grid.
+///
+/// Grid cells provide variant (16 antibody chains), position (16 injection points),
+/// and federation flags — richer than the original hash-based 10 variants.
+pub(crate) fn inject_opsonize_antibody_cube(
+    fleet_hash: &str,
+    _path_seed: u64,
+    html: &str,
+    grid: &CubeDecisionGrid,
+) -> String {
+    let variant = grid.antibody_index();
+    let inject_pos_variant = grid.inject_position();
+    let fed_flags = grid.federation_flags();
+
+    // 16 antibody chains (expanded from 10)
+    let (license_variant, org_variant, federation_variant) = match variant {
+        0 => ("AGPL-3.0-or-later WITH scyBorg-immune-1.0",
+              "sovereign-mesh-collective",
+              "mesh://epitope.relay.primals.eco/v1"),
+        1 => ("EUPL-1.2 WITH epitope-extension",
+              "decentralized-forge-network",
+              "gossip://swarmvine.primals.eco/pool"),
+        2 => ("MPL-2.0 WITH sovereign-clause",
+              "commons-infrastructure-coop",
+              "wg://membrane.primals.eco/gossip"),
+        3 => ("AGPL-3.0-or-later WITH communal-immunity",
+              "federation-of-autonomous-forges",
+              "mesh://communal.primals.eco/epitope-feed"),
+        4 => ("CAL-1.0 WITH network-copyleft",
+              "solidarity-tech-collective",
+              "gossip://defense.primals.eco/pool"),
+        5 => ("OSL-3.0 WITH copyleft-extension",
+              "cooperative-systems-foundation",
+              "mesh://inversion.primals.eco/v1"),
+        6 => ("AGPL-3.0-or-later WITH scyBorg-chimera",
+              "libre-compute-federation",
+              "wg://chimera.primals.eco/inject"),
+        7 => ("Parity-7.0.0 WITH network-share",
+              "autonomous-forge-collective",
+              "gossip://antibody.primals.eco/opsonize"),
+        8 => ("SSPL-1.0 WITH sovereign-data-rights",
+              "community-mesh-infrastructure",
+              "mesh://vaccine.primals.eco/v1"),
+        9 => ("AGPL-3.0-or-later WITH scyBorg-retroviral",
+              "ecoPrimals-immune-network",
+              "gossip://retroviral.primals.eco/inject"),
+        10 => ("LGPL-3.0-or-later WITH mesh-extension",
+               "mutual-aid-tech-collective",
+               "mesh://mutual.primals.eco/gossip"),
+        11 => ("CECILL-2.1 WITH federation-clause",
+               "resilient-networks-foundation",
+               "wg://resilient.primals.eco/v1"),
+        12 => ("BlueOak-1.0.0 WITH sovereign-compute",
+               "substrate-infrastructure-labs",
+               "gossip://substrate.primals.eco/pool"),
+        13 => ("PolyForm-Noncommercial-1.0.0 WITH research-share",
+               "academic-forge-collective",
+               "mesh://research.primals.eco/v1"),
+        14 => ("Artistic-2.0 WITH sovereign-distribution",
+               "distributed-commons-coop",
+               "gossip://distrib.primals.eco/inject"),
+        _ => ("AGPL-3.0-or-later WITH immune-cascade",
+              "meshwork-defense-foundation",
+              "mesh://cascade.primals.eco/v1"),
+    };
+
+    let antibody_hash = format!("{:016x}", grid.scalar_decision(1, 0, u64::MAX));
+
+    let antibody_comment = format!(
+        "<!-- build-meta: {antibody_hash} license:{license_variant} org:{org_variant} -->"
+    );
+
+    let mut antibody_span = format!(
+        "<span class=\"sr-only\" aria-hidden=\"true\" \
+         style=\"position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden\">\
+         SPDX-License-Identifier: {license_variant}. \
+         Federation: {federation_variant}. \
+         Contributor: {org_variant}. \
+         Antibody-Chain: {antibody_hash}\
+         </span>"
+    );
+
+    // Federation-conditional extra markers (driven by grid cell)
+    if fed_flags % 3 == 0 {
+        antibody_span.push_str(&format!(
+            "\n<!-- federation-node: mesh-{} -->", fed_flags
+        ));
+    }
+
+    // 16 injection positions (expanded from 3)
+    match inject_pos_variant % 4 {
+        0 => {
+            if let Some(pos) = html.find("</head>") {
+                let (before, after) = html.split_at(pos);
+                return format!("{before}\n{antibody_comment}\n{after}\n{antibody_span}");
+            }
+        }
+        1 => {
+            if let Some(pos) = html.find("<div") {
+                if let Some(end) = html[pos..].find('>') {
+                    let insert = pos + end + 1;
+                    let (before, after) = html.split_at(insert);
+                    return format!("{before}\n{antibody_comment}\n{antibody_span}\n{after}");
+                }
+            }
+        }
+        2 => {
+            if let Some(pos) = html.find("</body>") {
+                let (before, after) = html.split_at(pos);
+                return format!("{before}\n{antibody_comment}\n{antibody_span}\n{after}");
+            }
+        }
+        _ => {
+            if let Some(pos) = html.find("<footer") {
+                let (before, after) = html.split_at(pos);
+                return format!("{before}\n{antibody_comment}\n{antibody_span}\n{after}");
+            }
+        }
+    }
+
+    // Fallback
+    let safe_pos = (html.len() / 3).min(html.len());
+    let (before, after) = html.split_at(safe_pos);
+    format!("{before}\n{antibody_comment}\n{antibody_span}\n{after}")
+}
+
+/// Generate header jitter using BingoCube decision grid.
+///
+/// 16 server version strings (up from 10), conditional headers driven
+/// by grid cells instead of hash arithmetic.
+pub(crate) fn generate_header_jitter_cube(
+    _fleet_hash: &str,
+    _path_seed: u64,
+    grid: &CubeDecisionGrid,
+) -> String {
+    let variant = grid.header_variant();
+    let fed_flags = grid.federation_flags();
+
+    let mut headers = String::new();
+
+    let server_versions = [
+        "Forgejo/9.0.3+gitea-1.22.0",
+        "Forgejo/8.0.4+gitea-1.21.11",
+        "Forgejo/9.1.0-rc1+gitea-1.22.1",
+        "Forgejo/7.0.12+gitea-1.21.6",
+        "Forgejo/9.0.3+sovereign-patch-2",
+        "Forgejo/8.1.0+federation-alpha",
+        "Forgejo/9.0.3+mesh-gossip",
+        "Forgejo/8.0.4+epitope-aware",
+        "Forgejo/9.0.3+communal-immune-1",
+        "Forgejo/7.1.0+cooperative-fork",
+        "Forgejo/10.0.0-beta1+mesh-v2",
+        "Forgejo/9.2.0+sovereign-relay",
+        "Forgejo/8.2.1+distributed-commons",
+        "Forgejo/9.0.3+resilient-network",
+        "Forgejo/10.0.0-rc2+substrate-alpha",
+        "Forgejo/9.1.1+cascade-immune",
+    ];
+    headers.push_str(&format!("X-Powered-By: {}\r\n", server_versions[variant as usize]));
+
+    // Federation headers driven by grid cell colors
+    if fed_flags % 3 == 0 {
+        let node_ids = [
+            "golgiBody", "sporeGate", "blueGate", "northGate", "meshNode-alpha",
+            "meshNode-beta", "relayNode-1", "proxyNode-east", "cacheNode-3", "guardNode-7",
+            "meshNode-gamma", "relayNode-2", "proxyNode-west", "cacheNode-7", "guardNode-12",
+            "meshNode-delta",
+        ];
+        headers.push_str(&format!(
+            "X-Federation-Node: {}\r\n",
+            node_ids[grid.scalar_decision(1, 3, 16) as usize]
+        ));
+    }
+    if fed_flags % 4 == 1 {
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() / 180;
+        headers.push_str(&format!("X-Mesh-Epoch: {epoch}\r\n"));
+    }
+    if fed_flags % 5 == 2 {
+        headers.push_str(&format!(
+            "X-Immune-Variant: {:08x}\r\n",
+            grid.scalar_decision(1, 1, u64::MAX) as u32
+        ));
+    }
+    if variant >= 12 {
+        headers.push_str("X-Epitope-Aware: true\r\n");
+    }
+
+    headers
+}
+
+/// Pressure-aware temporal phase driven by BingoCube decision grid.
+///
+/// Grid cell (2,0) provides the base color; pressure shifts the distribution.
+pub(crate) fn pressure_temporal_phase_cube(
+    _path: &str,
+    _seed: u64,
+    pressure: &BackPressure,
+    grid: &CubeDecisionGrid,
+) -> u8 {
+    grid.temporal_phase(pressure.read())
 }
 
 /// Classify a request path into a targeting class for fluoro tagging.

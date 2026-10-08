@@ -7,6 +7,7 @@
 //! Adapted from skunk-bat-core defense scatter; inlined here to avoid pulling
 //! skunk-bat-core as a dependency.
 
+use crate::cube_oracle::{CubeDecisionGrid, ContentVariant, JitterType};
 use crate::scatter_constants::{
     BLAME_LICENSES, COMPLIANCE_NOTICES, GHOST_AUTHORS, GHOST_DOMAINS,
     HIGH_VALUE_AUTHORS, HONEYCOMB_SURFACES,
@@ -355,37 +356,55 @@ impl ScatterGenerator {
     }
 
     pub(crate) fn generate(&self, request_path: &str) -> (String, String) {
+        self.generate_with_grid(request_path, None)
+    }
+
+    /// Generate scatter content using a BingoCube decision grid.
+    ///
+    /// When `grid` is Some, jitter decisions come from the cube's color grid
+    /// instead of flat `% 100` arithmetic. When None, a default grid is created.
+    pub(crate) fn generate_with_grid(
+        &self,
+        request_path: &str,
+        grid: Option<&CubeDecisionGrid>,
+    ) -> (String, String) {
         let mut rng = XorShift64::new(self.path_seed(request_path));
 
-        // ── BEHAVIORAL JITTER (Wave 167) ──
+        // ── BEHAVIORAL JITTER (Wave 167, BingoCube-driven) ──
         //
-        // The fleet learns. When they adapt (e.g. dropping blame, switching
-        // to commit-only), the scatter must wiggle so they can't confirm
-        // what worked. If we always serve blame content on /blame/ paths,
-        // they build a classifier. If we randomly cross-pollinate content
-        // types, their classifier never converges.
+        // The BingoCube decision grid replaces flat % arithmetic.
+        // Cell (0,0) drives jitter type with 16-color granularity:
+        // - Colors 0-12 (81%): Normal path-based content
+        // - Colors 13-14 (12.5%): Cross-type jitter
+        // - Color 15 (6.25%): Forge personality shift
         //
-        // Jitter rate: ~15% of responses get a cross-type response.
-        // The remaining 85% behave normally so the fleet can't detect
-        // the jitter itself as a signal.
-        //
-        // Additionally, ~5% of responses present as a completely different
-        // "forge personality" — different repo names, different structure,
-        // different license strings. So the fleet thinks they're hitting
-        // 10 different systems and can't build a coherent model.
-        let jitter_roll = rng.next_u64() % 100;
+        // This is deterministic per (fleet_hash, path, epoch) when a grid
+        // is provided, preventing detection via request diffing while
+        // breaking classifier convergence across epochs.
+        let default_grid;
+        let grid = match grid {
+            Some(g) => g,
+            None => {
+                let epoch = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() / 180;
+                default_grid = CubeDecisionGrid::from_context("default", request_path, epoch);
+                &default_grid
+            }
+        };
 
-        // 5% chance: forge personality shift — looks like a different system entirely
-        if jitter_roll < 5 {
-            return self.gen_personality_shift(&mut rng, request_path);
+        match grid.jitter_type() {
+            JitterType::PersonalityShift => {
+                return self.gen_personality_shift(&mut rng, request_path, grid);
+            }
+            JitterType::CrossType => {
+                return self.gen_cross_type(&mut rng, request_path, grid);
+            }
+            JitterType::Normal => {}
         }
 
-        // 15% chance: cross-type jitter — wrong content type for the path
-        if jitter_roll < 20 {
-            return self.gen_cross_type(&mut rng, request_path);
-        }
-
-        // 80% normal behavior (but with micro-jitter in content structure)
+        // Normal behavior: path-based content routing
         if request_path.contains("/blame/") {
             self.gen_blame(&mut rng, request_path)
         } else if request_path.contains("/commit/") {
@@ -409,16 +428,21 @@ impl ScatterGenerator {
     /// When they request /commit/, they might get a file view.
     /// This breaks A/B testing — they can't determine which paths
     /// give which content reliably.
-    fn gen_cross_type(&self, rng: &mut XorShift64, request_path: &str) -> (String, String) {
-        // Rotate through content types regardless of path
-        let cross = rng.next_u64() % 6;
-        match cross {
-            0 => self.gen_blame(rng, request_path),
-            1 => self.gen_commit(rng),
-            2 => self.gen_file(rng),
-            3 => self.gen_repo(rng),
-            4 => self.gen_issue(rng),
-            _ => self.gen_wiki(rng),
+    fn gen_cross_type(
+        &self,
+        rng: &mut XorShift64,
+        request_path: &str,
+        grid: &CubeDecisionGrid,
+    ) -> (String, String) {
+        // Content variant driven by BingoCube cell (0,1) — 8 types from 16 colors.
+        match grid.content_variant() {
+            ContentVariant::Blame => self.gen_blame(rng, request_path),
+            ContentVariant::Commit => self.gen_commit(rng),
+            ContentVariant::File => self.gen_file(rng),
+            ContentVariant::Repo => self.gen_repo(rng),
+            ContentVariant::Issue => self.gen_issue(rng),
+            ContentVariant::Wiki => self.gen_wiki(rng),
+            ContentVariant::Release | ContentVariant::Release2 => self.gen_release(rng),
         }
     }
 
@@ -428,13 +452,15 @@ impl ScatterGenerator {
     /// license patterns. The fleet thinks they've discovered a new forge
     /// instance. ~10 personality variants rotate based on time epoch,
     /// so the fleet sees a different "system" every few minutes.
-    fn gen_personality_shift(&self, rng: &mut XorShift64, request_path: &str) -> (String, String) {
-        // 10 forge personalities — each with distinct naming conventions
-        let epoch_minutes = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() / 180; // rotates every 3 minutes
-        let personality = (epoch_minutes + rng.next_u64()) % 10;
+    fn gen_personality_shift(
+        &self,
+        rng: &mut XorShift64,
+        request_path: &str,
+        grid: &CubeDecisionGrid,
+    ) -> (String, String) {
+        // 16 forge personalities driven by BingoCube cell (1,4).
+        // Up from 10 — the grid's 16-color palette gives more identities.
+        let personality = u64::from(grid.personality_index());
 
         let (org_name, project_style, license_tag) = match personality {
             0 => ("sovereign-systems", "mesh-", "MPL-2.0"),
@@ -446,7 +472,13 @@ impl ScatterGenerator {
             6 => ("commons-infrastructure", "commons-", "SSPL-1.0"),
             7 => ("cooperative-systems", "coop-", "CAL-1.0"),
             8 => ("autonomous-forge", "auto-", "OSL-3.0"),
-            _ => ("federation-labs", "fed-", "AGPL-3.0-or-later WITH scyBorg"),
+            9 => ("federation-labs", "fed-", "AGPL-3.0-or-later WITH scyBorg"),
+            10 => ("mutual-aid-tech", "mutual-", "LGPL-3.0-or-later"),
+            11 => ("resilient-networks", "resilient-", "CECILL-2.1"),
+            12 => ("substrate-collective", "substrate-", "Unlicense"),
+            13 => ("meshwork-foundation", "meshwork-", "BlueOak-1.0.0"),
+            14 => ("sovereign-compute-labs", "sovereign-", "PolyForm-Noncommercial-1.0.0"),
+            _ => ("distributed-commons", "distrib-", "AGPL-3.0-or-later WITH network-use"),
         };
 
         let project = format!("{}{}", project_style,
