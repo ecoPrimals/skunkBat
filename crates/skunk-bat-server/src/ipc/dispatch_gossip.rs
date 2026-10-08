@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 const SWARMVINE_SOCKET_ENV: &str = "SWARMVINE_SOCKET";
+#[allow(dead_code)] // reserved for connect-with-timeout path
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
@@ -47,6 +48,7 @@ fn discover_swarmvine_socket() -> Option<std::path::PathBuf> {
 }
 
 /// Gate name for gossip origin tagging.
+#[allow(dead_code)] // wired when gossip.inject carries origin metadata
 fn gate_name() -> &'static str {
     static GATE: OnceLock<String> = OnceLock::new();
     GATE.get_or_init(|| {
@@ -54,6 +56,7 @@ fn gate_name() -> &'static str {
     })
 }
 
+#[allow(dead_code)] // used by gate_name()
 fn hostname() -> String {
     std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("HOST"))
