@@ -18,6 +18,7 @@ pub mod federation;
 pub mod fleet;
 pub mod inflammatory;
 pub mod lysogeny;
+pub mod maze_cube;
 pub mod rpc;
 pub mod abuse_reporter;
 pub mod bloom_sensor;
