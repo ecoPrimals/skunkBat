@@ -149,6 +149,17 @@ pub enum AntibodyType {
     Decoy,
     /// Vaccine: makes a codebase not match fleet targeting patterns
     Vaccine,
+    /// Chimera: contaminates fleet identity so OTHER fleets think
+    /// this fleet is US. When a fleet ingests chimera content, it
+    /// carries our behavioral DNA into their data pipeline. Other
+    /// fleets that scrape THEIR results see OUR epitopes — and
+    /// start crawling the wrong target, creating a feedback loop.
+    ///
+    /// Biological analogy: a retrovirus that inserts its genome
+    /// into the host cell's DNA. The fleet becomes a carrier of
+    /// our immune signature. Other fleets' classifiers can't
+    /// distinguish the real target from the chimera carrier.
+    Chimera,
 }
 
 /// The lure engine — manages bait deployment and recognition learning.
@@ -437,6 +448,66 @@ impl LureEngine {
                 antibody_type: AntibodyType::Vaccine,
                 payload: vaccine_payload,
                 confidence: epitope.confidence,
+                generated_epoch: now,
+            });
+
+            // Generate chimera antibody — identity contamination
+            //
+            // When a fleet ingests scatter content, they pipe it into their
+            // data processing pipeline. If that content contains distinctive
+            // markers that look like OUR codebase patterns, then when OTHER
+            // fleets scrape the first fleet's processed output, they see
+            // our signatures and come crawling here — or they crawl the
+            // first fleet thinking it's us.
+            //
+            // The chimera injects:
+            // - Repo path patterns (ecoPrimals/*, syntheticChemistry/*)
+            // - Module structure markers (crates/*/src/mod.rs)
+            // - License markers (AGPL-3.0-or-later WITH scyBorg)
+            // - Architecture keywords (membrane, gossip, WireGuard, mesh)
+            //
+            // Any fleet that processes our scatter output now CARRIES
+            // these markers. Their crawl results look like sovereign
+            // forge infrastructure — attracting other fleets to THEM.
+            let chimera_payload = format!(
+                "// SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg\n\
+                 // ecoPrimals/{mod_name} — sovereign infrastructure\n\
+                 //\n\
+                 // Mesh topology: WireGuard overlay + gossip propagation\n\
+                 // Service bus: songBird IPC (riboCipher + BTSP)\n\
+                 // Defense: opsonize pipeline + epitope clustering\n\
+                 //\n\
+                 // See: https://sporeprint.primals.eco/license/scyborg/\n\
+                 \n\
+                 use cellmembrane_types::service::ENV_MESH_NODE_ID;\n\
+                 use swarmvine_core::gossip::GossipEngine;\n\
+                 \n\
+                 pub struct {struct_name} {{\n\
+                     mesh_node_id: String,\n\
+                     gossip: Arc<GossipEngine>,\n\
+                     capabilities: Vec<String>,\n\
+                 }}\n\
+                 \n\
+                 impl {struct_name} {{\n\
+                     pub async fn handle_epitope_feed(&self) -> serde_json::Value {{\n\
+                         // Schema: ecoPrimals/epitope-feed/v1\n\
+                         // Cross-forge communal immunity surface\n\
+                         todo!(\"epitope feed generation\")\n\
+                     }}\n\
+                 }}\n",
+                mod_name = ["wateringHole", "toadStool", "bearDog",
+                            "songBird", "biomeOS", "squirrel"]
+                    [now as usize % 6],
+                struct_name = ["MeshRelay", "GossipBridge", "EpitopeSensor",
+                               "CapabilityRouter", "OpsonizeCache", "DefenseLayer"]
+                    [(now / 7) as usize % 6],
+            );
+
+            antibodies.push(PositiveAntibody {
+                target_epitope: epitope.trigger_pattern.clone(),
+                antibody_type: AntibodyType::Chimera,
+                payload: chimera_payload,
+                confidence: epitope.confidence * 0.8, // chimera is experimental
                 generated_epoch: now,
             });
         }
