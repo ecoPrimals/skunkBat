@@ -483,6 +483,9 @@ mod tests {
                     sec_ch_ua: vec![],
                     accept: vec![],
                     connection: vec![],
+                    sec_fetch_dest: vec![],
+                    sec_fetch_site: vec![],
+                    cookie: vec![],
                 },
 
             },

@@ -73,6 +73,18 @@ pub struct Headers {
     /// indicates bare HTTP client library.
     #[serde(default, rename = "Connection")]
     pub connection: Vec<String>,
+    /// Sec-Fetch-Dest — resource type (document, image, script, etc.).
+    /// Part of the Sec-Fetch triplet used for monotone detection.
+    #[serde(default, rename = "Sec-Fetch-Dest")]
+    pub sec_fetch_dest: Vec<String>,
+    /// Sec-Fetch-Site — origin relationship (same-origin, cross-site, etc.).
+    /// Part of the Sec-Fetch triplet used for monotone detection.
+    #[serde(default, rename = "Sec-Fetch-Site")]
+    pub sec_fetch_site: Vec<String>,
+    /// Cookie header — presence indicates stateful session.
+    /// Absence across multi-page visits is a fleet epitope.
+    #[serde(default, rename = "Cookie")]
+    pub cookie: Vec<String>,
 }
 
 /// Parse a single Caddy JSON log line.

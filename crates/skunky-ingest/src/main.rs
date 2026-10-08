@@ -10,8 +10,8 @@
 //! Module declarations live in `lib.rs` for reuse; binary owns CLI + tail loop.
 
 use skunky_ingest::{
-    aggregator, caddy, caddy_bridge, cloudflare, cursor, error,
-    federation, fleet, inflammatory, lysogeny, rpc, abuse_reporter,
+    aggregator, caddy, caddy_bridge, cloudflare, cursor, entity_classifier,
+    error, federation, fleet, inflammatory, lysogeny, rpc, abuse_reporter,
     bloom_sensor, scatter_server, signal_spine, signal_writer, threat_feed,
 };
 
@@ -129,8 +129,32 @@ struct Cli {
     signal_data_path: PathBuf,
 
     /// State file for signal writer cumulative history.
-    #[arg(long, default_value = "/run/membrane/signal-writer-state.json")]
+    /// Persistent storage — survives reboots (sourdough culture).
+    #[arg(long, default_value = "/var/lib/skunky-ingest/signal-writer-state.json")]
     signal_state_path: PathBuf,
+
+    /// Enable entity topology writer — replaces entity_topology.py cron.
+    /// Classifies traffic entities and writes topology.json periodically.
+    #[arg(long, default_value_t = false)]
+    entity_classifier: bool,
+
+    /// Output path for topology.json (used with --entity-classifier).
+    #[arg(long, default_value = "/opt/membrane/live-terminal/topology.json")]
+    topology_path: PathBuf,
+
+    /// Flush topology.json after this many log entries.
+    #[arg(long, default_value_t = 500)]
+    topology_flush_interval: u64,
+
+    /// State file for entity topology cumulative culture.
+    /// Persistent storage — survives reboots (sourdough starter).
+    #[arg(long, default_value = "/var/lib/skunky-ingest/topology-state.json")]
+    topology_state_path: PathBuf,
+
+    /// Directory for signal spine immune memory chain.
+    /// Persistent storage — this is ecoBin DNA, not ephemeral.
+    #[arg(long, default_value = "/var/lib/skunky-ingest/signal-spine")]
+    signal_spine_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -392,8 +416,23 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         None
     };
 
+    // Entity topology writer — replaces entity_topology.py (534 lines of Python → 0)
+    // Classifies every request into entity profiles and writes topology.json.
+    // Loads sourdough culture from persistent state — never cold-starts.
+    let mut topology_writer = if cli.entity_classifier {
+        tracing::info!("🗺️ entity classifier active — entity_topology.py convergence");
+        Some(entity_classifier::TopologyWriter::new(
+            cli.topology_path.clone(),
+            cli.topology_state_path.clone(),
+            cli.topology_flush_interval,
+        ))
+    } else {
+        None
+    };
+
     // Signal spine — immune memory (content-addressed observation chain)
-    let spine_dir = PathBuf::from("/run/membrane/signal-spine");
+    // Persistent storage — this is ecoBin DNA, not ephemeral tmpfs.
+    let spine_dir = cli.signal_spine_dir.clone();
     if let Err(e) = std::fs::create_dir_all(&spine_dir) {
         tracing::warn!(error = %e, "failed to create signal-spine directory");
     }
@@ -511,6 +550,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     cli.window_secs,
                     &opsonize_cache,
                     signal_acc.as_mut(),
+                    topology_writer.as_mut(),
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -607,6 +647,13 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         }
     }
 
+    // Flush entity topology — final snapshot + culture save before shutdown.
+    if let Some(ref mut tw) = topology_writer {
+        tw.flush();
+        tw.save_culture();
+        tracing::info!("🗺️ topology writer final flush — culture preserved");
+    }
+
     // Flush signal spine — commit whatever we have for today.
     if let Some(spine_entry) = signal_spine.flush() {
         tracing::info!(
@@ -656,6 +703,7 @@ async fn process_line(
     window_secs: u64,
     opsonize_cache: &scatter_server::OpsonizeCache,
     mut signal_acc: Option<&mut signal_writer::SignalAccumulator>,
+    mut topology_writer: Option<&mut entity_classifier::TopologyWriter>,
 ) {
     if trimmed.is_empty() {
         return;
@@ -668,6 +716,11 @@ async fn process_line(
     };
 
     state.lines_read += 1;
+
+    // Entity topology — classify every request into entity profiles.
+    if let Some(tw) = topology_writer.as_mut() {
+        tw.ingest(&entry);
+    }
 
     // Feed to lysogeny sentinel for self-behavioral tracking
     if let Some(s) = sentinel.as_mut() {

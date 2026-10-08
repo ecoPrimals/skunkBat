@@ -33,8 +33,11 @@
 //! - Timing signature (metronomic vs varied)
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+use crate::caddy;
 
 /// Chrome stable version. Updated when Chrome releases.
 const CHROME_CURRENT_STABLE: u16 = 155;
@@ -42,7 +45,7 @@ const CHROME_CURRENT_STABLE: u16 = 155;
 // ── Entity identification ──
 
 /// Known entity type, identified by behavioral fingerprint.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityId {
     /// Meta Platforms — confirmed via WHOIS (57.141.0.0/13 = FB-BLOCK).
@@ -135,6 +138,38 @@ pub struct RequestFingerprint {
 }
 
 impl RequestFingerprint {
+    /// Build a fingerprint from a parsed Caddy log entry.
+    pub fn from_caddy_entry(entry: &caddy::LogEntry) -> Self {
+        let h = &entry.request.headers;
+        let ua = h.user_agent.first().cloned().unwrap_or_default();
+        let mode = h.sec_fetch_mode.first().cloned().unwrap_or_default();
+        let dest = h.sec_fetch_dest.first().cloned().unwrap_or_default();
+        let site = h.sec_fetch_site.first().cloned().unwrap_or_default();
+        let triplet = if mode.is_empty() {
+            String::new()
+        } else {
+            format!("{}|{}|{}", mode, dest, site)
+        };
+
+        Self {
+            ip: entry.request.remote_ip.clone(),
+            user_agent: ua,
+            host: entry.request.host.clone(),
+            uri: entry.request.uri.clone(),
+            accept: h.accept.first().cloned().unwrap_or_default(),
+            accept_encoding: h.accept_encoding.first().cloned().unwrap_or_default(),
+            accept_language: h.accept_language.first().cloned().unwrap_or_default(),
+            has_sec_fetch_mode: !h.sec_fetch_mode.is_empty(),
+            has_sec_ch_ua: !h.sec_ch_ua.is_empty(),
+            has_connection: !h.connection.is_empty(),
+            has_cookie: !h.cookie.is_empty(),
+            timestamp: entry.ts,
+            status: entry.status,
+            sec_fetch_triplet: triplet,
+            referer: h.referer.first().cloned().unwrap_or_default(),
+        }
+    }
+
     /// Extract Chrome major version from the UA string.
     pub fn chrome_major(&self) -> u16 {
         if let Some(idx) = self.user_agent.find("Chrome/") {
@@ -193,7 +228,7 @@ impl RequestFingerprint {
 }
 
 /// Path operation type — what data the entity extracts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathOp {
     /// `/commit/` — source diffs, full change content.
@@ -401,6 +436,7 @@ pub struct TopologyBuilder {
     entities: HashMap<EntityId, EntityAccum>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct EntityAccum {
     ips: HashSet<String>,
     subnets: HashSet<String>,
@@ -473,6 +509,57 @@ impl TopologyBuilder {
         }
     }
 
+    /// Load a topology builder from a persisted state file (sourdough culture).
+    /// Falls back to empty builder if file doesn't exist or is corrupt.
+    pub fn load(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(json) => match serde_json::from_str::<HashMap<EntityId, EntityAccum>>(&json) {
+                Ok(entities) => {
+                    let total: u64 = entities.values().map(|a| a.total).sum();
+                    tracing::info!(
+                        entities = entities.len(),
+                        requests = total,
+                        path = %path.display(),
+                        "🧬 topology culture loaded — sourdough warm start"
+                    );
+                    Self { entities }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        path = %path.display(),
+                        "topology culture corrupt — starting fresh (should not happen)"
+                    );
+                    Self::new()
+                }
+            },
+            Err(_) => {
+                tracing::info!(
+                    path = %path.display(),
+                    "no topology culture file — first generation"
+                );
+                Self::new()
+            }
+        }
+    }
+
+    /// Save the accumulated state to disk (preserve the sourdough culture).
+    pub fn save(&self, path: &Path) {
+        match serde_json::to_string(&self.entities) {
+            Ok(json) => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(path, &json) {
+                    tracing::warn!(error = %e, path = %path.display(), "topology culture save failed");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "topology culture serialization failed");
+            }
+        }
+    }
+
     /// Ingest a request fingerprint.
     pub fn ingest(&mut self, fp: &RequestFingerprint) {
         let entity_id = classify(fp);
@@ -538,10 +625,32 @@ impl TopologyBuilder {
     }
 
     /// Build the final topology — sorted by request count descending.
+    /// Consumes the builder.
     pub fn build(self) -> Vec<EntityProfile> {
         let mut profiles: Vec<EntityProfile> = self.entities
             .into_iter()
             .map(|(entity_id, accum)| build_profile(entity_id, accum))
+            .collect();
+        profiles.sort_by(|a, b| b.total_requests.cmp(&a.total_requests));
+        profiles
+    }
+
+    /// Total ingested requests across all entities.
+    pub fn total_requests(&self) -> u64 {
+        self.entities.values().map(|a| a.total).sum()
+    }
+
+    /// Number of distinct entity types seen.
+    pub fn entity_count(&self) -> usize {
+        self.entities.len()
+    }
+
+    /// Take a snapshot without consuming the builder — clones internal
+    /// state so accumulation continues uninterrupted.
+    pub fn snapshot(&self) -> Vec<EntityProfile> {
+        let mut profiles: Vec<EntityProfile> = self.entities
+            .iter()
+            .map(|(entity_id, accum)| build_profile(entity_id.clone(), accum.clone()))
             .collect();
         profiles.sort_by(|a, b| b.total_requests.cmp(&a.total_requests));
         profiles
@@ -954,4 +1063,355 @@ pub fn build_comparative(profiles: &[EntityProfile]) -> Vec<ComparativeRow> {
             honest: p.is_honest,
         }
     }).collect()
+}
+
+// ── Topology writer — periodic flush to JSON ──
+
+/// Accumulates entity fingerprints and periodically writes `topology.json`.
+///
+/// Replaces `entity_topology.py` (534 lines) which re-parsed ALL Caddy logs
+/// from scratch every ~30 seconds. This module classifies live from the
+/// bloom sensor stream and writes the same JSON output.
+///
+/// ## Convergence
+///
+/// entity_topology.py → skunky-ingest entity_classifier:
+/// - Classification engine → [`classify`] + [`TopologyBuilder`] (this module)
+/// - Sub-system detection → [`build_profile`] (this module)
+/// - Epitope scoring → [`EpitopeScores`] (this module)
+/// - JSON output → [`TopologyWriter`] (this struct)
+///
+/// No more re-parsing. Topology is a side output of the existing pipeline.
+pub struct TopologyWriter {
+    builder: TopologyBuilder,
+    output_path: PathBuf,
+    /// Persistent state file — sourdough culture.
+    state_path: PathBuf,
+    /// How many ingest calls between flushes.
+    flush_interval: u64,
+    ingest_count: u64,
+    /// Save culture every N flushes (don't write state on every topology flush).
+    culture_save_counter: u32,
+}
+
+impl TopologyWriter {
+    /// Create a new topology writer with persistent culture.
+    ///
+    /// * `output_path` — where to write `topology.json`
+    /// * `state_path` — where to persist the sourdough culture
+    /// * `flush_interval` — write after this many ingested entries
+    pub fn new(output_path: PathBuf, state_path: PathBuf, flush_interval: u64) -> Self {
+        let builder = TopologyBuilder::load(&state_path);
+        let state = Self {
+            builder,
+            output_path,
+            state_path,
+            flush_interval,
+            ingest_count: 0,
+            culture_save_counter: 0,
+        };
+        tracing::info!(
+            output = %state.output_path.display(),
+            culture = %state.state_path.display(),
+            interval = state.flush_interval,
+            "🗺️ topology writer loaded"
+        );
+        state
+    }
+
+    /// Ingest a parsed caddy log entry.
+    pub fn ingest(&mut self, entry: &caddy::LogEntry) {
+        let fp = RequestFingerprint::from_caddy_entry(entry);
+        self.builder.ingest(&fp);
+        self.ingest_count += 1;
+
+        if self.ingest_count % self.flush_interval == 0 {
+            self.flush();
+        }
+    }
+
+    /// Force a topology snapshot and write to disk.
+    pub fn flush(&mut self) {
+        let profiles = self.builder.snapshot();
+        if profiles.is_empty() {
+            return;
+        }
+
+        let comparative = build_comparative(&profiles);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let topology = EntityTopology {
+            generated_epoch: now,
+            generated_iso: chrono::Utc::now()
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string(),
+            log_entries_analyzed: self.builder.total_requests(),
+            entities: profiles,
+            comparative_fingerprints: comparative,
+        };
+
+        match serde_json::to_string_pretty(&topology) {
+            Ok(json) => {
+                if let Some(parent) = self.output_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::write(&self.output_path, &json) {
+                    Ok(()) => {
+                        tracing::info!(
+                            entities = topology.entities.len(),
+                            requests = topology.log_entries_analyzed,
+                            bytes = json.len(),
+                            "🗺️ topology.json updated"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            path = %self.output_path.display(),
+                            "topology.json write failed"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "topology serialization failed");
+            }
+        }
+
+        // Save the sourdough culture every 10 topology flushes (~5000 entries).
+        // Always save on explicit flush (shutdown path).
+        self.culture_save_counter += 1;
+        if self.culture_save_counter % 10 == 0 || self.culture_save_counter == 1 {
+            self.save_culture();
+        }
+    }
+
+    /// Persist the sourdough culture to disk — survives reboots.
+    pub fn save_culture(&self) {
+        self.builder.save(&self.state_path);
+        tracing::info!(
+            entities = self.builder.entity_count(),
+            requests = self.builder.total_requests(),
+            path = %self.state_path.display(),
+            "🧬 topology culture saved"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_claudebot() {
+        let fp = RequestFingerprint {
+            ip: "216.73.216.1".into(),
+            user_agent: "Mozilla/5.0 AppleWebKit/537.36 ClaudeBot/1.0".into(),
+            host: "git.primals.eco".into(),
+            uri: "/ecoPrimals/ecoPrimals/src/branch/main/README.md".into(),
+            accept: "*/*".into(),
+            accept_encoding: "gzip, br, zstd, deflate".into(),
+            accept_language: String::new(),
+            has_sec_fetch_mode: false,
+            has_sec_ch_ua: false,
+            has_connection: false,
+            has_cookie: false,
+            timestamp: 1.0,
+            status: 200,
+            sec_fetch_triplet: String::new(),
+            referer: String::new(),
+        };
+        assert_eq!(classify(&fp), EntityId::AnthropicClaudeBot);
+        assert!(fp.chrome_major() == 0);
+    }
+
+    #[test]
+    fn classify_human_browser() {
+        let fp = RequestFingerprint {
+            ip: "203.0.113.1".into(),
+            user_agent: "Mozilla/5.0 Chrome/155.0.0.0".into(),
+            host: "primals.eco".into(),
+            uri: "/".into(),
+            accept: "text/html".into(),
+            accept_encoding: "gzip, deflate, br".into(),
+            accept_language: "en-US,en;q=0.9".into(),
+            has_sec_fetch_mode: true,
+            has_sec_ch_ua: true,
+            has_connection: true,
+            has_cookie: true,
+            timestamp: 1.0,
+            status: 200,
+            sec_fetch_triplet: "navigate|document|none".into(),
+            referer: String::new(),
+        };
+        assert_eq!(classify(&fp), EntityId::HumanBrowser);
+        assert_eq!(fp.chrome_major(), 155);
+    }
+
+    #[test]
+    fn classify_stealth_scraper() {
+        let fp = RequestFingerprint {
+            ip: "198.51.100.1".into(),
+            user_agent: "Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36".into(),
+            host: "git.primals.eco".into(),
+            uri: "/ecoPrimals/ecoPrimals/commit/abc123".into(),
+            accept: "*/*".into(),
+            accept_encoding: "gzip, br, zstd, deflate".into(),
+            accept_language: String::new(),
+            has_sec_fetch_mode: false,
+            has_sec_ch_ua: false,
+            has_connection: false,
+            has_cookie: false,
+            timestamp: 1.0,
+            status: 200,
+            sec_fetch_triplet: String::new(),
+            referer: String::new(),
+        };
+        assert_eq!(classify(&fp), EntityId::StealthScraper);
+        assert_eq!(fp.chrome_major(), 130);
+        assert_eq!(fp.path_op(), PathOp::Commit);
+    }
+
+    #[test]
+    fn classify_meta_fleet() {
+        let fp = RequestFingerprint {
+            ip: "57.141.10.5".into(),
+            user_agent: "Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36".into(),
+            host: "git.primals.eco".into(),
+            uri: "/ecoPrimals/ecoPrimals/blame/branch/main/README.md".into(),
+            accept: "*/*".into(),
+            accept_encoding: "gzip, br, zstd, deflate".into(),
+            accept_language: String::new(),
+            has_sec_fetch_mode: false,
+            has_sec_ch_ua: false,
+            has_connection: false,
+            has_cookie: false,
+            timestamp: 1.0,
+            status: 200,
+            sec_fetch_triplet: String::new(),
+            referer: String::new(),
+        };
+        assert_eq!(classify(&fp), EntityId::MetaFleet);
+        assert_eq!(fp.path_op(), PathOp::Blame);
+    }
+
+    #[test]
+    fn topology_builder_basics() {
+        let mut builder = TopologyBuilder::new();
+        for i in 0..10 {
+            let fp = RequestFingerprint {
+                ip: format!("203.0.113.{}", i),
+                user_agent: "ClaudeBot/1.0".into(),
+                host: "git.primals.eco".into(),
+                uri: "/ecoPrimals/ecoPrimals/src/main/README.md".into(),
+                accept: "*/*".into(),
+                accept_encoding: "gzip, br, zstd, deflate".into(),
+                accept_language: String::new(),
+                has_sec_fetch_mode: false,
+                has_sec_ch_ua: false,
+                has_connection: false,
+                has_cookie: false,
+                timestamp: i as f64,
+                status: 200,
+                sec_fetch_triplet: String::new(),
+                referer: String::new(),
+            };
+            builder.ingest(&fp);
+        }
+
+        assert_eq!(builder.total_requests(), 10);
+        assert_eq!(builder.entity_count(), 1);
+
+        let snapshot = builder.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].entity, EntityId::AnthropicClaudeBot);
+        assert_eq!(snapshot[0].total_requests, 10);
+        assert_eq!(snapshot[0].unique_ips, 10);
+
+        // Builder still works after snapshot
+        assert_eq!(builder.total_requests(), 10);
+    }
+
+    #[test]
+    fn topology_writer_creates_output() {
+        let dir = std::env::temp_dir().join("topology-writer-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let output = dir.join("topology.json");
+        let state = dir.join("topology-state.json");
+
+        let mut writer = TopologyWriter::new(output.clone(), state.clone(), 5);
+        for i in 0..5 {
+            let entry = caddy::LogEntry {
+                request: caddy::RequestInfo {
+                    remote_ip: format!("10.0.0.{}", i),
+                    host: "git.primals.eco".into(),
+                    uri: "/ecoPrimals/ecoPrimals".into(),
+                    method: "GET".into(),
+                    headers: caddy::Headers {
+                        user_agent: vec!["ClaudeBot/1.0".into()],
+                        ..Default::default()
+                    },
+                },
+                status: 200,
+                size: 1000,
+                duration: 0.01,
+                ts: i as f64,
+            };
+            writer.ingest(&entry);
+        }
+
+        assert!(output.exists(), "topology.json should have been created");
+        let content = std::fs::read_to_string(&output).unwrap();
+        assert!(content.contains("Anthropic (ClaudeBot)"));
+        assert!(content.contains("log_entries_analyzed"));
+
+        // Culture should have been saved on first flush
+        assert!(state.exists(), "topology state file should exist");
+
+        // Simulate restart — new writer loads the culture
+        let mut writer2 = TopologyWriter::new(output.clone(), state.clone(), 5);
+        // Should have warm state from previous generation
+        writer2.flush();
+        let content2 = std::fs::read_to_string(&output).unwrap();
+        assert!(content2.contains("Anthropic (ClaudeBot)"), "sourdough culture should survive restart");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn from_caddy_entry_builds_fingerprint() {
+        let entry = caddy::LogEntry {
+            request: caddy::RequestInfo {
+                remote_ip: "203.0.113.50".into(),
+                host: "primals.eco".into(),
+                uri: "/wp-login.php".into(),
+                method: "GET".into(),
+                headers: caddy::Headers {
+                    user_agent: vec!["curl/7.88.1".into()],
+                    accept_encoding: vec!["gzip".into()],
+                    sec_fetch_mode: vec!["navigate".into()],
+                    sec_fetch_dest: vec!["document".into()],
+                    sec_fetch_site: vec!["none".into()],
+                    cookie: vec!["session=abc".into()],
+                    ..Default::default()
+                },
+            },
+            status: 404,
+            size: 0,
+            duration: 0.001,
+            ts: 1791400000.0,
+        };
+
+        let fp = RequestFingerprint::from_caddy_entry(&entry);
+        assert_eq!(fp.ip, "203.0.113.50");
+        assert!(fp.has_sec_fetch_mode);
+        assert!(fp.has_cookie);
+        assert_eq!(fp.sec_fetch_triplet, "navigate|document|none");
+        assert_eq!(fp.status, 404);
+        // URI /wp-login.php triggers VulnScanner before Sec-Fetch check
+        assert_eq!(classify(&fp), EntityId::VulnScanner);
+    }
 }
