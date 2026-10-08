@@ -369,6 +369,10 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     // Shared confidence level — opsonize pipeline updates, scatter server reads
     let scatter_confidence = scatter_server::SharedConfidence::new();
 
+    // Shared ingestion phase — observer writes, scatter server reads for titration.
+    // Phase 0 = full poison, Phase 2 = mostly antidote. Automatic ramp-down.
+    let shared_phase = ingestion_observer::SharedPhase::new();
+
     // Back pressure gauge — non-Newtonian viscosity dimension
     // 60-second rolling window: the maze stiffness adapts to fleet velocity
     let back_pressure = scatter_server::BackPressure::new(60);
@@ -391,7 +395,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             poison_ratio: cli.scatter_ratio,
             max_tarpit_connections: cli.max_tarpit_connections,
         };
-        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone(), back_pressure.clone(), oracle.clone()));
+        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone(), back_pressure.clone(), oracle.clone(), shared_phase.clone()));
     }
 
     // Inflammatory watchdog — heartbeat failover (replaces membrane-inflammatory.timer)
@@ -464,6 +468,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         Some(ingestion_observer::IngestionObserver::new(
             cli.observer_state_path.clone(),
             cli.observer_timeline_path.clone(),
+            shared_phase.clone(),
         ))
     } else {
         None

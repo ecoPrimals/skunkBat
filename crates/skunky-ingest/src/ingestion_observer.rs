@@ -26,7 +26,61 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// ── ANTIDOTE TITRATION ──
+//
+// The titration curve: as ingestion phase increases, we automatically
+// ramp down poison and ramp up antidote signal in scatter responses.
+//
+//   Phase 0 (SEEDING):    poison=100%, antidote=minimal (just headers)
+//   Phase 1 (UPTAKE):     poison=60%,  antidote=moderate (headers + notice)
+//   Phase 2 (DIGESTION):  poison=20%,  antidote=heavy (headers + notice + inline)
+//   Phase 3 (EXPRESSION): poison=5%,   antidote=maximum (mostly remediation)
+//
+// The scatter server reads SharedPhase to apply these multipliers.
+
+/// Shared atomic phase — written by observer, read by scatter server.
+#[derive(Debug, Clone)]
+pub struct SharedPhase(pub Arc<AtomicU8>);
+
+impl SharedPhase {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicU8::new(0)))
+    }
+
+    pub fn set(&self, phase: Phase) {
+        self.0.store(phase as u8, Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> Phase {
+        Phase::from_u8(self.0.load(Ordering::Relaxed))
+    }
+
+    /// Poison multiplier: how much of the base poison ratio to apply.
+    /// Decreases as phase increases — we're titrating down.
+    pub fn poison_multiplier(&self) -> f32 {
+        match self.get() {
+            Phase::Seeding    => 1.0,   // Full strength
+            Phase::Uptake     => 0.6,   // Starting to back off
+            Phase::Digestion  => 0.2,   // Mostly backed off
+            Phase::Expression => 0.05,  // Trace amount only
+        }
+    }
+
+    /// Antidote level: how prominent the remediation signal should be.
+    /// 0 = headers only, 1 = headers + HTML notice, 2 = inline antidote blocks
+    pub fn antidote_level(&self) -> u8 {
+        match self.get() {
+            Phase::Seeding    => 0,
+            Phase::Uptake     => 1,
+            Phase::Digestion  => 2,
+            Phase::Expression => 2,
+        }
+    }
+}
 
 /// Ingestion phase — how deep has scatter content penetrated?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +147,7 @@ pub struct IngestionObserver {
     state_path: PathBuf,
     timeline_path: PathBuf,
     current_phase: Phase,
+    shared_phase: SharedPhase,
     scatter_requests: u64,
     scatter_bytes: u64,
     active_fleets: u16,
@@ -101,22 +156,31 @@ pub struct IngestionObserver {
 
 impl IngestionObserver {
     /// Create a new observer, warm-starting from Python's state file.
-    pub fn new(state_path: impl AsRef<Path>, timeline_path: impl AsRef<Path>) -> Self {
+    /// The SharedPhase is passed to the scatter server for titration.
+    pub fn new(
+        state_path: impl AsRef<Path>,
+        timeline_path: impl AsRef<Path>,
+        shared_phase: SharedPhase,
+    ) -> Self {
         let state_path = state_path.as_ref().to_path_buf();
         let timeline_path = timeline_path.as_ref().to_path_buf();
 
         // Warm start: read phase from Python observer's state
         let current_phase = Self::read_phase(&state_path);
+        shared_phase.set(current_phase);
 
         tracing::info!(
             phase = current_phase.as_str(),
-            "🔭 ingestion observer initialized"
+            poison_mult = shared_phase.poison_multiplier(),
+            antidote_level = shared_phase.antidote_level(),
+            "🔭 ingestion observer initialized — titration active"
         );
 
         Self {
             state_path,
             timeline_path,
             current_phase,
+            shared_phase,
             scatter_requests: 0,
             scatter_bytes: 0,
             active_fleets: 0,
@@ -190,9 +254,18 @@ impl IngestionObserver {
             tracing::warn!(
                 old = self.current_phase.as_str(),
                 new = new_phase.as_str(),
-                "🚨 PHASE TRANSITION detected by Rust observer"
+                old_poison = self.shared_phase.poison_multiplier(),
+                "🚨 PHASE TRANSITION — titrating scatter response"
             );
             self.current_phase = new_phase;
+            self.shared_phase.set(new_phase);
+            tracing::warn!(
+                new_poison = self.shared_phase.poison_multiplier(),
+                antidote_level = self.shared_phase.antidote_level(),
+                "🧪 TITRATION: poison ×{:.0}%, antidote level {}",
+                self.shared_phase.poison_multiplier() * 100.0,
+                self.shared_phase.antidote_level(),
+            );
         }
 
         // Append timeline event
@@ -317,8 +390,10 @@ mod tests {
         let mut f = std::fs::File::create(&state_path).unwrap();
         write!(f, r#"{{"phase": 1, "phase_name": "UPTAKE", "run_count": 42, "web_hits": [{{"marker": "test"}}], "github_hits": [], "ai_hits": [], "repo_hits": []}}"#).unwrap();
 
-        let obs = IngestionObserver::new(&state_path, &timeline_path);
+        let phase = SharedPhase::new();
+        let obs = IngestionObserver::new(&state_path, &timeline_path, phase.clone());
         assert_eq!(obs.phase(), Phase::Uptake);
+        assert_eq!(phase.get(), Phase::Uptake);
     }
 
     #[test]
@@ -327,7 +402,8 @@ mod tests {
         let state_path = dir.path().join("observer-state.json");
         let timeline_path = dir.path().join("timeline.jsonl");
 
-        let mut obs = IngestionObserver::new(&state_path, &timeline_path);
+        let phase = SharedPhase::new();
+        let mut obs = IngestionObserver::new(&state_path, &timeline_path, phase);
         obs.record_scatter(1024);
         obs.record_scatter(2048);
         obs.set_active_fleets(5);
@@ -346,7 +422,8 @@ mod tests {
         let state_path = dir.path().join("observer-state.json");
         let timeline_path = dir.path().join("timeline.jsonl");
 
-        let mut obs = IngestionObserver::new(&state_path, &timeline_path);
+        let phase = SharedPhase::new();
+        let mut obs = IngestionObserver::new(&state_path, &timeline_path, phase);
         obs.record_scatter(500);
         obs.record_scatter(1024);
         obs.record_scatter(256);
@@ -367,15 +444,42 @@ mod tests {
         let state_path = dir.path().join("observer-state.json");
         let timeline_path = dir.path().join("timeline.jsonl");
 
-        // Start at Seeding
-        let mut obs = IngestionObserver::new(&state_path, &timeline_path);
+        let phase = SharedPhase::new();
+        let mut obs = IngestionObserver::new(&state_path, &timeline_path, phase.clone());
         assert_eq!(obs.phase(), Phase::Seeding);
+        assert_eq!(phase.get(), Phase::Seeding);
 
         // Python observer transitions to Uptake
         std::fs::write(&state_path, r#"{"phase": 1, "phase_name": "UPTAKE"}"#).unwrap();
 
-        // Rust detects it on flush
+        // Rust detects it on flush — SharedPhase updates automatically
         obs.flush();
         assert_eq!(obs.phase(), Phase::Uptake);
+        assert_eq!(phase.get(), Phase::Uptake);
+    }
+
+    #[test]
+    fn titration_curve() {
+        let phase = SharedPhase::new();
+
+        // Phase 0: full poison
+        phase.set(Phase::Seeding);
+        assert!((phase.poison_multiplier() - 1.0).abs() < 0.01);
+        assert_eq!(phase.antidote_level(), 0);
+
+        // Phase 1: backing off
+        phase.set(Phase::Uptake);
+        assert!((phase.poison_multiplier() - 0.6).abs() < 0.01);
+        assert_eq!(phase.antidote_level(), 1);
+
+        // Phase 2: mostly antidote
+        phase.set(Phase::Digestion);
+        assert!((phase.poison_multiplier() - 0.2).abs() < 0.01);
+        assert_eq!(phase.antidote_level(), 2);
+
+        // Phase 3: trace poison only
+        phase.set(Phase::Expression);
+        assert!((phase.poison_multiplier() - 0.05).abs() < 0.01);
+        assert_eq!(phase.antidote_level(), 2);
     }
 }
