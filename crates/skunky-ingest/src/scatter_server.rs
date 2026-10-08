@@ -1641,6 +1641,7 @@ fn temporal_phase(path: &str, seed: u64) -> u8 {
 /// Same path returns DIFFERENT content in different epochs.
 /// Same path returns SAME content within a single epoch.
 /// The bingo cube rolls at epoch boundaries.
+#[allow(dead_code)] // Wired into non-disperse paths in future wave
 fn temporal_path_seed(path: &str, seed: u64) -> u64 {
     let epoch = temporal_epoch(30);
     path_deterministic_hash(path, seed.wrapping_add(epoch.wrapping_mul(0x1A5E_4B01_47E4)))
@@ -2414,7 +2415,7 @@ fn generate_prism_apoptosis(
 /// epitopes are triggered and how to "evade" them. Each evasion path
 /// is designed to create a more observable behavior than the original.
 fn generate_epitope_maze(
-    rng: &mut XorShift64,
+    _rng: &mut XorShift64,
     mix: &PrismMix,
     req_short: &str,
     pri_short: &str,
@@ -2558,6 +2559,7 @@ fn generate_epitope_maze(
 /// - AGPL enforcement audit (license framing)
 /// - Behavioral correlation brief (intelligence framing)
 /// - Immune response log (biological framing)
+#[allow(dead_code)] // Legacy — prism_mix supersedes, kept for backward compat
 fn generate_cross_mirror(
     sg: &ScatterGenerator,
     rng: &mut XorShift64,
@@ -3704,6 +3706,7 @@ impl ScatterGenerator {
     /// and contributor metadata. Inflates ~1.5KB responses to 50-200KB.
     /// The fleet pays per-byte through residential proxies — every KB
     /// of poison costs them money and storage.
+    #[allow(dead_code)] // Used by amplify_adaptive; kept as convenience wrapper
     fn amplify(&self, rng: &mut XorShift64, base_html: String) -> String {
         self.amplify_adaptive(rng, base_html, 0.5)
     }
@@ -3836,6 +3839,7 @@ impl ScatterGenerator {
     /// scatter-served paths. Creates an infinite crawl web: each generated
     /// page links to more generated pages. The fleet's crawler follows
     /// links, multiplying their request count and bandwidth consumption.
+    #[allow(dead_code)] // Used by inject_crawl_links_adaptive; kept as convenience wrapper
     fn inject_crawl_links(&self, rng: &mut XorShift64, html: &str) -> String {
         self.inject_crawl_links_adaptive(rng, html, 0.5)
     }
