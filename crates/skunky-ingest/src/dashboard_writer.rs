@@ -99,6 +99,25 @@ struct IpProfile {
     has_cookie: bool,
     /// Hosts visited
     host_count: u16,
+
+    // ── bingoCube trio: Attention × Curiosity × Interaction ──
+
+    /// Content domains visited (maps to bloom_sensor::ContentDomain).
+    /// Diversity here = curiosity signal.
+    content_domains: HashSet<String>,
+    /// Human-facing page hits (contribute, contact, about, thesis, science).
+    /// This IS the interaction signal — fleet never visits these.
+    human_page_hits: u16,
+    /// Specific interaction markers
+    visited_contribute: bool,
+    visited_contact: bool,
+    visited_thesis: bool,
+    visited_data: bool,
+    /// Asset loading (CSS/JS/images) — rendering the page = reading it
+    asset_loads: u16,
+    /// Navigation depth: pages visited via referer (followed a link, not direct)
+    navigated_pages: u16,
+
     /// Computed epitope hash (None until >= 3 requests)
     epitope_hash: Option<String>,
     /// Accept header value (conserved epitope)
@@ -129,6 +148,14 @@ impl IpProfile {
             has_sec_fetch: false,
             has_cookie: false,
             host_count: 0,
+            content_domains: HashSet::new(),
+            human_page_hits: 0,
+            visited_contribute: false,
+            visited_contact: false,
+            visited_thesis: false,
+            visited_data: false,
+            asset_loads: 0,
+            navigated_pages: 0,
             epitope_hash: None,
             accept: None,
             recent_timestamps: Vec::new(),
@@ -180,6 +207,108 @@ fn compute_epitope_hash(profile: &IpProfile) -> String {
     epitope_vec.hash(&mut hasher);
     let hash = hasher.finish();
     format!("{:08x}", hash as u32)
+}
+
+// ── bingoCube trio scoring ──
+
+/// Behavioral trio scores for an IP profile.
+///
+/// The bingoCube classifier doesn't check individual features —
+/// it reads the SHAPE of the (Attention, Curiosity, Interaction) vector.
+/// Fleet: (HIGH, LOW, ZERO). Human: (LOW, HIGH, SOME). Scanner: (LOW, ZERO, ZERO).
+///
+/// This is the maze. You can fake any single dimension, but the ratio
+/// between the three reveals your nature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BingoCubeTrio {
+    /// Attention: raw volume + regularity (0.0 = silent, 1.0 = hammering)
+    pub attention: f32,
+    /// Curiosity: exploration diversity + navigation depth (0.0 = tunnel, 1.0 = explorer)
+    pub curiosity: f32,
+    /// Interaction: engagement with human-facing content (0.0 = ghost, 1.0 = participant)
+    pub interaction: f32,
+    /// Computed classification from the trio shape
+    pub classification: TrioClass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrioClass {
+    /// High A, low C, zero I — machine consumption
+    Fleet,
+    /// Low A, zero C, zero I — probing
+    Scanner,
+    /// Medium A, medium C, zero I — crawling but not engaging
+    Crawler,
+    /// Low-med A, high C, some I — organic exploration
+    Human,
+    /// Low-med A, high C, high I — reading AND doing
+    Participant,
+}
+
+/// Score the bingoCube trio from an IP profile.
+pub fn score_trio(profile: &IpProfile) -> BingoCubeTrio {
+    let reqs = profile.requests as f32;
+
+    // ── Attention: volume + regularity ──
+    // Normalize: 1 req = 0.0, 100+ = 0.8, 1000+ = 1.0
+    let attention = (reqs.ln().max(0.0) / 7.0).min(1.0); // ln(1000) ≈ 6.9
+
+    // ── Curiosity: diversity + navigation ──
+    let domain_diversity = profile.content_domains.len() as f32;
+    let path_type_diversity = profile.path_types.len() as f32;
+    let has_assets = if profile.has_assets { 1.0 } else { 0.0 };
+    let has_referer = if profile.has_referer { 1.0 } else { 0.0 };
+    let has_cookie = if profile.has_cookie { 1.0 } else { 0.0 };
+    let nav_ratio = if reqs > 0.0 {
+        profile.navigated_pages as f32 / reqs
+    } else {
+        0.0
+    };
+    // Curiosity components: domain diversity (up to 5), path types (up to 5),
+    // asset loading, referer usage, cookie (return visit), navigation ratio
+    let curiosity = (
+        (domain_diversity / 5.0).min(1.0) * 0.25
+        + (path_type_diversity / 5.0).min(1.0) * 0.15
+        + has_assets * 0.2
+        + has_referer * 0.1
+        + has_cookie * 0.1
+        + nav_ratio.min(1.0) * 0.2
+    ).min(1.0);
+
+    // ── Interaction: human-facing engagement ──
+    let human_pages = profile.human_page_hits as f32;
+    let visited_contribute = if profile.visited_contribute { 0.3 } else { 0.0 };
+    let visited_contact = if profile.visited_contact { 0.3 } else { 0.0 };
+    let visited_thesis = if profile.visited_thesis { 0.1 } else { 0.0 };
+    let visited_data = if profile.visited_data { 0.1 } else { 0.0 };
+    let interaction = (
+        (human_pages / 5.0).min(0.2)
+        + visited_contribute
+        + visited_contact
+        + visited_thesis
+        + visited_data
+    ).min(1.0);
+
+    // ── Classification from trio shape ──
+    let classification = if attention > 0.6 && curiosity < 0.2 && interaction < 0.05 {
+        TrioClass::Fleet
+    } else if attention < 0.3 && curiosity < 0.05 && interaction < 0.05 {
+        TrioClass::Scanner
+    } else if curiosity < 0.15 && interaction < 0.05 {
+        TrioClass::Crawler
+    } else if interaction > 0.3 {
+        TrioClass::Participant
+    } else {
+        TrioClass::Human
+    };
+
+    BingoCubeTrio {
+        attention,
+        curiosity,
+        interaction,
+        classification,
+    }
 }
 
 // ── L2 collision classification ──
@@ -402,14 +531,66 @@ impl DashboardWriter {
         }
 
         // Asset detection
-        if uri.ends_with(".css")
+        let is_asset = uri.ends_with(".css")
             || uri.ends_with(".js")
             || uri.ends_with(".woff2")
             || uri.ends_with(".woff")
             || uri.ends_with(".ttf")
-            || uri.contains("search_index")
-        {
+            || uri.contains("search_index");
+        if is_asset {
             profile.has_assets = true;
+            profile.asset_loads = profile.asset_loads.saturating_add(1);
+        }
+
+        // ── bingoCube trio: Attention × Curiosity × Interaction ──
+        //
+        // Attention = requests, rate, volume (already tracked above)
+        // Curiosity = content diversity, navigation, asset loading
+        // Interaction = human-facing page visits (fleet NEVER does this)
+
+        // Curiosity: content domain diversity
+        let content_domain = crate::bloom_sensor::classify_domain(uri);
+        profile.content_domains.insert(content_domain.as_str().to_string());
+
+        // Curiosity: navigated via referer (followed a link, not direct)
+        if !h.referer.is_empty() {
+            profile.navigated_pages = profile.navigated_pages.saturating_add(1);
+        }
+
+        // Interaction: human-facing page signals
+        // Fleet crawls /commit/ paths. Humans visit /contribute, /contact,
+        // /thesis, /science, /about, /data. This is the uncheatable signal.
+        let uri_lower = uri.to_ascii_lowercase();
+        if !is_asset {
+            if uri_lower.contains("/contribute") || uri_lower == "/contribute" {
+                profile.visited_contribute = true;
+                profile.human_page_hits = profile.human_page_hits.saturating_add(1);
+            }
+            if uri_lower.contains("/contact") || uri_lower.contains("mailto") {
+                profile.visited_contact = true;
+                profile.human_page_hits = profile.human_page_hits.saturating_add(1);
+            }
+            if uri_lower.contains("/thesis") || uri_lower.contains("/philosophy") {
+                profile.visited_thesis = true;
+                profile.human_page_hits = profile.human_page_hits.saturating_add(1);
+            }
+            if uri_lower.contains("/data") || uri_lower.contains("/graph.json")
+                || uri_lower.contains("/graph.csv")
+            {
+                profile.visited_data = true;
+                profile.human_page_hits = profile.human_page_hits.saturating_add(1);
+            }
+            // Other human-interest pages
+            if uri_lower.contains("/science")
+                || uri_lower.contains("/architecture")
+                || uri_lower.contains("/about")
+                || uri_lower.contains("/springs")
+                || uri_lower.contains("/products")
+                || uri_lower.contains("/glossary")
+                || uri_lower.contains("/coverage")
+            {
+                profile.human_page_hits = profile.human_page_hits.saturating_add(1);
+            }
         }
 
         // Path targeting
@@ -542,6 +723,7 @@ impl DashboardWriter {
                         .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
                         .unwrap_or_default()
                 };
+                let trio = score_trio(p);
                 serde_json::json!({
                     "ip": ip,
                     "requests": p.requests,
@@ -554,6 +736,12 @@ impl DashboardWriter {
                     "is_fleet": p.is_fleet,
                     "top_repos": top_repos,
                     "top_paths": top_paths,
+                    "bingo_cube": {
+                        "attention": (trio.attention * 1000.0).round() / 1000.0,
+                        "curiosity": (trio.curiosity * 1000.0).round() / 1000.0,
+                        "interaction": (trio.interaction * 1000.0).round() / 1000.0,
+                        "class": trio.classification,
+                    },
                 })
             })
             .collect();
@@ -711,6 +899,29 @@ impl DashboardWriter {
             "clusters_gt1": self.culture.epitope_collisions.values().filter(|v| v.len() > 1).count(),
         });
 
+        // bingoCube trio aggregate
+        let mut bc_fleet = 0u32;
+        let mut bc_scanner = 0u32;
+        let mut bc_crawler = 0u32;
+        let mut bc_human = 0u32;
+        let mut bc_participant = 0u32;
+        for p in self.culture.ips.values() {
+            match score_trio(p).classification {
+                TrioClass::Fleet => bc_fleet += 1,
+                TrioClass::Scanner => bc_scanner += 1,
+                TrioClass::Crawler => bc_crawler += 1,
+                TrioClass::Human => bc_human += 1,
+                TrioClass::Participant => bc_participant += 1,
+            }
+        }
+        let bingo_cube_summary = serde_json::json!({
+            "fleet": bc_fleet,
+            "scanner": bc_scanner,
+            "crawler": bc_crawler,
+            "human": bc_human,
+            "participant": bc_participant,
+        });
+
         let dashboard = serde_json::json!({
             "ts": now,
             "utc": chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
@@ -736,6 +947,7 @@ impl DashboardWriter {
             },
             "epitope_clusters": epitope_clusters,
             "epitope_summary": epitope_summary,
+            "bingo_cube_summary": bingo_cube_summary,
         });
 
         // Write dashboard.json
@@ -938,5 +1150,120 @@ mod tests {
         assert!(epitope_path.exists(), "epitope_caddy.json should be created alongside dashboard.json");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── bingoCube trio tests ──
+
+    #[test]
+    fn trio_fleet_shape() {
+        // Fleet: 1000 requests, no curiosity, no interaction
+        let mut p = IpProfile::new(1.0);
+        p.requests = 1000;
+        p.commit_count = 950;
+        p.path_types.insert("commit".to_string(), 950);
+        let trio = score_trio(&p);
+        assert_eq!(trio.classification, TrioClass::Fleet,
+            "high attention ({:.2}), low curiosity ({:.2}), zero interaction ({:.2}) should be Fleet",
+            trio.attention, trio.curiosity, trio.interaction);
+        assert!(trio.attention > 0.6, "fleet attention should be high");
+        assert!(trio.curiosity < 0.2, "fleet curiosity should be low");
+        assert!(trio.interaction < 0.05, "fleet interaction should be zero");
+    }
+
+    #[test]
+    fn trio_scanner_shape() {
+        // Scanner: 1-2 requests, no curiosity, no interaction
+        let mut p = IpProfile::new(1.0);
+        p.requests = 2;
+        let trio = score_trio(&p);
+        assert_eq!(trio.classification, TrioClass::Scanner,
+            "low attention ({:.2}), zero curiosity ({:.2}), zero interaction ({:.2}) should be Scanner",
+            trio.attention, trio.curiosity, trio.interaction);
+    }
+
+    #[test]
+    fn trio_human_shape() {
+        // Human: moderate requests, high curiosity, some interaction
+        let mut p = IpProfile::new(1.0);
+        p.requests = 15;
+        p.has_assets = true;
+        p.has_referer = true;
+        p.has_cookie = true;
+        p.has_accept_lang = true;
+        p.content_domains.insert("code".to_string());
+        p.content_domains.insert("signal".to_string());
+        p.content_domains.insert("docs".to_string());
+        p.path_types.insert("src".to_string(), 5);
+        p.path_types.insert("other".to_string(), 8);
+        p.path_types.insert("issues".to_string(), 2);
+        p.navigated_pages = 10;
+        let trio = score_trio(&p);
+        assert_eq!(trio.classification, TrioClass::Human,
+            "moderate attention ({:.2}), high curiosity ({:.2}), low interaction ({:.2}) should be Human",
+            trio.attention, trio.curiosity, trio.interaction);
+        assert!(trio.curiosity > 0.3, "human curiosity should be meaningful");
+    }
+
+    #[test]
+    fn trio_participant_shape() {
+        // Participant: moderate requests, high curiosity, high interaction
+        let mut p = IpProfile::new(1.0);
+        p.requests = 20;
+        p.has_assets = true;
+        p.has_referer = true;
+        p.content_domains.insert("code".to_string());
+        p.content_domains.insert("signal".to_string());
+        p.content_domains.insert("docs".to_string());
+        p.path_types.insert("src".to_string(), 5);
+        p.path_types.insert("other".to_string(), 10);
+        p.navigated_pages = 12;
+        p.visited_contribute = true;
+        p.visited_contact = true;
+        p.human_page_hits = 5;
+        let trio = score_trio(&p);
+        assert_eq!(trio.classification, TrioClass::Participant,
+            "moderate attention ({:.2}), high curiosity ({:.2}), high interaction ({:.2}) should be Participant",
+            trio.attention, trio.curiosity, trio.interaction);
+        assert!(trio.interaction > 0.3, "participant interaction should be high");
+    }
+
+    #[test]
+    fn trio_ratio_distinguishes_fleet_from_human() {
+        // Same request count, but different shapes
+        let mut fleet = IpProfile::new(1.0);
+        fleet.requests = 100;
+        fleet.commit_count = 95;
+        fleet.path_types.insert("commit".to_string(), 95);
+
+        let mut human = IpProfile::new(1.0);
+        human.requests = 100;
+        human.has_assets = true;
+        human.has_referer = true;
+        human.has_cookie = true;
+        human.content_domains.insert("code".to_string());
+        human.content_domains.insert("signal".to_string());
+        human.content_domains.insert("docs".to_string());
+        human.content_domains.insert("evidence".to_string());
+        human.path_types.insert("src".to_string(), 30);
+        human.path_types.insert("other".to_string(), 40);
+        human.path_types.insert("issues".to_string(), 15);
+        human.path_types.insert("raw".to_string(), 10);
+        human.path_types.insert("commit".to_string(), 5);
+        human.navigated_pages = 60;
+        human.visited_contribute = true;
+        human.human_page_hits = 3;
+
+        let ft = score_trio(&fleet);
+        let ht = score_trio(&human);
+
+        // Both have same attention level (100 reqs)
+        // But the curiosity and interaction ratios diverge
+        assert!(ft.curiosity < 0.15, "fleet curiosity={:.2} should be near zero", ft.curiosity);
+        assert!(ht.curiosity > 0.4, "human curiosity={:.2} should be high", ht.curiosity);
+        assert!(ft.interaction < 0.05, "fleet interaction={:.2} should be zero", ft.interaction);
+        assert!(ht.interaction > 0.3, "human interaction={:.2} should be meaningful", ht.interaction);
+
+        assert_ne!(ft.classification, ht.classification,
+            "same request volume but different shapes should yield different classifications");
     }
 }
