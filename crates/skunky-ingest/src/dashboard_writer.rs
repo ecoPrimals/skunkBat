@@ -29,30 +29,78 @@ use crate::caddy;
 
 // ── GEO/WHOIS lookup for known ranges ──
 
-/// Simple GEO lookup from known IP ranges.
+/// GEO lookup from known IP ranges — progressive subdivision.
+///
+/// Resolution sharpens as we identify more ranges from WHOIS data.
+/// Country → region → city → ASN → fiber.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GeoInfo {
     org: String,
     country: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    city: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    asn_type: Option<String>,
 }
+
+/// (prefix, org, country, region, city, asn_type)
+type GeoEntry = (&'static str, &'static str, &'static str, &'static str, &'static str, &'static str);
 
 fn geo_lookup(ip: &str) -> GeoInfo {
     // Ordered longest-prefix-first to avoid false matches on short prefixes.
-    let prefixes: &[(&str, &str, &str)] = &[
-        ("216.73.216.", "Anthropic", "US"),
-        ("57.141.", "Meta Platforms (FB-BLOCK)", "IE/US"),
-        ("173.252.", "Meta Platforms", "US"),
-        ("66.249.", "Google", "US"),
-        ("157.55.", "Microsoft", "US"),
-        ("100.27.", "AWS", "US"),
-        ("100.28.", "AWS", "US"),
+    // Progressive subdivision: as we identify ranges, we add region/city/ASN.
+    let prefixes: &[GeoEntry] = &[
+        // ── Meta Platforms ──
+        ("57.141.20.", "Meta Platforms (FB-BLOCK)", "IE/US", "Dublin/Menlo Park", "Dublin DC", "datacenter"),
+        ("57.141.", "Meta Platforms (FB-BLOCK)", "IE/US", "Dublin", "", "datacenter"),
+        ("173.252.70.", "Meta Platforms", "US", "California", "Menlo Park", "datacenter"),
+        ("173.252.107.", "Meta Platforms", "US", "California", "Menlo Park", "datacenter"),
+        ("173.252.", "Meta Platforms", "US", "California", "", "datacenter"),
+        // ── Anthropic ──
+        ("216.73.216.", "Anthropic", "US", "California", "San Francisco", "datacenter"),
+        // ── Cloud providers ──
+        ("116.204.78.", "Huawei Cloud", "CN", "Guangdong", "Shenzhen", "cloud"),
+        ("49.0.245.", "Huawei Cloud", "HK", "Hong Kong", "Hong Kong", "cloud"),
+        ("119.12.174.", "Huawei Cloud", "HK", "Hong Kong", "Hong Kong", "cloud"),
+        ("47.79.13.", "Alibaba Cloud", "US", "California", "San Mateo", "cloud"),
+        ("47.79.", "Alibaba Cloud", "US", "California", "", "cloud"),
+        ("16.216.88.", "HPE (Hewlett Packard Enterprise)", "US", "Texas", "Spring", "datacenter"),
+        ("16.216.", "HPE (Hewlett Packard Enterprise)", "US", "Texas", "", "datacenter"),
+        ("100.27.", "AWS", "US", "Virginia", "Ashburn", "cloud"),
+        ("100.28.", "AWS", "US", "Virginia", "Ashburn", "cloud"),
+        // ── Hosting/VPS ──
+        ("79.139.58.", "RackForest (VPS)", "HU", "Budapest", "", "vps"),
+        ("178.124.154.", "EvroRith", "BY", "Minsk", "Minsk", "hosting"),
+        // ── ISP / Residential ──
+        ("76.32.61.", "Charter Communications", "US", "Colorado", "Greenwood Village", "residential"),
+        ("76.32.", "Charter Communications", "US", "Colorado", "", "residential"),
+        ("174.168.153.", "Comcast Cable", "US", "New Jersey", "Mt Laurel", "residential"),
+        ("174.168.", "Comcast Cable", "US", "New Jersey", "", "residential"),
+        // ── Telecom ──
+        ("180.153.197.", "ChinaNet Shanghai", "CN", "Shanghai", "Shanghai", "telecom"),
+        ("180.153.", "ChinaNet Shanghai", "CN", "Shanghai", "", "telecom"),
+        ("46.250.169.", "Unknown (EU allocation)", "EU", "", "", "unknown"),
+        // ── Colocation / Transit ──
+        ("65.49.20.", "Hurricane Electric", "US", "California", "Fremont", "colocation"),
+        ("65.49.", "Hurricane Electric", "US", "California", "", "colocation"),
+        // ── Search engines ──
+        ("66.249.", "Google", "US", "California", "Mountain View", "datacenter"),
+        ("157.55.", "Microsoft (Bing)", "US", "Washington", "Redmond", "datacenter"),
+        // ── Self ──
+        ("162.226.225.", "House network", "US", "Michigan", "", "self"),
+        ("10.13.37.", "WireGuard mesh", "MESH", "", "", "self"),
     ];
 
-    for &(prefix, org, country) in prefixes {
-        if ip.starts_with(prefix) {
+    for entry in prefixes {
+        if ip.starts_with(entry.0) {
             return GeoInfo {
-                org: org.to_string(),
-                country: country.to_string(),
+                org: entry.1.to_string(),
+                country: entry.2.to_string(),
+                region: if entry.3.is_empty() { None } else { Some(entry.3.to_string()) },
+                city: if entry.4.is_empty() { None } else { Some(entry.4.to_string()) },
+                asn_type: if entry.5.is_empty() { None } else { Some(entry.5.to_string()) },
             };
         }
     }
@@ -60,6 +108,9 @@ fn geo_lookup(ip: &str) -> GeoInfo {
     GeoInfo {
         org: "Unknown".to_string(),
         country: "??".to_string(),
+        region: None,
+        city: None,
+        asn_type: None,
     }
 }
 
@@ -371,6 +422,15 @@ struct DashboardCulture {
     repo_totals: HashMap<String, u64>,
     /// Country estimates
     country_counts: HashMap<String, u64>,
+    /// Region estimates (country:region key)
+    #[serde(default)]
+    region_counts: HashMap<String, u64>,
+    /// City estimates (country:region:city key)
+    #[serde(default)]
+    city_counts: HashMap<String, u64>,
+    /// ASN type counts
+    #[serde(default)]
+    asn_type_counts: HashMap<String, u64>,
     /// Subnet counts
     subnet_counts: HashMap<String, u64>,
     /// Timing intervals (rolling, capped at 2000)
@@ -645,7 +705,20 @@ impl DashboardWriter {
         };
         *self.culture.subnet_counts.entry(subnet).or_insert(0) += 1;
         let geo = geo_lookup(ip);
-        *self.culture.country_counts.entry(geo.country).or_insert(0) += 1;
+        *self.culture.country_counts.entry(geo.country.clone()).or_insert(0) += 1;
+        if let Some(ref region) = geo.region {
+            let key = format!("{}:{}", geo.country, region);
+            *self.culture.region_counts.entry(key).or_insert(0) += 1;
+        }
+        if let Some(ref city) = geo.city {
+            if let Some(ref region) = geo.region {
+                let key = format!("{}:{}:{}", geo.country, region, city);
+                *self.culture.city_counts.entry(key).or_insert(0) += 1;
+            }
+        }
+        if let Some(ref asn_type) = geo.asn_type {
+            *self.culture.asn_type_counts.entry(asn_type.clone()).or_insert(0) += 1;
+        }
 
         // Epitope hashing (after >= 3 requests)
         if profile.requests >= 3 && profile.epitope_hash.is_none() {
@@ -731,6 +804,9 @@ impl DashboardWriter {
                     "last_seen": fmt_ts(p.last_seen),
                     "org": geo.org,
                     "country": geo.country,
+                    "region": geo.region,
+                    "city": geo.city,
+                    "asn_type": geo.asn_type,
                     "desc": format!("{} ({})", geo.org, geo.country),
                     "subnet": subnet,
                     "is_fleet": p.is_fleet,
@@ -764,6 +840,9 @@ impl DashboardWriter {
                     "unique_ips": ips_in_subnet,
                     "org": geo.org,
                     "country": geo.country,
+                    "region": geo.region,
+                    "city": geo.city,
+                    "asn_type": geo.asn_type,
                 })
             })
             .collect();
@@ -785,13 +864,47 @@ impl DashboardWriter {
             }
         }
 
-        // Geography
+        // Geography — progressive subdivision
         let mut geo_sorted: Vec<_> = self.culture.country_counts.iter().collect();
         geo_sorted.sort_by(|a, b| b.1.cmp(a.1));
         let geo_json: Vec<serde_json::Value> = geo_sorted
             .iter()
-            .map(|(country, count)| serde_json::json!({"country": country, "requests": count}))
+            .map(|(country, count)| {
+                // Collect regions within this country
+                let mut regions: Vec<serde_json::Value> = self.culture.region_counts.iter()
+                    .filter(|(k, _)| k.starts_with(&format!("{}:", country)))
+                    .map(|(k, v)| {
+                        let region = k.splitn(2, ':').nth(1).unwrap_or("??");
+                        // Collect cities within this region
+                        let cities: Vec<serde_json::Value> = self.culture.city_counts.iter()
+                            .filter(|(ck, _)| ck.starts_with(&format!("{}:{}:", country, region)))
+                            .map(|(ck, cv)| {
+                                let city = ck.rsplitn(2, ':').next().unwrap_or("??");
+                                serde_json::json!({"city": city, "requests": cv})
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "region": region,
+                            "requests": v,
+                            "cities": cities,
+                        })
+                    })
+                    .collect();
+                regions.sort_by(|a, b| {
+                    let ar = a["requests"].as_u64().unwrap_or(0);
+                    let br = b["requests"].as_u64().unwrap_or(0);
+                    br.cmp(&ar)
+                });
+                serde_json::json!({
+                    "country": country,
+                    "requests": count,
+                    "regions": regions,
+                })
+            })
             .collect();
+
+        // ASN type breakdown
+        let asn_types: serde_json::Value = serde_json::json!(self.culture.asn_type_counts);
 
         // Timing analysis
         let timing = if self.culture.fleet_timing_intervals.len() > 10 {
@@ -938,6 +1051,7 @@ impl DashboardWriter {
             "targets": targets_json,
             "path_types": path_types,
             "geography": geo_json,
+            "asn_types": asn_types,
             "timing": timing,
             "collision_level2": {
                 "genuine": collision_counts.get("genuine").copied().unwrap_or(0),
