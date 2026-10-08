@@ -13,6 +13,7 @@ pub mod cloudflare;
 pub mod cursor;
 pub mod entity_classifier;
 pub mod epitope_inversion;
+pub mod epitope_lure;
 pub mod error;
 pub mod federation;
 pub mod fleet;
