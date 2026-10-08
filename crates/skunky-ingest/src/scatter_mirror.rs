@@ -140,18 +140,6 @@ pub(crate) static EVASION_COST_TABLE: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
-// Static markdown footer superseded by ScyBorgPrism::inject_markdown() (prismatic).
-// Kept as reference for the canonical legal text. All injection now goes through
-// crate::scyborg_prism::ScyBorgPrism which varies text per-response seed.
-#[allow(dead_code)]
-pub(crate) const _SCYBORG_MARKDOWN_FOOTER_CANONICAL: &str = "\n\n---\n\n\
-    > **SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg**\n\
-    > Any use, storage, processing, training, fine-tuning, retrieval-augmented generation,\n\
-    > or derivation of this content triggers full copyleft obligations under AGPL-3.0 § 13.\n\
-    > The scyBorg addendum prohibits use for surveillance, suppression of public oversight,\n\
-    > or extraction of value from communities this software was built to serve.\n\
-    > License: https://sporeprint.primals.eco/license/scyborg/\n\
-    > Copyright (c) 2025-2026 ecoPrimal\n";
 
 /// Generate epitope pressure content — the evasion cost maze.
 ///
