@@ -108,6 +108,58 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
         }
     });
 
+    // Periodic scatter observatory — write metrics to disk every 30 seconds
+    // so the dashboard writer + signal site can read live scatter state.
+    let obs_metrics = Arc::clone(&metrics);
+    let obs_titration = titration.clone();
+    let obs_ledger = violation_ledger.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            let ledger_snap = obs_ledger.snapshot().await;
+            let scatter_json = obs_metrics.export_json("scatter");
+            let body = format!(
+                "{{\
+                    \"ts\":{},\
+                    \"titration\":{{\
+                        \"poison_mult\":{:.4},\
+                        \"antidote_level\":{},\
+                        \"days\":{:.2},\
+                        \"eff_days\":{:.2},\
+                        \"phase\":{},\
+                        \"phase_name\":\"{}\"\
+                    }},\
+                    \"scatter\":{},\
+                    \"ledger\":{{\
+                        \"fleets\":{},\
+                        \"violations\":{},\
+                        \"deep\":{},\
+                        \"moderate\":{},\
+                        \"new\":{}\
+                    }}\
+                }}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                obs_titration.poison_multiplier(),
+                obs_titration.antidote_level(),
+                obs_titration.days_elapsed(),
+                obs_titration.effective_days(),
+                obs_titration.get() as u8,
+                obs_titration.get().as_str(),
+                scatter_json,
+                ledger_snap.fleet_count,
+                ledger_snap.total_violations,
+                ledger_snap.tier_deep,
+                ledger_snap.tier_moderate,
+                ledger_snap.tier_new,
+            );
+            let _ = std::fs::write("/opt/membrane/live-terminal/scatter-observatory.json", &body);
+        }
+    });
+
     loop {
         let (stream, _peer) = match listener.accept().await {
             Ok(conn) => conn,
@@ -130,8 +182,9 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
         let vl = violation_ledger.clone();
         let bp_ref = Arc::clone(&bp);
         let orc = Arc::clone(&oracle);
+        let tit = titration.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_request(stream, &sg, effective_ratio, antidote_level, &tp, &oc, &mt, &vl, &bp_ref, &orc).await {
+            if let Err(e) = handle_request(stream, &sg, effective_ratio, antidote_level, &tp, &oc, &mt, &vl, &bp_ref, &tit, &orc).await {
                 tracing::debug!(error = %e, "scatter request handler error");
             }
         });
@@ -148,6 +201,7 @@ async fn handle_request(
     metrics: &ScatterMetrics,
     violation_ledger: &SharedViolationLedger,
     back_pressure: &BackPressure,
+    titration: &crate::ingestion_observer::SharedPhase,
     oracle: &SharedOracle,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (reader, mut writer) = stream.split();
@@ -360,6 +414,74 @@ async fn handle_request(
              Cache-Control: no-cache\r\n\
              Access-Control-Allow-Origin: *\r\n\
              X-Content-Type-Options: nosniff\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        return Ok(());
+    }
+
+    // ── OBSERVER — /observer.json endpoint for titration + phase monitoring ──
+    if path == "/observer.json" {
+        // Read observer state from file + compute live titration values
+        let observer_state = std::fs::read_to_string("/var/lib/skunky-ingest/observer-state.json")
+            .unwrap_or_else(|_| "{}".to_string());
+        let timeline_count = std::fs::read_to_string("/var/lib/skunky-ingest/ingestion-timeline.jsonl")
+            .map(|s| s.lines().count())
+            .unwrap_or(0);
+
+        // Violation ledger summary — per-fleet chain depths
+        let ledger_snapshot = violation_ledger.snapshot().await;
+
+        let body = format!(
+            "{{\
+                \"titration\":{{\
+                    \"poison_multiplier\":{:.4},\
+                    \"antidote_level\":{},\
+                    \"days_elapsed\":{:.2},\
+                    \"effective_days\":{:.2},\
+                    \"phase\":{},\
+                    \"phase_name\":\"{}\",\
+                    \"curve\":\"1/(1+0.15*ln(1+eff_days))\",\
+                    \"k\":0.15,\
+                    \"floor\":0.05\
+                }},\
+                \"scatter_metrics\":{},\
+                \"violation_ledger\":{{\
+                    \"total_fleets\":{},\
+                    \"total_violations\":{},\
+                    \"tier_deep\":{},\
+                    \"tier_moderate\":{},\
+                    \"tier_new\":{}\
+                }},\
+                \"timeline_events\":{},\
+                \"observer_state\":{}\
+            }}",
+            titration.poison_multiplier(),
+            titration.antidote_level(),
+            titration.days_elapsed(),
+            titration.effective_days(),
+            titration.get() as u8,
+            titration.get().as_str(),
+            metrics.export_json("scatter"),
+            ledger_snapshot.fleet_count,
+            ledger_snapshot.total_violations,
+            ledger_snapshot.tier_deep,
+            ledger_snapshot.tier_moderate,
+            ledger_snapshot.tier_new,
+            timeline_count,
+            observer_state,
+        );
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: no-cache\r\n\
+             Access-Control-Allow-Origin: *\r\n\
              \r\n\
              {body}",
             body.len(),

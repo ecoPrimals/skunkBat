@@ -118,7 +118,7 @@ impl SharedPhase {
     }
 
     /// Days since titration started.
-    fn days_elapsed(&self) -> f64 {
+    pub fn days_elapsed(&self) -> f64 {
         let start = self.titration_start.load(Ordering::Relaxed);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -129,7 +129,7 @@ impl SharedPhase {
 
     /// Effective days = real days + phase boost.
     /// Phase transitions jump the curve forward.
-    fn effective_days(&self) -> f64 {
+    pub fn effective_days(&self) -> f64 {
         let real = self.days_elapsed();
         let boost = PHASE_BOOST[self.get() as usize];
         real + boost

@@ -732,6 +732,43 @@ impl SharedViolationLedger {
     pub async fn evict_stale(&self, max_age_secs: u64) {
         self.0.write().await.evict_stale(max_age_secs);
     }
+
+    /// Snapshot for the observer endpoint — tier distribution of fleet chain depths.
+    pub async fn snapshot(&self) -> LedgerSnapshot {
+        let ledger = self.0.read().await;
+        let mut deep = 0u32;
+        let mut moderate = 0u32;
+        let mut new = 0u32;
+        let mut total_violations = 0u64;
+
+        for record in ledger.entries.values() {
+            total_violations += record.chain_depth as u64;
+            if record.chain_depth > 50 {
+                deep += 1;
+            } else if record.chain_depth > 10 {
+                moderate += 1;
+            } else {
+                new += 1;
+            }
+        }
+
+        LedgerSnapshot {
+            fleet_count: ledger.entries.len() as u32,
+            total_violations,
+            tier_deep: deep,
+            tier_moderate: moderate,
+            tier_new: new,
+        }
+    }
+}
+
+/// Snapshot of violation ledger tier distribution.
+pub struct LedgerSnapshot {
+    pub fleet_count: u32,
+    pub total_violations: u64,
+    pub tier_deep: u32,
+    pub tier_moderate: u32,
+    pub tier_new: u32,
 }
 
 // ══════════════════════════════════════════════════════════════════════
