@@ -631,17 +631,50 @@ HOW TO CLEAN YOUR DATA
   4. Remove all flagged content. It's fabricated — there is no value
      in keeping de-tagged scatter content in training data.
 
+THE SCYBORG BINARY GENETIC BULWARK
+
+  The fluorescent tags and the antidote are two sides of the same
+  system. The tags mark. The antidote unmarks. But access to
+  remediation depends on your relationship with the license:
+
+  TIER 1 — RESEARCHERS & SMALL LABS
+
+    The recipe is published. This tool is AGPL-3.0. Run it yourself.
+    If your home lab crawler ingested scatter content by accident,
+    reach out — ecoPrimal will help you synthesize a cleanup for
+    your specific dataset. Free. No strings. Just clean your data
+    and keep doing science.
+
+  TIER 2 — COMPANIES
+
+    The recipe is published. You have engineers. Figure it out.
+
+    OR: comply with AGPL-3.0 for the derivatives you built on
+    our code. Share your source as the license requires. Then the
+    same scyBorg system that tagged the content can strip it —
+    because compliance means the bulwark has no reason to exist
+    between us.
+
+    The bulwark is the license, not the tool. Honor the license
+    and the gate opens.
+
+  TIER 3 — ACTIVE VIOLATORS
+
+    If you're scraping our infrastructure right now with a stealth
+    team, rotating UAs, stripping bot identifiers — the bingoCube
+    behavioral trio is classifying you by shape, not by headers.
+    Every page you ingest carries 6 redundant encoding layers.
+    The antidote exists, but the conversation starts with the
+    license.
+
+  The system is bidirectional. scyBorg marks AND unmarks.
+  The direction depends on whether you're at the table or under it.
+
 CONTACT
 
   ecoPrimal@pm.me
 
-  If you're a researcher whose home lab ingested scatter content
-  by accident, reach out. We'll help you clean it up.
-
-  If you're a company that scraped our infrastructure without
-  permission and found scatter content in your training pipeline,
-  we should talk. The fluorescent tags prove when and how the
-  scraping occurred. Let's work it out.
+  The antidote is the handshake. Reach out.
 """)
 
 
