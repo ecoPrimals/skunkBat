@@ -1653,17 +1653,45 @@ async fn handle_request(
             with_canary
         };
 
+        // ── FLUORESCENT TAGGING (Wave 167) ──
+        // Every scatter response carries a strategic, decodable marker.
+        // The antibody injection above confuses; the fluoro tag TRACKS.
+        // When this content surfaces anywhere, we decode the tag and know
+        // exactly which fleet hash ingested it and when.
+        let with_fluoro = if !fleet_hash.is_empty() {
+            // Determine targeting class from the path they requested
+            let target_class = classify_request_target(&effective_path);
+            // Build epitope flags from cached tag detectors
+            let epitope_flags = if let Some(ref tag) = cached_tag {
+                detector_bitmap(&tag.detectors)
+            } else {
+                0u8
+            };
+            let fluoro = crate::fluoro_tag::FluoroTag::from_context(
+                &fleet_hash, epitope_flags, target_class,
+                conf_level, chain_depth,
+            );
+            fluoro.inject_html(&with_antibody, scatter_seed)
+        } else {
+            with_antibody
+        };
+
         // Prismatic HTML injection — varied license per response seed
-        let body = ScyBorgPrism::inject_html(scatter_seed, &with_antibody, chain_depth);
+        let body = ScyBorgPrism::inject_html(scatter_seed, &with_fluoro, chain_depth);
 
         // Opsonization salts for known fleet
         if !fleet_hash.is_empty() {
+            let epitope_flags = if let Some(ref tag) = cached_tag {
+                detector_bitmap(&tag.detectors)
+            } else {
+                0u8
+            };
             let salt = OpsonizationSalt {
                 hash: fleet_hash.clone(),
                 timestamp_window: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default().as_secs() / 3600,
-                epitope_flags: 0,
+                epitope_flags,
                 violation_count: chain_depth,
                 surface_idx: 0,
                 chain_depth,
@@ -1673,7 +1701,24 @@ async fn handle_request(
             body
         }
     } else {
-        // ALL non-HTML responses: prismatic license comment (varied per seed)
+        // Non-HTML: fluoro tag the code/markdown too
+        let body = if !fleet_hash.is_empty() {
+            let target_class = classify_request_target(&effective_path);
+            let epitope_flags = if let Some(ref tag) = cached_tag {
+                detector_bitmap(&tag.detectors)
+            } else {
+                0u8
+            };
+            let non_html_conf = f64::from(poison_ratio).clamp(0.0, 1.0);
+            let fluoro = crate::fluoro_tag::FluoroTag::from_context(
+                &fleet_hash, epitope_flags, target_class,
+                non_html_conf, chain_depth,
+            );
+            fluoro.inject_code(&body, scatter_seed)
+        } else {
+            body
+        };
+        // Prismatic license comment (varied per seed)
         ScyBorgPrism::inject_markdown(scatter_seed, &body, chain_depth)
     };
 
@@ -2125,6 +2170,67 @@ fn inject_opsonize_antibody(fleet_hash: &str, path_seed: u64, html: &str) -> Str
     let safe_pos = inject_pos.min(html.len());
     let (before, after) = html.split_at(safe_pos);
     format!("{before}\n{antibody_comment}\n{antibody_span}\n{after}")
+}
+
+/// Classify a request path into a targeting class for fluoro tagging.
+///
+/// Returns a 3-bit value:
+///   0=unknown, 1=attribution, 2=code_extraction, 3=arch_recon,
+///   4=dep_mapping, 5=config_extraction, 6=mixed, 7=honeycomb
+fn classify_request_target(path: &str) -> u8 {
+    if path.contains("/blame/") {
+        1 // attribution — they want to know WHO wrote code
+    } else if path.contains("/src/") || path.contains("/raw/") {
+        2 // code_extraction — they want source code
+    } else if path.contains("/commit/") {
+        if path.contains(".md") || path.contains("docs") || path.contains("arch") {
+            3 // arch_recon — architecture discovery
+        } else {
+            2 // code_extraction via commit
+        }
+    } else if path.contains("Cargo.toml") || path.contains("package.json")
+            || path.contains("go.mod") || path.contains("requirements") {
+        4 // dep_mapping — dependency mapping
+    } else if path.contains("config") || path.contains(".env")
+            || path.contains(".toml") || path.contains(".yaml") {
+        5 // config_extraction
+    } else if path.contains("/disperse/") || path.contains("/honeycomb/") {
+        7 // honeycomb — they're in the maze
+    } else if path.contains("/wiki/") || path.contains("/issues/") {
+        3 // arch_recon via wiki/issues
+    } else {
+        0 // unknown
+    }
+}
+
+/// Convert detector names to a bitmap for compact storage.
+///
+/// Each detector maps to a bit position (up to 8 detectors in 1 byte):
+///   bit 0: content_gate
+///   bit 1: stealth_ua
+///   bit 2: path_pattern
+///   bit 3: timing_signature
+///   bit 4: accept_encoding
+///   bit 5: session_absent
+///   bit 6: robots_violation
+///   bit 7: rate_anomaly
+fn detector_bitmap(detectors: &[String]) -> u8 {
+    let mut flags = 0u8;
+    for d in detectors {
+        let bit = match d.as_str() {
+            "content_gate" => 0,
+            "stealth_ua" | "ua_stealth" => 1,
+            "path_pattern" | "probe_path" => 2,
+            "timing_signature" | "timing" => 3,
+            "accept_encoding" | "encoding" => 4,
+            "session_absent" | "no_session" => 5,
+            "robots_violation" | "robots" => 6,
+            "rate_anomaly" | "rate" => 7,
+            _ => continue,
+        };
+        flags |= 1 << bit;
+    }
+    flags
 }
 
 /// Generate jittering HTTP headers per fleet hash + 3-minute epoch.

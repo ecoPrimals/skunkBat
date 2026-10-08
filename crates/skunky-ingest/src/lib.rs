@@ -17,6 +17,7 @@ pub mod epitope_lure;
 pub mod error;
 pub mod federation;
 pub mod fleet;
+pub mod fluoro_tag;
 pub mod inflammatory;
 pub mod lysogeny;
 pub mod maze_cube;
