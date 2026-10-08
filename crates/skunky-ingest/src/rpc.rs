@@ -16,6 +16,7 @@ use cellmembrane_types::fleet::{DefensePosture, FleetObservation};
 
 use crate::aggregator::ObservationPayload;
 use crate::error::IngestError;
+use crate::ribocipher_const::CLEAR_JSONRPC;
 
 /// Escalation event received from skunkBat's `fleet.tick` RPC.
 ///
@@ -29,9 +30,6 @@ pub struct EscalationEvent {
     pub reason: String,
     pub defection_count: u32,
 }
-
-/// riboCipher signal bytes: NDJSON JSON-RPC.
-const RIBOCIPHER_NDJSON: [u8; 2] = [0xEC, 0x01];
 
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -192,7 +190,7 @@ impl RpcClient {
             let tcp = TcpStream::connect(&self.addr).await?;
 
             let mut buf = BufReader::new(tcp);
-            buf.get_mut().write_all(&RIBOCIPHER_NDJSON).await?;
+            buf.get_mut().write_all(&CLEAR_JSONRPC).await?;
 
             self.stream = Some(buf);
             tracing::info!(addr = %self.addr, "connected to skunkBat");

@@ -6,6 +6,7 @@
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use crate::ribocipher_const::CLEAR_JSONRPC;
 use crate::scatter_constants::HONEYCOMB_SURFACES;
 use crate::scatter_generator::ScatterGenerator;
 use crate::scatter_mirror::path_deterministic_hash;
@@ -208,7 +209,7 @@ pub(crate) async fn inject_epitope_gossip(feed: serde_json::Value) {
         let mut reader = BufReader::new(rd);
 
         // riboCipher clear signal
-        let _ = wr.write_all(&[0xEC, 0x01]).await;
+        let _ = wr.write_all(&CLEAR_JSONRPC).await;
         let msg = format!("{inject_request}\n");
         let _ = wr.write_all(msg.as_bytes()).await;
 
