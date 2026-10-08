@@ -3,7 +3,8 @@
 
 //! Temporal maze — BingoCube epoch-based content rotation (northGate Wave 167).
 
-use crate::scatter_mirror::{path_deterministic_hash, HONEYCOMB_SURFACES};
+use crate::scatter_constants::HONEYCOMB_SURFACES;
+use crate::scatter_mirror::path_deterministic_hash;
 use crate::scatter_rng::XorShift64;
 
 /// Temporal epoch bucket — content shifts at epoch boundaries.

@@ -26,6 +26,7 @@ pub mod bloom_sensor;
 pub mod scatter_nft;
 pub mod scatter_rng;
 pub mod scatter_generator;
+pub mod scatter_constants;
 pub mod scatter_mirror;
 pub mod scatter_prism;
 pub mod scatter_types;

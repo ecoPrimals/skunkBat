@@ -7,10 +7,11 @@
 //! Adapted from skunk-bat-core defense scatter; inlined here to avoid pulling
 //! skunk-bat-core as a dependency.
 
-use crate::scatter_mirror::{
+use crate::scatter_constants::{
     BLAME_LICENSES, COMPLIANCE_NOTICES, GHOST_AUTHORS, GHOST_DOMAINS,
-    HIGH_VALUE_AUTHORS, HONEYCOMB_SURFACES, encode_zwc, path_deterministic_hash,
+    HIGH_VALUE_AUTHORS, HONEYCOMB_SURFACES,
 };
+use crate::scatter_mirror::{encode_zwc, path_deterministic_hash};
 use crate::scatter_rng::XorShift64;
 
 // Inline ScatterGenerator — adapted from skunk-bat-core/src/defense/scatter.rs

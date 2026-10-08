@@ -41,10 +41,13 @@ pub use crate::scatter_prism::{PrismMode, PrismMix};
 // ScatterGenerator is now in scatter_generator.rs
 pub(crate) use crate::scatter_generator::ScatterGenerator;
 // Mirror/epitope/compliance functions are in scatter_mirror.rs
+use crate::scatter_constants::{
+    COMPLIANCE_NOTICES, EVASION_COST_TABLE, HONEYCOMB_SURFACES, MIRROR_MODULES,
+    MIRROR_METRICS,
+};
 use crate::scatter_mirror::{
     encode_zwc, path_deterministic_hash, generate_epitope_maze, generate_cross_mirror,
-    generate_violation_mirror, HONEYCOMB_SURFACES, MIRROR_MODULES,
-    MIRROR_METRICS, EVASION_COST_TABLE, COMPLIANCE_NOTICES,
+    generate_violation_mirror,
 };
 use crate::scatter_temporal::{
     temporal_epoch, temporal_phase, temporal_migrate_breadcrumbs,

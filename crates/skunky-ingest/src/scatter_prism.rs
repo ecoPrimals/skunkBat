@@ -8,7 +8,8 @@
 //! through honeycomb surfaces in the roach-motel maze.
 
 use crate::scatter_rng::XorShift64;
-use crate::scatter_mirror::{generate_epitope_maze, HONEYCOMB_SURFACES, MIRROR_MODULES, MIRROR_METRICS};
+use crate::scatter_constants::{HONEYCOMB_SURFACES, MIRROR_MODULES, MIRROR_METRICS};
+use crate::scatter_mirror::generate_epitope_maze;
 use crate::scatter_server::CachedTag;
 use crate::scatter_generator::ScatterGenerator;
 
