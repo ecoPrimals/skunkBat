@@ -561,13 +561,8 @@ async fn handle_request(
         return Ok(());
     }
 
-    // ── Layer 0: HONEYCOMB PRISM — roach motel / maze / cytokine broadcaster ──
-    // The honeycomb is NOT a simple mirror. It's a prism: fleet teams enter and
-    // encounter data from multiple OTHER teams, blended, chimera'd, and structured
-    // as competitive intelligence that leaks their tradecraft to anyone who reads it.
-    // Each of the 12 surfaces is a different lens. The fleet can't map the topology
-    // because it shifts with every request path. They eat each other's data while
-    // we observe from the side.
+    // ── Layer 0: HONEYCOMB PRISM — fleet teams enter and see chimera'd data
+    //    from OTHER teams. 12 surfaces, topology shifts per request path.
     if is_honeycomb && !fleet_hash.is_empty() {
         let effective_path = path.strip_prefix("/disperse").unwrap_or(&path);
         let path_seed = path_deterministic_hash(effective_path, 0x5CB_0E6C_4055);
@@ -721,10 +716,7 @@ async fn handle_request(
     // (same path always gets the same decision — prevents detection via retries)
     let path_hash = path_deterministic_hash(&effective_path, generator.seed);
 
-    // ── BINGOCUBE DECISION GRID ──
-    // One grid per request: deterministic from (fleet_hash, path, epoch).
-    // All downstream probability gates read from this grid instead of
-    // independent hash % N arithmetic.
+    // BingoCube decision grid: one per request, drives all probability gates
     let decision_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -739,12 +731,9 @@ async fn handle_request(
         None
     };
 
+    let mut response_type = ResponseType::Normal;
     let (status, content_type, body) = if is_disperse {
-        // DISPERSE (P5): maximally-wrong responses — skunk spray
-        // Now with temporal + back pressure dimensions: content phases in and out
-        // of existence at a rate proportional to fleet velocity. The harder they
-        // push, the faster the bingo cube rolls — the cat chases a laser pointer
-        // whose speed is tuned to their own aggression.
+        response_type = ResponseType::Disperse;
         let phase = pressure_temporal_phase_cube(&effective_path, generator.seed, back_pressure, &grid);
         match phase {
             2 => {
@@ -760,12 +749,14 @@ async fn handle_request(
             }
             3 => {
                 // PHASE-OUT: content is "leaving" — 301 with deeper links
+                response_type = ResponseType::TemporalPhaseout;
                 let mut rng = XorShift64::new(generator.path_seed(&effective_path).wrapping_add(0xFA5E_0047));
                 let body = temporal_phaseout_body(&mut rng, &effective_path);
                 ("301 Moved Permanently", "text/html; charset=utf-8".to_string(), body)
             }
             4 => {
                 // GHOST: content has "vanished" — 404 with private federation hints
+                response_type = ResponseType::TemporalGhost;
                 let mut rng = XorShift64::new(generator.path_seed(&effective_path).wrapping_add(0x6405_7000));
                 let body = temporal_ghost_body(&mut rng, &effective_path);
                 ("404 Not Found", "text/html; charset=utf-8".to_string(), body)
@@ -788,6 +779,7 @@ async fn handle_request(
                     // Mirror gate: grid cell (0,3) vs confidence-scaled threshold
                     let mirror_threshold = (tag.confidence * 16.0) as u8;
                     if grid.mirror_gate() < mirror_threshold {
+                        response_type = ResponseType::ViolationMirror;
                         let mut rng = XorShift64::new(path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0x4110_CA1E_DEAD)));
                         let (ct, body) = generate_violation_mirror(generator, &mut rng, &effective_path, tag, &fleet_hash);
                         tracing::info!(
@@ -975,6 +967,23 @@ async fn handle_request(
     writer.write_all(response.as_bytes()).await?;
     writer.flush().await?;
 
+    // ── NAUTILUS OBSERVATION — feed every fleet interaction to the reservoir ──
+    if !fleet_hash.is_empty() {
+        let (epi, conf) = match cached_tag.as_ref() {
+            Some(tag) => (detector_bitmap(&tag.detectors), tag.confidence),
+            None => (0u8, f64::from(poison_ratio).clamp(0.0, 1.0)),
+        };
+        oracle.observe(ScatterObservation {
+            fleet_hash: fleet_hash.clone(),
+            epitope_flags: epi,
+            target_class: classify_request_target(&effective_path),
+            detector_bitmap: epi,
+            confidence: conf,
+            chain_depth: chain_depth.min(255) as u8,
+            response_type,
+        });
+    }
+
     // Counter-intelligence logging — includes back pressure level
     let hash_tag = if fleet_hash.is_empty() { "none" } else { &fleet_hash };
     tracing::info!(
@@ -983,6 +992,7 @@ async fn handle_request(
         fleet_hash = %hash_tag,
         status = %status,
         pressure = %format!("{:.0}%", pressure * 100.0),
+        nautilus_gen = oracle.generation(),
         "🪞 scatter served"
     );
     metrics.scatter_served.fetch_add(1, Ordering::Relaxed);

@@ -66,6 +66,7 @@ pub(crate) async fn process_line(
     mut signal_acc: Option<&mut signal_writer::SignalAccumulator>,
     mut topology_writer: Option<&mut entity_classifier::TopologyWriter>,
     mut dashboard: Option<&mut dashboard_writer::DashboardWriter>,
+    oracle: Option<&skunky_ingest::cube_oracle::SharedOracle>,
 ) {
     if trimmed.is_empty() {
         return;
@@ -104,6 +105,20 @@ pub(crate) async fn process_line(
             "🌸 bloom observation"
         );
         write_bloom_signal(bloom_signal_path, &obs).await;
+
+        // Feed bloom observation to nautilus oracle — signal rates
+        // indicate how effectively scatter is disrupting fleet behavior.
+        if let Some(orc) = oracle {
+            if obs.total_requests > 0 {
+                // Signal rate = normalized request intensity per unique IP
+                let signal_rate = if obs.unique_ips > 0 {
+                    (obs.total_requests as f64 / obs.unique_ips as f64 / 100.0).min(1.0)
+                } else {
+                    0.0
+                };
+                orc.record_bloom_signal("bloom_aggregate", signal_rate);
+            }
+        }
 
         // Signal writer — accumulate for signal-data.js output.
         if let Some(acc) = signal_acc.as_mut() {

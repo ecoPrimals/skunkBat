@@ -349,6 +349,19 @@ pub trait CubeOracle: Send + Sync {
 
     /// Whether the model has enough training data to make predictions.
     fn is_trained(&self) -> bool;
+
+    /// Inject concept edges from entity_classifier topology changes.
+    ///
+    /// Concept edges are regions of input space where predictions fail.
+    /// The nautilus shell biases new boards toward these regions during evolution.
+    fn set_concept_edges(&self, edges: Vec<Vec<f64>>);
+
+    /// Record a bloom sensor signal for training feedback.
+    ///
+    /// Signal rates from bloom_sensor indicate how effective scatter is
+    /// at disrupting fleet behavior — high signal rates mean the fleet
+    /// is persisting despite scatter, low rates mean disruption is working.
+    fn record_bloom_signal(&self, fleet_hash: &str, signal_rate: f64);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -599,6 +612,44 @@ impl CubeOracle for InProcessOracle {
 
     fn is_trained(&self) -> bool {
         self.generation() > 0
+    }
+
+    fn set_concept_edges(&self, edges: Vec<Vec<f64>>) {
+        if let Ok(mut shell) = self.shell.lock() {
+            let edge_count = edges.len();
+            shell.set_concept_edges(edges);
+            tracing::info!(
+                edges = edge_count,
+                generation = shell.generation(),
+                "🧬 concept edges injected — nautilus will bias toward failure regions"
+            );
+        }
+    }
+
+    fn record_bloom_signal(&self, fleet_hash: &str, signal_rate: f64) {
+        // High signal rate → fleet is persisting → current strategy is failing
+        // Low signal rate → fleet is disrupted → current strategy is effective
+        // We encode this as a negative observation — inverse effectiveness
+        let effectiveness = (1.0 - signal_rate).clamp(0.0, 1.0);
+        let features = vec![
+            0.0, // epitope_flags unknown from bloom alone
+            0.0, // target_class unknown
+            0.0, // detector_bitmap unknown
+            effectiveness,
+            0.0, // chain_depth unknown
+        ];
+
+        if let Ok(mut buf) = self.observation_buffer.lock() {
+            let targets = vec![effectiveness; N_TARGETS];
+            buf.push((features, targets));
+        }
+
+        tracing::debug!(
+            fleet_hash = %fleet_hash,
+            signal_rate = signal_rate,
+            effectiveness = effectiveness,
+            "🔬 bloom signal fed to nautilus"
+        );
     }
 }
 

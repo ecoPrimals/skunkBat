@@ -361,6 +361,13 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     // Opsonize cache — aggregates defense gossip for per-hash adaptive scatter
     let opsonize_cache = scatter_server::OpsonizeCache::new();
 
+    // BingoCube oracle — sourdough-persistent nautilus shell for evolutionary learning.
+    // Shared between scatter server and ingest pipeline for the feedback loop.
+    let oracle = skunky_ingest::cube_oracle::create_oracle(
+        cli.scatter_seed,
+        Some(std::path::Path::new("/var/lib/skunky-ingest/nautilus-shell.json")),
+    );
+
     // Scatter (opsonization) server — serves poison content to fleet
     if cli.scatter_server {
         let scatter_config = scatter_server::ScatterConfig {
@@ -369,13 +376,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             poison_ratio: cli.scatter_ratio,
             max_tarpit_connections: cli.max_tarpit_connections,
         };
-        // BingoCube oracle — sourdough-persistent nautilus shell for evolutionary learning.
-        // Starts fresh if no persist file; warms from disk if present.
-        let oracle = skunky_ingest::cube_oracle::create_oracle(
-            cli.scatter_seed,
-            Some(std::path::Path::new("/var/lib/skunky-ingest/nautilus-shell.json")),
-        );
-        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone(), back_pressure.clone(), oracle));
+        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone(), back_pressure.clone(), oracle.clone()));
     }
 
     // Inflammatory watchdog — heartbeat failover (replaces membrane-inflammatory.timer)
@@ -562,6 +563,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     signal_acc.as_mut(),
                     topology_writer.as_mut(),
                     dashboard_writer.as_mut(),
+                    Some(&oracle),
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {

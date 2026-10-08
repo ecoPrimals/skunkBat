@@ -588,6 +588,31 @@ impl LureEngine {
         })
     }
 
+    /// Convert recognition epitopes to concept edges for nautilus training.
+    ///
+    /// Each recognition epitope becomes a feature vector that represents
+    /// a region of fleet behavior space where our scatter strategy needs
+    /// improvement. The nautilus shell biases new boards toward these regions.
+    pub async fn recognition_as_concept_edges(&self) -> Vec<Vec<f64>> {
+        let epitopes = self.analyze_recognition().await;
+        epitopes.iter().filter(|e| e.confidence > 0.2).map(|e| {
+            let class_val = match e.targeting_class {
+                TargetingClass::Attribution => 1.0 / 5.0,
+                TargetingClass::CodeExtraction => 2.0 / 5.0,
+                TargetingClass::ArchitectureRecon => 3.0 / 5.0,
+                TargetingClass::DependencyMapping => 4.0 / 5.0,
+                TargetingClass::ConfigExtraction => 5.0 / 5.0,
+            };
+            vec![
+                0.0, // epitope_flags (unknown from lure context)
+                class_val,
+                0.0, // detector_bitmap (unknown)
+                e.confidence,
+                (e.attraction_ratio / 10.0).min(1.0),
+            ]
+        }).collect()
+    }
+
     // ── Lure content generators ──
 
     fn generate_blame_lure(&self, profile: &FleetTargetProfile, rng: &mut CubePrng) -> String {
