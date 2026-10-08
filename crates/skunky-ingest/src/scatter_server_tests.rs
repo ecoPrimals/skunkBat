@@ -52,20 +52,42 @@ fn poison_ratio_deterministic() {
 
 #[test]
 fn commit_page_looks_like_gitea() {
+    // Use generate_with_grid to ensure Normal jitter (bypasses BingoCube jitter)
+    use crate::cube_oracle::{CubeDecisionGrid, JitterType};
     let sg = ScatterGenerator::new(42);
-    let (ct, body) = sg.generate("/org/repo/commit/abc123def456");
-    assert_eq!(ct, "text/html; charset=utf-8");
-    assert!(body.contains("diff"));
-    assert!(body.contains("chroma"));
-    assert!(body.contains("commit-summary"));
+    // Find a grid that gives Normal jitter for this path
+    let mut found = false;
+    for epoch in 0..100u64 {
+        let grid = CubeDecisionGrid::from_context("test", "/org/repo/commit/abc123def456", epoch);
+        if grid.jitter_type() == JitterType::Normal {
+            let (ct, body) = sg.generate_with_grid("/org/repo/commit/abc123def456", Some(&grid));
+            assert_eq!(ct, "text/html; charset=utf-8");
+            assert!(body.contains("diff"), "commit body missing 'diff' at epoch {epoch}");
+            assert!(body.contains("chroma"), "commit body missing 'chroma' at epoch {epoch}");
+            assert!(body.contains("commit-summary"), "commit body missing 'commit-summary' at epoch {epoch}");
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "should find a Normal jitter epoch within 100 tries");
 }
 
 #[test]
 fn file_page_has_code() {
+    use crate::cube_oracle::{CubeDecisionGrid, JitterType};
     let sg = ScatterGenerator::new(42);
-    let (_, body) = sg.generate("/org/repo/src/branch/main/lib.rs");
-    assert!(body.contains("file-view"));
-    assert!(body.contains("<code>"));
+    let mut found = false;
+    for epoch in 0..100u64 {
+        let grid = CubeDecisionGrid::from_context("test", "/org/repo/src/branch/main/lib.rs", epoch);
+        if grid.jitter_type() == JitterType::Normal {
+            let (_, body) = sg.generate_with_grid("/org/repo/src/branch/main/lib.rs", Some(&grid));
+            assert!(body.contains("file-view"), "file body missing 'file-view' at epoch {epoch}");
+            assert!(body.contains("<code>"), "file body missing '<code>' at epoch {epoch}");
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "should find a Normal jitter epoch within 100 tries");
 }
 
 #[test]

@@ -777,10 +777,15 @@ mod tests {
         let readme = engine.generate_lure_content("/ally/README.md", 42).await;
         assert!(readme.contains("Architecture"));
 
-        // Record hits
+        // Record hits — enough to push confidence above the 0.3 antibody threshold.
+        // Confidence = (attraction/5).min(1) * (unique_fleets/3).min(1)
+        // We need attraction >= 3 and unique_fleets >= 3 to get confidence >= 0.6
         engine.record_hit("/ally/blame/commit/abc123/README.md", "fleet-hash-1").await;
         engine.record_hit("/ally/blame/commit/abc123/README.md", "fleet-hash-2").await;
+        engine.record_hit("/ally/blame/commit/abc123/README.md", "fleet-hash-3").await;
         engine.record_hit("/ally/blame/commit/abc123/README.md", "fleet-hash-1").await; // dedup
+        engine.record_hit("/ally/blame/commit/abc123/README.md", "fleet-hash-4").await;
+        engine.record_hit("/ally/blame/commit/abc123/README.md", "fleet-hash-5").await;
         engine.record_hit("/ally/src/lib.rs", "fleet-hash-1").await;
 
         // Analyze

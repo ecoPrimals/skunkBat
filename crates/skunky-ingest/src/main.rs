@@ -369,7 +369,13 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             poison_ratio: cli.scatter_ratio,
             max_tarpit_connections: cli.max_tarpit_connections,
         };
-        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone(), back_pressure.clone()));
+        // BingoCube oracle — sourdough-persistent nautilus shell for evolutionary learning.
+        // Starts fresh if no persist file; warms from disk if present.
+        let oracle = skunky_ingest::cube_oracle::create_oracle(
+            cli.scatter_seed,
+            Some(std::path::Path::new("/var/lib/skunky-ingest/nautilus-shell.json")),
+        );
+        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone(), back_pressure.clone(), oracle));
     }
 
     // Inflammatory watchdog — heartbeat failover (replaces membrane-inflammatory.timer)

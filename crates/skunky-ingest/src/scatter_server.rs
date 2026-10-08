@@ -67,7 +67,7 @@ pub use crate::scatter_nft::{AntibodyReaction, braid_antibody_reaction};
 ///
 /// This spawns as a background task and serves poisoned responses to
 /// fleet requests routed by Caddy's content_gate.
-pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_cache: OpsonizeCache, back_pressure: BackPressure) {
+pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_cache: OpsonizeCache, back_pressure: BackPressure, oracle: SharedOracle) {
     let listener = match TcpListener::bind(config.listen_addr).await {
         Ok(l) => {
             tracing::info!(
@@ -124,8 +124,9 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
         let mt = Arc::clone(&metrics);
         let vl = violation_ledger.clone();
         let bp_ref = Arc::clone(&bp);
+        let orc = Arc::clone(&oracle);
         tokio::spawn(async move {
-            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc, &mt, &vl, &bp_ref).await {
+            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc, &mt, &vl, &bp_ref, &orc).await {
                 tracing::debug!(error = %e, "scatter request handler error");
             }
         });
@@ -141,6 +142,7 @@ async fn handle_request(
     metrics: &ScatterMetrics,
     violation_ledger: &SharedViolationLedger,
     back_pressure: &BackPressure,
+    oracle: &SharedOracle,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (reader, mut writer) = stream.split();
     let mut buf_reader = BufReader::new(reader);

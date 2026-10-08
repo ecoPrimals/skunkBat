@@ -331,7 +331,7 @@ impl Default for ScatterStrategy {
 /// Two implementations:
 /// - `InProcessOracle`: library crate, in-process (ships now)
 /// - Future `IpcOracle`: JSON-RPC / tarpc client to bingoCube service
-pub(crate) trait CubeOracle: Send + Sync {
+pub trait CubeOracle: Send + Sync {
     /// Create a PRNG from seed bytes (replaces XorShift64::new).
     fn roll(&self, seed: &[u8]) -> CubePrng;
 
@@ -607,10 +607,10 @@ impl CubeOracle for InProcessOracle {
 // ══════════════════════════════════════════════════════════════════════
 
 /// Thread-safe shared oracle.
-pub(crate) type SharedOracle = Arc<dyn CubeOracle>;
+pub type SharedOracle = Arc<dyn CubeOracle>;
 
 /// Create the default in-process oracle.
-pub(crate) fn create_oracle(seed: u64, persist_path: Option<&Path>) -> SharedOracle {
+pub fn create_oracle(seed: u64, persist_path: Option<&Path>) -> SharedOracle {
     match persist_path {
         Some(path) => Arc::new(InProcessOracle::with_persistence(seed, path.to_path_buf())),
         None => Arc::new(InProcessOracle::new(seed)),
