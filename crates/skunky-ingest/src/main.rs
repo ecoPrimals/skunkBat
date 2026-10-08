@@ -10,8 +10,9 @@
 //! Module declarations live in `lib.rs` for reuse; binary owns CLI + tail loop.
 
 use skunky_ingest::{
-    aggregator, caddy, caddy_bridge, cloudflare, cursor, dashboard_writer,
-    entity_classifier, error, federation, fleet, inflammatory, lysogeny,
+    aggregator, caddy_bridge, cloudflare, cursor, dashboard_writer,
+    entity_classifier, error, federation, fleet, inflammatory,
+    ingestion_observer, lysogeny,
     rpc, abuse_reporter, bloom_sensor, scatter_server, signal_spine,
     signal_writer, threat_feed,
 };
@@ -177,6 +178,20 @@ struct Cli {
     /// Flush dashboard.json after this many log entries.
     #[arg(long, default_value_t = 200)]
     dashboard_flush_interval: u64,
+
+    /// Enable ingestion observer — tracks scatter content lifecycle.
+    /// Reads phase from Python observer state, exposes to dashboard,
+    /// appends Rust-side volume to the timeline ledger.
+    #[arg(long, default_value_t = false)]
+    ingestion_observer: bool,
+
+    /// State file for ingestion observer (shared with Python observer).
+    #[arg(long, default_value = "/var/lib/skunky-ingest/observer-state.json")]
+    observer_state_path: PathBuf,
+
+    /// Timeline ledger for ingestion observer (shared with Python observer).
+    #[arg(long, default_value = "/var/lib/skunky-ingest/ingestion-timeline.jsonl")]
+    observer_timeline_path: PathBuf,
 }
 
 #[tokio::main]
@@ -441,6 +456,19 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         None
     };
 
+    // Ingestion observer — tracks scatter content lifecycle phases.
+    // Reads from Python observer state, exposes phase to dashboard,
+    // appends Rust-side scatter volume to shared timeline ledger.
+    let mut ingestion_observer = if cli.ingestion_observer {
+        tracing::info!("🔭 ingestion observer active — jellystein wired");
+        Some(ingestion_observer::IngestionObserver::new(
+            cli.observer_state_path.clone(),
+            cli.observer_timeline_path.clone(),
+        ))
+    } else {
+        None
+    };
+
     // Signal spine — immune memory (content-addressed observation chain)
     // Persistent storage — this is ecoBin DNA, not ephemeral tmpfs.
     let spine_dir = cli.signal_spine_dir.clone();
@@ -576,6 +604,13 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                         "progress checkpoint"
                     );
 
+                    // Ingestion observer periodic flush (every 5000 lines)
+                    if state.lines_read.is_multiple_of(5000) {
+                        if let Some(ref mut obs) = ingestion_observer {
+                            obs.flush();
+                        }
+                    }
+
                     // Lysogeny sentinel periodic tick
                     if let Some(ref mut sentinel) = lysogeny_sentinel {
                         let alerts = sentinel.tick();
@@ -672,6 +707,12 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         dw.flush();
         dw.save_culture();
         tracing::info!("📊 dashboard writer final flush — culture preserved");
+    }
+
+    // Flush ingestion observer — final timeline entry before shutdown.
+    if let Some(ref mut obs) = ingestion_observer {
+        obs.flush();
+        tracing::info!("🔭 ingestion observer final flush");
     }
 
     // Flush signal spine — commit whatever we have for today.

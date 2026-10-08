@@ -21,6 +21,7 @@ pub mod error;
 pub mod federation;
 pub mod fleet;
 pub mod fluoro_tag;
+pub mod ingestion_observer;
 pub mod inflammatory;
 pub mod lysogeny;
 pub(crate) mod ribocipher_const;
