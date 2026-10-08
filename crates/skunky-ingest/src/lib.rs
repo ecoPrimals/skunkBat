@@ -10,6 +10,7 @@ pub mod aggregator;
 pub mod caddy;
 pub mod caddy_bridge;
 pub mod cloudflare;
+pub mod dashboard_writer;
 pub mod cursor;
 pub mod entity_classifier;
 pub mod epitope_defs;

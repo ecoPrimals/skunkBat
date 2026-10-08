@@ -4,8 +4,9 @@
 //! Per-line ingest pipeline — parse, aggregate, escalate, and emit observations.
 
 use skunky_ingest::{
-    abuse_reporter, aggregator, bloom_sensor, caddy, caddy_bridge, entity_classifier,
-    fleet, lysogeny, rpc, scatter_server, signal_spine, signal_writer, threat_feed,
+    abuse_reporter, aggregator, bloom_sensor, caddy, caddy_bridge, dashboard_writer,
+    entity_classifier, fleet, lysogeny, rpc, scatter_server, signal_spine,
+    signal_writer, threat_feed,
 };
 
 use cellmembrane_types::fleet::DefensePosture;
@@ -64,6 +65,7 @@ pub(crate) async fn process_line(
     opsonize_cache: &scatter_server::OpsonizeCache,
     mut signal_acc: Option<&mut signal_writer::SignalAccumulator>,
     mut topology_writer: Option<&mut entity_classifier::TopologyWriter>,
+    mut dashboard: Option<&mut dashboard_writer::DashboardWriter>,
 ) {
     if trimmed.is_empty() {
         return;
@@ -80,6 +82,11 @@ pub(crate) async fn process_line(
     // Entity topology — classify every request into entity profiles.
     if let Some(tw) = topology_writer.as_mut() {
         tw.ingest(&entry);
+    }
+
+    // Dashboard — per-IP behavioral tracking for signal site.
+    if let Some(dw) = dashboard.as_mut() {
+        dw.ingest(&entry);
     }
 
     // Feed to lysogeny sentinel for self-behavioral tracking

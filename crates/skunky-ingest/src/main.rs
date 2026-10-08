@@ -10,9 +10,10 @@
 //! Module declarations live in `lib.rs` for reuse; binary owns CLI + tail loop.
 
 use skunky_ingest::{
-    aggregator, caddy, caddy_bridge, cloudflare, cursor, entity_classifier,
-    error, federation, fleet, inflammatory, lysogeny, rpc, abuse_reporter,
-    bloom_sensor, scatter_server, signal_spine, signal_writer, threat_feed,
+    aggregator, caddy, caddy_bridge, cloudflare, cursor, dashboard_writer,
+    entity_classifier, error, federation, fleet, inflammatory, lysogeny,
+    rpc, abuse_reporter, bloom_sensor, scatter_server, signal_spine,
+    signal_writer, threat_feed,
 };
 
 use error::IngestError;
@@ -159,6 +160,23 @@ struct Cli {
     /// Persistent storage — this is ecoBin DNA, not ephemeral.
     #[arg(long, default_value = "/var/lib/skunky-ingest/signal-spine")]
     signal_spine_dir: PathBuf,
+
+    /// Enable dashboard writer — replaces bloom_live.py.
+    /// Writes dashboard.json, state.json, epitope_caddy.json.
+    #[arg(long, default_value_t = false)]
+    dashboard_writer: bool,
+
+    /// Output path for dashboard.json (used with --dashboard-writer).
+    #[arg(long, default_value = "/opt/membrane/live-terminal/dashboard.json")]
+    dashboard_path: PathBuf,
+
+    /// State file for dashboard sourdough culture.
+    #[arg(long, default_value = "/var/lib/skunky-ingest/dashboard-culture.json")]
+    dashboard_state_path: PathBuf,
+
+    /// Flush dashboard.json after this many log entries.
+    #[arg(long, default_value_t = 200)]
+    dashboard_flush_interval: u64,
 }
 
 #[tokio::main]
@@ -403,6 +421,19 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         None
     };
 
+    // Dashboard writer — replaces bloom_live.py (793 lines of Python → 0)
+    // Writes dashboard.json for the signal site from live pipeline data.
+    let mut dashboard_writer = if cli.dashboard_writer {
+        tracing::info!("📊 dashboard writer active — bloom_live.py convergence");
+        Some(dashboard_writer::DashboardWriter::new(
+            cli.dashboard_path.clone(),
+            cli.dashboard_state_path.clone(),
+            cli.dashboard_flush_interval,
+        ))
+    } else {
+        None
+    };
+
     // Signal spine — immune memory (content-addressed observation chain)
     // Persistent storage — this is ecoBin DNA, not ephemeral tmpfs.
     let spine_dir = cli.signal_spine_dir.clone();
@@ -524,6 +555,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     &opsonize_cache,
                     signal_acc.as_mut(),
                     topology_writer.as_mut(),
+                    dashboard_writer.as_mut(),
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -625,6 +657,13 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         tw.flush();
         tw.save_culture();
         tracing::info!("🗺️ topology writer final flush — culture preserved");
+    }
+
+    // Flush dashboard — final write + culture save before shutdown.
+    if let Some(ref mut dw) = dashboard_writer {
+        dw.flush();
+        dw.save_culture();
+        tracing::info!("📊 dashboard writer final flush — culture preserved");
     }
 
     // Flush signal spine — commit whatever we have for today.
