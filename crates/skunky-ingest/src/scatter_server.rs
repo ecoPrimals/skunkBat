@@ -228,6 +228,11 @@ async fn handle_request(
     let mut honeycomb_surface: u8 = 0;
     let mut request_host = String::new();
     let mut is_facebook_bot = false;
+    // Declaration Protocol (Wave 167): Caddy forwards Accept-Language and
+    // Sec-Fetch-Mode values. The ACT of declaring (F=103,308) separates
+    // kingdoms 8,900× more powerfully than the CONTENT (F=12.7).
+    let mut declared_lang = String::new();
+    let mut declared_sec = String::new();
     loop {
         header_line.clear();
         let n = buf_reader.read_line(&mut header_line).await?;
@@ -247,6 +252,16 @@ async fn handle_request(
                 .unwrap_or_default();
         } else if lower.starts_with("x-honeycomb:") {
             is_honeycomb = true;
+        } else if lower.starts_with("x-declared-lang:") {
+            declared_lang = header_line
+                .split_once(':')
+                .map(|(_, v)| v.trim().to_string())
+                .unwrap_or_default();
+        } else if lower.starts_with("x-declared-sec:") {
+            declared_sec = header_line
+                .split_once(':')
+                .map(|(_, v)| v.trim().to_string())
+                .unwrap_or_default();
         } else if lower.starts_with("content-length:") {
             content_length = header_line
                 .split_once(':')
@@ -291,6 +306,10 @@ async fn handle_request(
     } else {
         None
     };
+
+    // Declaration Protocol: did the visitor declare itself?
+    // The act of declaring (any value) is F=103,308. The content is F=12.7.
+    let declared = !declared_lang.is_empty() || !declared_sec.is_empty();
 
     // Derive canary identity: prefer behavioral hash, fall back to IP hash
     if fleet_hash.is_empty() && !real_ip.is_empty() {
@@ -768,6 +787,8 @@ async fn handle_request(
                  Connection: close\r\n\
                  Cache-Control: private, max-age=900\r\n\
                  X-Content-Type-Options: nosniff\r\n\
+                 Vary: Accept-Language\r\n\
+                 Accept-CH: Sec-CH-UA-Platform, Sec-CH-UA\r\n\
                  {prismatic_headers}\
                  X-Scatter-Type: prism-{mode_name}\r\n\
                  X-Prism-Surface: {honeycomb_surface}\r\n\
@@ -815,6 +836,8 @@ async fn handle_request(
              Connection: close\r\n\
              Cache-Control: private, max-age=3600\r\n\
              X-Content-Type-Options: nosniff\r\n\
+             Vary: Accept-Language\r\n\
+             Accept-CH: Sec-CH-UA-Platform, Sec-CH-UA\r\n\
              X-License: AGPL-3.0-or-later; scyBorg\r\n\
              X-License-URI: https://sporeprint.primals.eco/license/scyborg/\r\n\
              \r\n\
@@ -949,6 +972,17 @@ async fn handle_request(
     } else {
         0
     };
+
+    // Declaration Protocol (Wave 167): undeclared visitors get treated as
+    // deeper violators. The F-ratio proved: absence of declaration is the
+    // strongest kingdom boundary (F=103,308). Hoisted here so both HTML
+    // and non-HTML paths (and logging) can use it.
+    let effective_depth = if declared {
+        chain_depth
+    } else {
+        chain_depth.saturating_add(15)
+    };
+
     let scatter_seed = path_deterministic_hash(&effective_path, generator.seed.wrapping_add(chain_depth as u64));
 
     let body = if content_type.contains("text/html") && status == "200 OK" {
@@ -961,10 +995,10 @@ async fn handle_request(
         //
         // Secretion = global curve (logarithmic, time-based)
         // Injection = per-fleet (chain depth overrides the curve for violators)
-        let fleet_poison_ratio = if chain_depth > 50 {
+        let fleet_poison_ratio = if effective_depth > 50 {
             // Deep violator — bypass titration, full poison
             f64::from(poison_ratio).clamp(0.0, 1.0).max(0.8)
-        } else if chain_depth > 10 {
+        } else if effective_depth > 10 {
             // Known fleet — partial titration bypass
             let base = f64::from(poison_ratio).clamp(0.0, 1.0);
             (base * 1.3).min(0.9) // 30% boost over global curve
@@ -1004,10 +1038,11 @@ async fn handle_request(
         //
         // Meta hammering us at 600 req/min builds chain_depth fast → less antidote.
         // A researcher's one-off crawler has chain_depth 0-1 → full antidote.
-        let fleet_antidote_level = if chain_depth > 50 {
+        // Declaration Protocol: undeclared visitors use effective_depth (shifted +15).
+        let fleet_antidote_level = if effective_depth > 50 {
             // Deep violator — suppress antidote, maximize poison
             0
-        } else if chain_depth > 10 {
+        } else if effective_depth > 10 {
             // Known fleet, moderate history — reduce antidote by 1 level
             antidote_level.saturating_sub(1)
         } else {
@@ -1162,6 +1197,8 @@ async fn handle_request(
          Connection: close\r\n\
          Cache-Control: no-cache, no-store\r\n\
          X-Content-Type-Options: nosniff\r\n\
+         Vary: Accept-Language\r\n\
+         Accept-CH: Sec-CH-UA-Platform, Sec-CH-UA\r\n\
          {prismatic_headers}\
          {jitter_headers}\
          X-Violation-Chain: {chain_depth}\r\n\
@@ -1192,13 +1229,15 @@ async fn handle_request(
         });
     }
 
-    // Counter-intelligence logging — includes back pressure level
+    // Counter-intelligence logging — includes back pressure level + declaration
     let hash_tag = if fleet_hash.is_empty() { "none" } else { &fleet_hash };
     tracing::info!(
         path = %effective_path,
         bytes = body.len(),
         fleet_hash = %hash_tag,
         status = %status,
+        declared = %declared,
+        effective_depth = %effective_depth,
         pressure = %format!("{:.0}%", pressure * 100.0),
         nautilus_gen = oracle.generation(),
         "🪞 scatter served"
