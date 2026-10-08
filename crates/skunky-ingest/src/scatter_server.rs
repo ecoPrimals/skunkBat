@@ -658,6 +658,8 @@ use crate::scatter_mirror::{
     encode_zwc, path_deterministic_hash, generate_epitope_maze, generate_cross_mirror,
     generate_violation_mirror, HONEYCOMB_SURFACES, MIRROR_MODULES,
     MIRROR_METRICS, EVASION_COST_TABLE, COMPLIANCE_NOTICES,
+};
+use crate::scatter_temporal::{
     temporal_epoch, temporal_phase, temporal_migrate_breadcrumbs,
     temporal_phaseout_body, temporal_ghost_body,
 };
