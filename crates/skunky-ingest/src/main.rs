@@ -339,6 +339,10 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     // Shared confidence level — opsonize pipeline updates, scatter server reads
     let scatter_confidence = scatter_server::SharedConfidence::new();
 
+    // Back pressure gauge — non-Newtonian viscosity dimension
+    // 60-second rolling window: the maze stiffness adapts to fleet velocity
+    let back_pressure = scatter_server::BackPressure::new(60);
+
     // Opsonize cache — aggregates defense gossip for per-hash adaptive scatter
     let opsonize_cache = scatter_server::OpsonizeCache::new();
 
@@ -350,7 +354,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             poison_ratio: cli.scatter_ratio,
             max_tarpit_connections: cli.max_tarpit_connections,
         };
-        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone()));
+        tokio::spawn(scatter_server::run(scatter_config, scatter_confidence.clone(), opsonize_cache.clone(), back_pressure.clone()));
     }
 
     // Inflammatory watchdog — heartbeat failover (replaces membrane-inflammatory.timer)

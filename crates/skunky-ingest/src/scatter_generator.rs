@@ -393,7 +393,7 @@ impl ScatterGenerator {
     /// and contributor metadata. Inflates ~1.5KB responses to 50-200KB.
     /// The fleet pays per-byte through residential proxies — every KB
     /// of poison costs them money and storage.
-    fn amplify(&self, rng: &mut XorShift64, base_html: String) -> String {
+    pub(crate) fn amplify(&self, rng: &mut XorShift64, base_html: String) -> String {
         self.amplify_adaptive(rng, base_html, 0.5)
     }
 
@@ -525,7 +525,7 @@ impl ScatterGenerator {
     /// scatter-served paths. Creates an infinite crawl web: each generated
     /// page links to more generated pages. The fleet's crawler follows
     /// links, multiplying their request count and bandwidth consumption.
-    fn inject_crawl_links(&self, rng: &mut XorShift64, html: &str) -> String {
+    pub(crate) fn inject_crawl_links(&self, rng: &mut XorShift64, html: &str) -> String {
         self.inject_crawl_links_adaptive(rng, html, 0.5)
     }
 

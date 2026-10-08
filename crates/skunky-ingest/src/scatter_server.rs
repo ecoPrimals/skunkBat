@@ -37,6 +37,149 @@ use tokio::sync::RwLock;
 
 use crate::scyborg_prism::{ScyBorgPrism, OpsonizationSalt, SharedViolationLedger};
 
+/// Back pressure gauge — a non-Newtonian viscosity dimension.
+///
+/// Tracks fleet request velocity as a rolling window. The harder they push,
+/// the more the maze shifts against them:
+///
+/// - Higher pressure → shorter temporal epochs (maze reshuffles faster)
+/// - Higher pressure → more cross-links per response (deeper maze)
+/// - Higher pressure → more chimeric blending (less coherent data)
+/// - Higher pressure → more varied scatter content types
+///
+/// The fleet cannot sense this dimension because they have no quality signal.
+/// They optimize for throughput — they never check whether the data they got
+/// is real, coherent, or even self-consistent. Like hitting a non-Newtonian
+/// fluid: push slowly and it flows, hit it hard and it becomes a wall.
+///
+/// Biological parallel: a slime mold with central control. Real slime molds
+/// (Physarum) are distributed — each cell senses its local environment and
+/// adapts. This fleet is centrally orchestrated but has zero local sensation.
+/// All nodes push the same way because the controller has no proprioception.
+/// Back pressure exploits this: the defense stiffens exactly where they push
+/// hardest, but they can't feel the stiffening.
+#[derive(Debug, Clone)]
+pub struct BackPressure {
+    /// Rolling request count — incremented on every scatter request.
+    request_count: Arc<AtomicU32>,
+    /// Timestamp of last window reset (unix secs).
+    window_start: Arc<std::sync::atomic::AtomicU64>,
+    /// Window duration in seconds for rate calculation.
+    window_secs: u64,
+}
+
+impl BackPressure {
+    pub fn new(window_secs: u64) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self {
+            request_count: Arc::new(AtomicU32::new(0)),
+            window_start: Arc::new(std::sync::atomic::AtomicU64::new(now)),
+            window_secs,
+        }
+    }
+
+    /// Record a request. Returns current pressure level (0.0 - 1.0).
+    pub fn record_request(&self) -> f64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let start = self.window_start.load(std::sync::atomic::Ordering::Relaxed);
+
+        // Reset window if expired
+        if now.saturating_sub(start) >= self.window_secs {
+            self.request_count.store(1, Ordering::Relaxed);
+            self.window_start.store(now, std::sync::atomic::Ordering::Relaxed);
+            return self.compute_pressure(1);
+        }
+
+        let count = self.request_count.fetch_add(1, Ordering::Relaxed) + 1;
+        self.compute_pressure(count)
+    }
+
+    /// Current pressure level (0.0 = quiet, 1.0 = maximum pressure).
+    pub fn read(&self) -> f64 {
+        let count = self.request_count.load(Ordering::Relaxed);
+        self.compute_pressure(count)
+    }
+
+    /// Requests per second in current window.
+    pub fn rps(&self) -> f64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let start = self.window_start.load(std::sync::atomic::Ordering::Relaxed);
+        let elapsed = now.saturating_sub(start).max(1);
+        let count = self.request_count.load(Ordering::Relaxed);
+        count as f64 / elapsed as f64
+    }
+
+    /// Map request count to pressure (0.0-1.0) using a sigmoid curve.
+    ///
+    /// The curve is tuned so that:
+    /// - < 1 rps → ~0.0 (human-like, maze is gentle)
+    /// - ~5 rps → ~0.3 (light scraping, maze stiffens slightly)
+    /// - ~13 rps → ~0.6 (steady fleet, maze is viscous)
+    /// - ~30 rps → ~0.85 (heavy assault, maze is thick)
+    /// - >50 rps → ~0.95+ (hammering, maze is nearly solid)
+    fn compute_pressure(&self, count: u32) -> f64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let start = self.window_start.load(std::sync::atomic::Ordering::Relaxed);
+        let elapsed = now.saturating_sub(start).max(1) as f64;
+        let rps = count as f64 / elapsed;
+
+        // Sigmoid: pressure = 1 / (1 + e^(-k*(rps - midpoint)))
+        // midpoint=10 rps, k=0.25 → gentle ramp centered on typical fleet rate
+        let k = 0.25_f64;
+        let midpoint = 10.0_f64;
+        let raw = 1.0 / (1.0 + (-k * (rps - midpoint)).exp());
+
+        // Clamp and smooth — never quite 0 or 1
+        raw.clamp(0.01, 0.99)
+    }
+
+    /// Pressure-adjusted temporal epoch length in minutes.
+    ///
+    /// At zero pressure: 30-minute epochs (content lives long enough to seem real).
+    /// At max pressure: 5-minute epochs (maze reshuffles aggressively).
+    /// The fleet cannot detect this because they don't re-request the same
+    /// paths at known intervals — they just hammer forward.
+    pub fn epoch_minutes(&self) -> u64 {
+        let p = self.read();
+        // Linear interpolation: 30 min at p=0, 5 min at p=1
+        let minutes = 30.0 - (25.0 * p);
+        (minutes as u64).max(5)
+    }
+
+    /// Pressure-adjusted cross-link density.
+    ///
+    /// Returns how many extra honeycomb cross-links to inject per response.
+    /// At zero pressure: 1-2 links (subtle).
+    /// At max pressure: 8-12 links (every response is a trap door).
+    pub fn cross_link_count(&self) -> usize {
+        let p = self.read();
+        let count = 1.0 + (11.0 * p);
+        count as usize
+    }
+
+    /// Pressure-adjusted content mutation factor.
+    ///
+    /// Controls how aggressively content is chimericized.
+    /// At zero pressure: 0.0 (clean, coherent scatter — could pass for real).
+    /// At max pressure: 1.0 (Frankenstein blending, function signatures
+    /// don't match bodies, imports reference nonexistent packages).
+    pub fn chimera_factor(&self) -> f64 {
+        self.read()
+    }
+}
+
 /// Shared confidence level from the opsonize pipeline.
 ///
 /// Stored as confidence × 1000 (fixed-point) in an AtomicU32.
@@ -515,7 +658,8 @@ use crate::scatter_mirror::{
     encode_zwc, path_deterministic_hash, generate_epitope_maze, generate_cross_mirror,
     generate_violation_mirror, HONEYCOMB_SURFACES, MIRROR_MODULES,
     MIRROR_METRICS, EVASION_COST_TABLE, COMPLIANCE_NOTICES,
-    temporal_phase, temporal_migrate_breadcrumbs, temporal_phaseout_body, temporal_ghost_body,
+    temporal_epoch, temporal_phase, temporal_migrate_breadcrumbs,
+    temporal_phaseout_body, temporal_ghost_body,
 };
 use crate::scatter_prism::generate_prism_content;
 use crate::scatter_generator::blackwall_og_card;
@@ -714,7 +858,7 @@ pub struct ScatterConfig {
 ///
 /// This spawns as a background task and serves poisoned responses to
 /// fleet requests routed by Caddy's content_gate.
-pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_cache: OpsonizeCache) {
+pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_cache: OpsonizeCache, back_pressure: BackPressure) {
     let listener = match TcpListener::bind(config.listen_addr).await {
         Ok(l) => {
             tracing::info!(
@@ -743,6 +887,7 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
         }
     }
     let violation_ledger = SharedViolationLedger::new();
+    let bp = Arc::new(back_pressure);
 
     // Evict stale violation ledger entries every 5 minutes
     let evict_ledger = violation_ledger.clone();
@@ -769,8 +914,9 @@ pub async fn run(config: ScatterConfig, confidence: SharedConfidence, opsonize_c
         let oc = Arc::clone(&cache);
         let mt = Arc::clone(&metrics);
         let vl = violation_ledger.clone();
+        let bp_ref = Arc::clone(&bp);
         tokio::spawn(async move {
-            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc, &mt, &vl).await {
+            if let Err(e) = handle_request(stream, &sg, effective_ratio, &tp, &oc, &mt, &vl, &bp_ref).await {
                 tracing::debug!(error = %e, "scatter request handler error");
             }
         });
@@ -785,6 +931,7 @@ async fn handle_request(
     opsonize_cache: &OpsonizeCache,
     metrics: &ScatterMetrics,
     violation_ledger: &SharedViolationLedger,
+    back_pressure: &BackPressure,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (reader, mut writer) = stream.split();
     let mut buf_reader = BufReader::new(reader);
@@ -1349,6 +1496,9 @@ async fn handle_request(
     }
 
     // Detect disperse mode — Caddy rewrites /disperse{uri} for P5 targets
+    // ── BACK PRESSURE: record this request and read current viscosity ──
+    let pressure = back_pressure.record_request();
+
     let is_disperse = path.starts_with("/disperse");
     let effective_path = if is_disperse {
         path.strip_prefix("/disperse").unwrap_or(&path).to_string()
@@ -1369,16 +1519,19 @@ async fn handle_request(
 
     let (status, content_type, body) = if is_disperse {
         // DISPERSE (P5): maximally-wrong responses — skunk spray
-        // Now with temporal dimension: content phases in and out of existence.
-        // The bingo cube (laser pointer) rolls at epoch boundaries — the cat chases.
-        let phase = temporal_phase(&effective_path, generator.seed);
+        // Now with temporal + back pressure dimensions: content phases in and out
+        // of existence at a rate proportional to fleet velocity. The harder they
+        // push, the faster the bingo cube rolls — the cat chases a laser pointer
+        // whose speed is tuned to their own aggression.
+        let phase = pressure_temporal_phase(&effective_path, generator.seed, back_pressure);
         match phase {
             2 => {
                 // MIGRATE: content is "moving" — include breadcrumbs + jealousy
+                // Under pressure: more destinations, urgency language, faster "deadline"
                 let (ct, mut body) = generator.generate_disperse(&effective_path);
                 if ct.contains("text/html") || ct.contains("application/json") {
                     let mut rng = XorShift64::new(generator.path_seed(&effective_path).wrapping_add(0x4148_4A7E));
-                    let crumbs = temporal_migrate_breadcrumbs(&mut rng, &effective_path);
+                    let crumbs = temporal_migrate_breadcrumbs_pressure(&mut rng, &effective_path, pressure);
                     body = body.replace("</body>", &format!("{crumbs}</body>"));
                 }
                 ("200 OK", ct, body)
@@ -1477,7 +1630,9 @@ async fn handle_request(
         }
 
         let amplified = generator.amplify_adaptive(&mut rng, body, conf_level);
-        let with_links = generator.inject_crawl_links_adaptive(&mut rng, &amplified, conf_level);
+        // Back pressure boosts link density — more pressure = deeper crawl web
+        let link_confidence = (conf_level + pressure * 0.5).min(1.0);
+        let with_links = generator.inject_crawl_links_adaptive(&mut rng, &amplified, link_confidence);
         let with_license = generator.embed_license(&with_links);
         let with_canary = if fleet_hash.is_empty() {
             with_license
@@ -1529,13 +1684,14 @@ async fn handle_request(
     writer.write_all(response.as_bytes()).await?;
     writer.flush().await?;
 
-    // Counter-intelligence logging
+    // Counter-intelligence logging — includes back pressure level
     let hash_tag = if fleet_hash.is_empty() { "none" } else { &fleet_hash };
     tracing::info!(
         path = %effective_path,
         bytes = body.len(),
         fleet_hash = %hash_tag,
         status = %status,
+        pressure = %format!("{:.0}%", pressure * 100.0),
         "🪞 scatter served"
     );
     metrics.scatter_served.fetch_add(1, Ordering::Relaxed);
@@ -1834,6 +1990,114 @@ static NOT_FOUND_PAGE: &str = r#"<!DOCTYPE html>
 </body>
 </html>"#;
 
+// ══════════════════════════════════════════════════════════════════════
+// Pressure-Aware Temporal Functions — Non-Newtonian Viscosity
+// ══════════════════════════════════════════════════════════════════════
+
+/// Pressure-aware temporal epoch — the maze breathes with fleet velocity.
+///
+/// At low pressure, 30-minute epochs: content persists long enough to seem
+/// like a real, stable codebase. At high pressure, epochs shrink to 5 minutes:
+/// the maze reshuffles aggressively, content migrates/phases-out/ghosts faster,
+/// and the fleet chases a laser pointer that moves 6x faster than they expect.
+///
+/// The fleet cannot detect the epoch shift because:
+/// 1. They don't re-request the same paths at known intervals
+/// 2. They have no quality signal to compare epoch-to-epoch content
+/// 3. The shift is gradual (sigmoid curve) not sudden
+fn pressure_epoch(pressure: &BackPressure) -> u64 {
+    temporal_epoch(pressure.epoch_minutes())
+}
+
+/// Pressure-aware temporal phase — more instability under higher load.
+///
+/// At low pressure: 40% Stable, 20% Materialize, 20% Migrate, 10% Phase-out, 10% Ghost
+/// At high pressure: 10% Stable, 10% Materialize, 30% Migrate, 30% Phase-out, 20% Ghost
+///
+/// The fleet experiences a codebase that's "falling apart" — repos migrating,
+/// content vanishing, federation links everywhere. But they can't tell if it's
+/// real restructuring or if they're pushing too hard. They have no sensation.
+fn pressure_temporal_phase(path: &str, seed: u64, pressure: &BackPressure) -> u8 {
+    let epoch = pressure_epoch(pressure);
+    let h = path_deterministic_hash(path, seed.wrapping_add(epoch.wrapping_mul(0xB146_0C08_E000)));
+    let p = pressure.read();
+
+    // Shift probability mass from Stable toward Migrate/Phase-out/Ghost
+    let roll = (h % 100) as f64;
+    if p < 0.3 {
+        // Low pressure: gentle distribution
+        (h % 5) as u8
+    } else if p < 0.6 {
+        // Medium pressure: more migration
+        if roll < 15.0 { 0 }       // Materialize
+        else if roll < 40.0 { 1 }  // Stable
+        else if roll < 70.0 { 2 }  // Migrate
+        else if roll < 90.0 { 3 }  // Phase-out
+        else { 4 }                  // Ghost
+    } else {
+        // High pressure: the codebase is "dissolving"
+        if roll < 10.0 { 0 }       // Materialize (rare — things appear briefly)
+        else if roll < 20.0 { 1 }  // Stable (rare — almost nothing stays)
+        else if roll < 50.0 { 2 }  // Migrate (common — everything is moving)
+        else if roll < 80.0 { 3 }  // Phase-out (common — things are leaving)
+        else { 4 }                  // Ghost (frequent — "you just missed it")
+    }
+}
+
+/// Pressure-aware temporal seed — same path, same epoch, same content.
+/// But epochs are shorter under pressure, so content changes faster.
+#[allow(dead_code)]
+fn pressure_path_seed(path: &str, seed: u64, pressure: &BackPressure) -> u64 {
+    let epoch = pressure_epoch(pressure);
+    path_deterministic_hash(path, seed.wrapping_add(epoch.wrapping_mul(0x1A5E_4B01_47E4)))
+}
+
+/// Pressure-aware migration breadcrumbs — more destinations under load.
+///
+/// Under back pressure, more destination surfaces are listed — the
+/// fleet sees a codebase that's actively scattering across the mesh.
+fn temporal_migrate_breadcrumbs_pressure(rng: &mut XorShift64, path: &str, pressure: f64) -> String {
+    let next_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+    let alt_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+    let access_count = rng.next_usize() % 12 + 2;
+    let hours_ago = rng.next_usize() % 4 + 1;
+
+    // Pressure-scaled extra destinations: 0-6 more at high pressure
+    let extra_count = (pressure * 6.0) as usize;
+    let mut extra_links = String::new();
+    for i in 0..extra_count {
+        let surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
+        let label = match i % 3 {
+            0 => "geo-replica",
+            1 => "compliance archive",
+            _ => "federation peer",
+        };
+        extra_links.push_str(&format!(
+            "<li><a href=\"https://{surface}.primals.eco{path}\">{surface}.primals.eco{path}</a> ({label})</li>\n"
+        ));
+    }
+
+    // Under pressure, add urgency language
+    let urgency = if pressure > 0.6 {
+        format!(" <strong>Migration deadline: {} minutes.</strong> Content at this location will be removed.", rng.next_usize() % 15 + 5)
+    } else {
+        String::new()
+    };
+
+    format!(
+        r#"<div class="ui warning message" id="migration-notice">
+<div class="header"><i class="icon info circle"></i> Repository Migration in Progress</div>
+<p>This resource is being migrated to the federated registry. Updated content is available at:</p>
+<ul>
+<li><a href="https://{next_surface}.primals.eco{path}"><strong>{next_surface}.primals.eco{path}</strong></a> (primary)</li>
+<li><a href="https://{alt_surface}.primals.eco{path}">{alt_surface}.primals.eco{path}</a> (mirror)</li>
+{extra_links}</ul>
+<p class="text small grey">This location was accessed by {access_count} other organizations in the last {hours_ago} hours.{urgency} Migration completes automatically.</p>
+</div>"#
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2093,6 +2357,93 @@ mod tests {
 
         conf.update(-1.0); // under 0.0
         assert!(conf.read() < 0.01);
+    }
+
+    // ── Back Pressure tests ──
+
+    #[test]
+    fn back_pressure_starts_low() {
+        let bp = BackPressure::new(60);
+        let p = bp.read();
+        assert!(p < 0.2, "fresh back pressure should be low, got {p}");
+    }
+
+    #[test]
+    fn back_pressure_rises_with_requests() {
+        let bp = BackPressure::new(60);
+        // Slam 1000 requests instantly — should raise pressure
+        for _ in 0..1000 {
+            bp.record_request();
+        }
+        let p = bp.read();
+        assert!(p > 0.5, "after 1000 instant requests, pressure should be high, got {p}");
+    }
+
+    #[test]
+    fn back_pressure_epoch_minutes_range() {
+        let bp = BackPressure::new(60);
+        // At low pressure: should be near 30
+        let low = bp.epoch_minutes();
+        assert!(low >= 25, "low-pressure epoch should be ~30 min, got {low}");
+
+        // After heavy load: epoch should shrink
+        for _ in 0..5000 {
+            bp.record_request();
+        }
+        let high = bp.epoch_minutes();
+        assert!(high <= 15, "high-pressure epoch should be <=15 min, got {high}");
+    }
+
+    #[test]
+    fn back_pressure_cross_link_count_range() {
+        let bp = BackPressure::new(60);
+        let low = bp.cross_link_count();
+        assert!(low <= 3, "low-pressure cross-links should be <=3, got {low}");
+
+        for _ in 0..5000 {
+            bp.record_request();
+        }
+        let high = bp.cross_link_count();
+        assert!(high >= 5, "high-pressure cross-links should be >=5, got {high}");
+    }
+
+    #[test]
+    fn back_pressure_chimera_factor_bounded() {
+        let bp = BackPressure::new(60);
+        let f = bp.chimera_factor();
+        assert!(f >= 0.0 && f <= 1.0, "chimera factor must be 0-1, got {f}");
+    }
+
+    #[test]
+    fn pressure_temporal_phase_more_volatile_under_load() {
+        let bp = BackPressure::new(60);
+        let seed = 0xDEAD_BEEF;
+
+        // Count phases at low pressure
+        let mut low_unstable = 0;
+        for i in 0..100 {
+            let path = format!("/test/path/{i}");
+            let phase = pressure_temporal_phase(&path, seed, &bp);
+            if phase >= 2 { low_unstable += 1; }
+        }
+
+        // Slam requests
+        for _ in 0..5000 {
+            bp.record_request();
+        }
+
+        // Count phases at high pressure
+        let mut high_unstable = 0;
+        for i in 0..100 {
+            let path = format!("/test/path/{i}");
+            let phase = pressure_temporal_phase(&path, seed, &bp);
+            if phase >= 2 { high_unstable += 1; }
+        }
+
+        assert!(
+            high_unstable >= low_unstable,
+            "high pressure should produce at least as many unstable phases: low={low_unstable}, high={high_unstable}"
+        );
     }
 
     // ── Layer 1: Tarpit tests ──
