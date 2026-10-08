@@ -184,7 +184,84 @@ const CRAWLER_MARKERS: &[&str] = &[
     "archive.org_bot", "slurp",
 ];
 
-/// Classify a request into a reader type.
+/// Known fleet subnet prefixes — organizations crawling with stealth UAs.
+///
+/// These bypass UA-based detection by rotating real browser user-agents
+/// across dozens of IPs. Identified by subnet analysis, not enumeration.
+/// This is the bridge to bingoCube maze classification: behavioral
+/// subnets replace the old UA siege epitope.
+const FLEET_SUBNETS: &[&str] = &[
+    // Anthropic (ClaudeBot) — AWS infrastructure
+    "216.73.216.",
+    // Meta Platforms Ireland — 40+ IPs, rotating UAs, Dublin DC
+    "57.141.20.", "57.141.21.", "57.141.22.", "57.141.23.",
+    "57.141.24.", "57.141.25.", "57.141.26.", "57.141.27.",
+    "57.141.28.", "57.141.29.", "57.141.30.", "57.141.31.",
+    // Meta alt ranges (same abuse contact: domain@fb.com)
+    "57.141.0.", "57.141.1.", "57.141.2.", "57.141.3.",
+];
+
+/// Check if an IP belongs to a known fleet subnet.
+pub fn is_fleet_subnet(ip: &str) -> bool {
+    FLEET_SUBNETS.iter().any(|prefix| ip.starts_with(prefix))
+}
+
+/// Classify with full request context — IP, path, headers.
+///
+/// This is the evolution point toward bingoCube maze classification.
+/// UA matching is a siege epitope from earlier generations. The real
+/// classifier uses behavioral context: subnet identity, path patterns,
+/// header fingerprints. UA is the last resort, not the first signal.
+pub fn classify_reader_contextual(
+    ua: &str,
+    accept_encoding: &str,
+    accept_language: &str,
+    ip: &str,
+    path: &str,
+) -> ReaderType {
+    // Layer 1: Subnet identity (strongest signal, no UA needed)
+    if is_fleet_subnet(ip) {
+        return ReaderType::AiAgent;
+    }
+
+    // Layer 2: Path behavioral pattern
+    // Commit-hash URL walk = fleet scraping git history.
+    // Real humans don't hit /repo/commit/da43fe62 directly.
+    if is_commit_walk_path(path) {
+        // Only if UA also looks synthetic (real user clicking one link is fine)
+        if accept_language.is_empty() {
+            return ReaderType::AiAgent;
+        }
+    }
+
+    // Layer 3: UA classification (legacy siege epitope — will shrink as
+    // bingoCube maze classifier absorbs more behavioral dimensions)
+    classify_reader(ua, accept_encoding, accept_language)
+}
+
+/// Detect Forgejo commit-walk paths — deep git scraping behavior.
+pub fn is_commit_walk_path(path: &str) -> bool {
+    // /org/repo/commit/HASH, /org/repo/blame/commit/HASH, /org/repo/src/commit/HASH
+    let lower = path.to_ascii_lowercase();
+    if !lower.contains("/commit/") {
+        return false;
+    }
+    // Check if the segment after /commit/ looks like a hex hash
+    if let Some(idx) = lower.find("/commit/") {
+        let after = &lower[idx + 8..];
+        let hash_part = after.split('/').next().unwrap_or("");
+        // Git hashes are 7-40 hex chars
+        hash_part.len() >= 7
+            && hash_part.len() <= 40
+            && hash_part.chars().all(|c| c.is_ascii_hexdigit())
+    } else {
+        false
+    }
+}
+
+/// Classify a request into a reader type (UA-only, legacy path).
+///
+/// Prefer [`classify_reader_contextual`] which adds IP and path signals.
 pub fn classify_reader(ua: &str, accept_encoding: &str, accept_language: &str) -> ReaderType {
     let ua_lower = ua.to_ascii_lowercase();
 
@@ -335,7 +412,13 @@ impl BloomSensor {
         let lang_full = entry.request.headers.accept_language.first().map_or("", |s| s.as_str());
         let referer = entry.request.headers.referer.first().map_or("", |s| s.as_str());
 
-        let reader = classify_reader(ua, enc, lang_full);
+        let reader = classify_reader_contextual(
+            ua,
+            enc,
+            lang_full,
+            &entry.request.remote_ip,
+            &entry.request.uri,
+        );
         let referrer_src = classify_referrer(referer);
 
         // Extract primary language code (e.g. "en-US" from "en-US,en;q=0.9")
@@ -803,5 +886,107 @@ mod tests {
         let obs = sensor.flush_remaining().unwrap();
         assert_eq!(*obs.readers.get("ai-agent").unwrap(), 1);
         assert_eq!(*obs.domains.get("science").unwrap(), 1);
+    }
+
+    // ── Fleet subnet tests ──
+
+    #[test]
+    fn fleet_subnet_anthropic() {
+        assert!(is_fleet_subnet("216.73.216.239"));
+        assert!(is_fleet_subnet("216.73.216.1"));
+    }
+
+    #[test]
+    fn fleet_subnet_meta() {
+        assert!(is_fleet_subnet("57.141.20.45"));
+        assert!(is_fleet_subnet("57.141.20.1"));
+        assert!(is_fleet_subnet("57.141.21.100"));
+    }
+
+    #[test]
+    fn fleet_subnet_real_human() {
+        assert!(!is_fleet_subnet("1.2.3.4"));
+        assert!(!is_fleet_subnet("192.168.1.1"));
+        assert!(!is_fleet_subnet("100.15.10.185"));
+    }
+
+    // ── Commit walk detection ──
+
+    #[test]
+    fn commit_walk_forgejo_paths() {
+        assert!(is_commit_walk_path("/ecoPrimals/wateringHole/commit/da43fe62"));
+        assert!(is_commit_walk_path("/ecoPrimals/toadStool/blame/commit/833e7fc6a59ae29039b0"));
+        assert!(is_commit_walk_path("/ecoPrimals/toadStool/src/commit/63408ec2b5dc3c03"));
+        assert!(is_commit_walk_path("/batch-processor/commit/36d546d9"));
+    }
+
+    #[test]
+    fn commit_walk_not_content() {
+        assert!(!is_commit_walk_path("/science/paper1/"));
+        assert!(!is_commit_walk_path("/philosophy/love-letter/"));
+        assert!(!is_commit_walk_path("/contribute"));
+        assert!(!is_commit_walk_path("/"));
+    }
+
+    // ── Contextual classification tests ──
+
+    #[test]
+    fn contextual_meta_subnet_classified_fleet() {
+        // Meta with perfect Chrome UA — subnet overrides UA
+        assert_eq!(
+            classify_reader_contextual(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "gzip, deflate, br, zstd",
+                "en-US,en;q=0.9",
+                "57.141.20.45",
+                "/ecoPrimals/wateringHole/commit/abc123de",
+            ),
+            ReaderType::AiAgent,
+        );
+    }
+
+    #[test]
+    fn contextual_real_human_unaffected() {
+        // Real human from a residential IP with proper headers
+        assert_eq!(
+            classify_reader_contextual(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "gzip, deflate, br",
+                "en-US,en;q=0.9",
+                "100.15.10.185",
+                "/science/paper1/",
+            ),
+            ReaderType::Human,
+        );
+    }
+
+    #[test]
+    fn contextual_commit_walk_no_language() {
+        // Unknown IP hitting commit paths without Accept-Language = fleet
+        assert_eq!(
+            classify_reader_contextual(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "gzip, deflate, br, zstd",
+                "",
+                "45.33.32.156",
+                "/ecoPrimals/toadStool/commit/da43fe62",
+            ),
+            ReaderType::AiAgent,
+        );
+    }
+
+    #[test]
+    fn contextual_commit_walk_with_language_passes() {
+        // Real user clicking one commit link (has Accept-Language)
+        assert_eq!(
+            classify_reader_contextual(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "gzip, deflate, br",
+                "en-US,en;q=0.9",
+                "100.15.10.185",
+                "/ecoPrimals/toadStool/commit/da43fe62",
+            ),
+            ReaderType::Human,
+        );
     }
 }

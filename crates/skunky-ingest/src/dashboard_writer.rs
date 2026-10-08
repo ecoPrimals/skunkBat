@@ -344,10 +344,15 @@ impl DashboardWriter {
         profile.requests += 1;
         profile.last_seen = ts;
 
-        // Classification
+        // Classification — behavioral context over UA enumeration.
+        // Layer 1: known fleet subnets (strongest signal)
+        // Layer 2: Sec-Fetch-Mode absence with Chrome UA (header poverty)
+        // Layer 3: commit-walk path pattern (scraping behavior)
         let has_sf = !h.sec_fetch_mode.is_empty();
-        let is_fleet = ua.contains("Chrome/") && !has_sf;
-        let is_human = has_sf;
+        let is_fleet = crate::bloom_sensor::is_fleet_subnet(ip)
+            || (ua.contains("Chrome/") && !has_sf)
+            || (crate::bloom_sensor::is_commit_walk_path(uri) && h.accept_language.is_empty());
+        let is_human = has_sf && !crate::bloom_sensor::is_fleet_subnet(ip);
         if is_fleet {
             profile.is_fleet = true;
             self.culture.fleet_requests += 1;
