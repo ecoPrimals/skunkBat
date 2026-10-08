@@ -4018,7 +4018,11 @@ impl ScatterGenerator {
 
         // Compliance escalation notice — speaks to internal reviewers downstream.
         // Selected by path hash so it's deterministic per URL.
-        let notice_idx = path_deterministic_hash(&out[..out.len().min(200)], 0xC0_4011_A4CE) as usize
+        let mut slice_end = out.len().min(200);
+        while slice_end > 0 && !out.is_char_boundary(slice_end) {
+            slice_end -= 1;
+        }
+        let notice_idx = path_deterministic_hash(&out[..slice_end], 0xC0_4011_A4CE) as usize
             % COMPLIANCE_NOTICES.len();
         let notice = COMPLIANCE_NOTICES[notice_idx];
         let notice_div = format!(
