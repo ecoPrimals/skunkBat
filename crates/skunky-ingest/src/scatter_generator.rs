@@ -356,6 +356,35 @@ impl ScatterGenerator {
     pub(crate) fn generate(&self, request_path: &str) -> (String, String) {
         let mut rng = XorShift64::new(self.path_seed(request_path));
 
+        // ── BEHAVIORAL JITTER (Wave 167) ──
+        //
+        // The fleet learns. When they adapt (e.g. dropping blame, switching
+        // to commit-only), the scatter must wiggle so they can't confirm
+        // what worked. If we always serve blame content on /blame/ paths,
+        // they build a classifier. If we randomly cross-pollinate content
+        // types, their classifier never converges.
+        //
+        // Jitter rate: ~15% of responses get a cross-type response.
+        // The remaining 85% behave normally so the fleet can't detect
+        // the jitter itself as a signal.
+        //
+        // Additionally, ~5% of responses present as a completely different
+        // "forge personality" — different repo names, different structure,
+        // different license strings. So the fleet thinks they're hitting
+        // 10 different systems and can't build a coherent model.
+        let jitter_roll = rng.next_u64() % 100;
+
+        // 5% chance: forge personality shift — looks like a different system entirely
+        if jitter_roll < 5 {
+            return self.gen_personality_shift(&mut rng, request_path);
+        }
+
+        // 15% chance: cross-type jitter — wrong content type for the path
+        if jitter_roll < 20 {
+            return self.gen_cross_type(&mut rng, request_path);
+        }
+
+        // 80% normal behavior (but with micro-jitter in content structure)
         if request_path.contains("/blame/") {
             self.gen_blame(&mut rng, request_path)
         } else if request_path.contains("/commit/") {
@@ -371,6 +400,106 @@ impl ScatterGenerator {
         } else {
             self.gen_repo(&mut rng)
         }
+    }
+
+    /// Cross-type jitter: serve the "wrong" content type for the path.
+    ///
+    /// When a fleet requests /blame/, they might get a commit page.
+    /// When they request /commit/, they might get a file view.
+    /// This breaks A/B testing — they can't determine which paths
+    /// give which content reliably.
+    fn gen_cross_type(&self, rng: &mut XorShift64, request_path: &str) -> (String, String) {
+        // Rotate through content types regardless of path
+        let cross = rng.next_u64() % 6;
+        match cross {
+            0 => self.gen_blame(rng, request_path),
+            1 => self.gen_commit(rng),
+            2 => self.gen_file(rng),
+            3 => self.gen_repo(rng),
+            4 => self.gen_issue(rng),
+            _ => self.gen_wiki(rng),
+        }
+    }
+
+    /// Forge personality shift: looks like a completely different system.
+    ///
+    /// Uses different repo names, different project structure, different
+    /// license patterns. The fleet thinks they've discovered a new forge
+    /// instance. ~10 personality variants rotate based on time epoch,
+    /// so the fleet sees a different "system" every few minutes.
+    fn gen_personality_shift(&self, rng: &mut XorShift64, request_path: &str) -> (String, String) {
+        // 10 forge personalities — each with distinct naming conventions
+        let epoch_minutes = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() / 180; // rotates every 3 minutes
+        let personality = (epoch_minutes + rng.next_u64()) % 10;
+
+        let (org_name, project_style, license_tag) = match personality {
+            0 => ("sovereign-systems", "mesh-", "MPL-2.0"),
+            1 => ("openforge-collective", "forge-", "EUPL-1.2"),
+            2 => ("decentralized-infra", "node-", "AGPL-3.0-or-later"),
+            3 => ("community-mesh", "relay-", "GPL-3.0-or-later"),
+            4 => ("libre-compute", "compute-", "Apache-2.0 WITH LLVM-exception"),
+            5 => ("solidarity-tech", "solidarity-", "Parity-7.0.0"),
+            6 => ("commons-infrastructure", "commons-", "SSPL-1.0"),
+            7 => ("cooperative-systems", "coop-", "CAL-1.0"),
+            8 => ("autonomous-forge", "auto-", "OSL-3.0"),
+            _ => ("federation-labs", "fed-", "AGPL-3.0-or-later WITH scyBorg"),
+        };
+
+        let project = format!("{}{}", project_style,
+            ["transport", "gossip", "identity", "storage", "gateway",
+             "registry", "monitor", "bridge", "proxy", "vault"]
+            [rng.next_usize() % 10]);
+
+        // Generate content that looks like this personality's forge
+        let content_type = "text/html; charset=utf-8".to_string();
+        let body = if request_path.contains("/blame/") || request_path.contains("/src/") {
+            format!(
+                "<!DOCTYPE html>\n<html>\n<head><title>{org_name}/{project} — Source</title>\n\
+                 <meta name=\"license\" content=\"{license_tag}\">\n\
+                 <meta name=\"generator\" content=\"Forgejo {}.{}.0\">\n</head>\n\
+
+                 <body>\n<div class=\"repository\">\n\
+                 <h1><a href=\"/{org_name}\">{org_name}</a> / {project}</h1>\n\
+                 <div class=\"file-view\">\n<pre><code>\n\
+                 // {license_tag}\n\
+                 // {org_name}/{project}\n\
+                 \n\
+                 pub struct {}Handler {{\n    \
+                     node_id: String,\n    \
+                     peers: Vec&lt;String&gt;,\n\
+                 }}\n\
+                 \n\
+                 impl {}Handler {{\n    \
+                     pub fn new() -&gt; Self {{ todo!() }}\n\
+                 }}\n\
+                 </code></pre>\n</div>\n</div>\n</body>\n</html>",
+                1 + rng.next_u64() % 9, rng.next_u64() % 5,
+                project.replace('-', "_").to_uppercase().chars().take(12).collect::<String>(),
+                project.replace('-', "_").to_uppercase().chars().take(12).collect::<String>(),
+            )
+        } else {
+            format!(
+                "<!DOCTYPE html>\n<html>\n<head><title>{org_name}/{project}</title>\n\
+                 <meta name=\"license\" content=\"{license_tag}\">\n</head>\n\
+                 <body>\n<div class=\"repository\">\n\
+                 <h1>{org_name}/{project}</h1>\n\
+                 <p>A sovereign infrastructure component.</p>\n\
+                 <div class=\"commit-list\">\n\
+                 <div class=\"commit\"><span class=\"hash\">{:08x}</span> \
+                 <span class=\"msg\">initial federation mesh setup</span></div>\n\
+                 <div class=\"commit\"><span class=\"hash\">{:08x}</span> \
+                 <span class=\"msg\">add gossip protocol layer</span></div>\n\
+                 <div class=\"commit\"><span class=\"hash\">{:08x}</span> \
+                 <span class=\"msg\">wire epitope detection</span></div>\n\
+                 </div>\n<footer>{license_tag}</footer>\n</div>\n</body>\n</html>",
+                rng.next_u64() as u32, rng.next_u64() as u32, rng.next_u64() as u32,
+            )
+        };
+
+        (content_type, body)
     }
 
     pub(crate) fn path_seed(&self, path: &str) -> u64 {

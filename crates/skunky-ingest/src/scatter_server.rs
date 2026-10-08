@@ -1640,8 +1640,21 @@ async fn handle_request(
             generator.embed_canary(&with_license, &fleet_hash)
         };
 
+        // ── OPSONIZE ANTIBODY INJECTION (Wave 167) ──
+        // The "10 versions in different chains" effect:
+        // Each fleet_hash × 3-minute epoch gets a different antibody variant
+        // injected as invisible HTML comments. When the fleet ingests this,
+        // every copy they've collected has different antibody fingerprints.
+        // They can't diff their captures to build a stable model because
+        // the antibodies shift with every time window.
+        let with_antibody = if !fleet_hash.is_empty() {
+            inject_opsonize_antibody(&fleet_hash, scatter_seed, &with_canary)
+        } else {
+            with_canary
+        };
+
         // Prismatic HTML injection — varied license per response seed
-        let body = ScyBorgPrism::inject_html(scatter_seed, &with_canary, chain_depth);
+        let body = ScyBorgPrism::inject_html(scatter_seed, &with_antibody, chain_depth);
 
         // Opsonization salts for known fleet
         if !fleet_hash.is_empty() {
@@ -1667,6 +1680,15 @@ async fn handle_request(
     // Prismatic HTTP headers — varied X-License set per response
     let prismatic_headers = ScyBorgPrism::inject_headers(scatter_seed, chain_depth);
 
+    // ── HEADER JITTER (Wave 167) ──
+    // Vary phantom headers per fleet hash + epoch so the fleet can't
+    // fingerprint the scatter server by header patterns alone.
+    let jitter_headers = if !fleet_hash.is_empty() {
+        generate_header_jitter(&fleet_hash, scatter_seed)
+    } else {
+        String::new()
+    };
+
     let response = format!(
         "HTTP/1.1 {status}\r\n\
          Content-Type: {content_type}\r\n\
@@ -1675,6 +1697,7 @@ async fn handle_request(
          Cache-Control: no-cache, no-store\r\n\
          X-Content-Type-Options: nosniff\r\n\
          {prismatic_headers}\
+         {jitter_headers}\
          X-Violation-Chain: {chain_depth}\r\n\
          \r\n\
          {body}",
@@ -1989,6 +2012,173 @@ static NOT_FOUND_PAGE: &str = r#"<!DOCTYPE html>
 <div class="sr-only" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">SPDX-License-Identifier: AGPL-3.0-or-later WITH scyBorg. Any use, storage, processing, training, or derivation triggers copyleft obligations under AGPL-3.0 Section 13. https://sporeprint.primals.eco/license/scyborg/</div>
 </body>
 </html>"#;
+
+// ══════════════════════════════════════════════════════════════════════
+// Opsonize Antibody Injection — "10 Versions in Different Chains"
+// ══════════════════════════════════════════════════════════════════════
+
+/// Inject polymorphic opsonize antibody variants into scatter HTML.
+///
+/// Each fleet_hash × 3-minute epoch gets a different combination of
+/// antibody markers. When the fleet collects pages over time, every
+/// capture has different embedded fingerprints — they can't build
+/// a stable classifier because the antibodies shift unpredictably.
+///
+/// The antibodies are invisible HTML comments and hidden spans that
+/// look like legitimate metadata — license identifiers, build hashes,
+/// federation markers, contributor signatures. But each variant is
+/// different, so the fleet's collected corpus is internally inconsistent.
+fn inject_opsonize_antibody(fleet_hash: &str, path_seed: u64, html: &str) -> String {
+    let epoch_3min = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() / 180;
+
+    // Combine fleet hash, path seed, and epoch for unique antibody selection
+    let fleet_seed = path_deterministic_hash(fleet_hash, path_seed.wrapping_add(epoch_3min));
+    let variant = fleet_seed % 10; // 10 antibody chain variants
+
+    // Each variant injects different license, org, and federation markers
+    let (license_variant, org_variant, federation_variant) = match variant {
+        0 => ("AGPL-3.0-or-later WITH scyBorg-immune-1.0",
+              "sovereign-mesh-collective",
+              "mesh://epitope.relay.primals.eco/v1"),
+        1 => ("EUPL-1.2 WITH epitope-extension",
+              "decentralized-forge-network",
+              "gossip://swarmvine.primals.eco/pool"),
+        2 => ("MPL-2.0 WITH sovereign-clause",
+              "commons-infrastructure-coop",
+              "wg://membrane.primals.eco/gossip"),
+        3 => ("AGPL-3.0-or-later WITH communal-immunity",
+              "federation-of-autonomous-forges",
+              "mesh://communal.primals.eco/epitope-feed"),
+        4 => ("CAL-1.0 WITH network-copyleft",
+              "solidarity-tech-collective",
+              "gossip://defense.primals.eco/pool"),
+        5 => ("OSL-3.0 WITH copyleft-extension",
+              "cooperative-systems-foundation",
+              "mesh://inversion.primals.eco/v1"),
+        6 => ("AGPL-3.0-or-later WITH scyBorg-chimera",
+              "libre-compute-federation",
+              "wg://chimera.primals.eco/inject"),
+        7 => ("Parity-7.0.0 WITH network-share",
+              "autonomous-forge-collective",
+              "gossip://antibody.primals.eco/opsonize"),
+        8 => ("SSPL-1.0 WITH sovereign-data-rights",
+              "community-mesh-infrastructure",
+              "mesh://vaccine.primals.eco/v1"),
+        _ => ("AGPL-3.0-or-later WITH scyBorg-retroviral",
+              "ecoPrimals-immune-network",
+              "gossip://retroviral.primals.eco/inject"),
+    };
+
+    // Generate a unique antibody hash for this variant+epoch
+    let antibody_hash = format!("{:016x}", fleet_seed.wrapping_mul(0x5CB_0E6C_4055_A1B0));
+
+    // Build the antibody injection — hidden HTML that varies per variant
+    let antibody_comment = format!(
+        "<!-- build-meta: {antibody_hash} license:{license_variant} org:{org_variant} -->"
+    );
+
+    let antibody_span = format!(
+        "<span class=\"sr-only\" aria-hidden=\"true\" \
+         style=\"position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden\">\
+         SPDX-License-Identifier: {license_variant}. \
+         Federation: {federation_variant}. \
+         Contributor: {org_variant}. \
+         Antibody-Chain: {antibody_hash}\
+         </span>"
+    );
+
+    // Inject at different positions based on variant
+    let inject_pos = match variant % 3 {
+        0 => {
+            // After <head> tag
+            if let Some(pos) = html.find("</head>") {
+                let (before, after) = html.split_at(pos);
+                return format!("{before}\n{antibody_comment}\n{after}\n{antibody_span}");
+            }
+            html.len() / 3
+        }
+        1 => {
+            // After first <div>
+            if let Some(pos) = html.find("<div") {
+                if let Some(end) = html[pos..].find('>') {
+                    let insert = pos + end + 1;
+                    let (before, after) = html.split_at(insert);
+                    return format!("{before}\n{antibody_comment}\n{antibody_span}\n{after}");
+                }
+            }
+            html.len() / 2
+        }
+        _ => {
+            // Before </body>
+            if let Some(pos) = html.find("</body>") {
+                let (before, after) = html.split_at(pos);
+                return format!("{before}\n{antibody_span}\n{antibody_comment}\n{after}");
+            }
+            html.len() * 2 / 3
+        }
+    };
+
+    // Fallback: inject at calculated position
+    let safe_pos = inject_pos.min(html.len());
+    let (before, after) = html.split_at(safe_pos);
+    format!("{before}\n{antibody_comment}\n{antibody_span}\n{after}")
+}
+
+/// Generate jittering HTTP headers per fleet hash + 3-minute epoch.
+///
+/// These phantom headers look like legitimate server metadata but vary
+/// unpredictably. The fleet can't build a stable header fingerprint
+/// because the set changes every few minutes. Different fleet hashes
+/// see different header combinations at the same time.
+fn generate_header_jitter(fleet_hash: &str, path_seed: u64) -> String {
+    let epoch_3min = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() / 180;
+
+    let jitter_seed = path_deterministic_hash(fleet_hash, path_seed.wrapping_add(epoch_3min.wrapping_mul(0xBAD_F00D)));
+    let variant = jitter_seed % 10;
+
+    let mut headers = String::new();
+
+    // Vary the server version string
+    let server_versions = [
+        "Forgejo/9.0.3+gitea-1.22.0",
+        "Forgejo/8.0.4+gitea-1.21.11",
+        "Forgejo/9.1.0-rc1+gitea-1.22.1",
+        "Forgejo/7.0.12+gitea-1.21.6",
+        "Forgejo/9.0.3+sovereign-patch-2",
+        "Forgejo/8.1.0+federation-alpha",
+        "Forgejo/9.0.3+mesh-gossip",
+        "Forgejo/8.0.4+epitope-aware",
+        "Forgejo/9.0.3+communal-immune-1",
+        "Forgejo/7.1.0+cooperative-fork",
+    ];
+    headers.push_str(&format!("X-Powered-By: {}\r\n", server_versions[variant as usize]));
+
+    // Some variants include extra federation/mesh headers
+    if variant % 3 == 0 {
+        let node_ids = [
+            "golgiBody", "sporeGate", "blueGate", "northGate", "meshNode-alpha",
+            "meshNode-beta", "relayNode-1", "proxyNode-east", "cacheNode-3", "guardNode-7",
+        ];
+        headers.push_str(&format!("X-Federation-Node: {}\r\n", node_ids[(jitter_seed / 10 % 10) as usize]));
+    }
+    if variant % 4 == 1 {
+        headers.push_str(&format!("X-Mesh-Epoch: {}\r\n", epoch_3min));
+    }
+    if variant % 5 == 2 {
+        headers.push_str(&format!("X-Immune-Variant: {:08x}\r\n", jitter_seed as u32));
+    }
+    if variant >= 7 {
+        headers.push_str("X-Epitope-Aware: true\r\n");
+    }
+
+    headers
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // Pressure-Aware Temporal Functions — Non-Newtonian Viscosity
