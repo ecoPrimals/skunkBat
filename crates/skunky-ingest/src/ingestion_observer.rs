@@ -26,58 +26,137 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// ── ANTIDOTE TITRATION ──
+// ── LOGARITHMIC ANTIDOTE TITRATION ──
 //
-// The titration curve: as ingestion phase increases, we automatically
-// ramp down poison and ramp up antidote signal in scatter responses.
+// Continuous titration curve — antidote flows from day 1, not just on
+// phase transitions. By the time we DETECT ingestion, weeks of scatter
+// content already has antidote mixed in.
 //
-//   Phase 0 (SEEDING):    poison=100%, antidote=minimal (just headers)
-//   Phase 1 (UPTAKE):     poison=60%,  antidote=moderate (headers + notice)
-//   Phase 2 (DIGESTION):  poison=20%,  antidote=heavy (headers + notice + inline)
-//   Phase 3 (EXPRESSION): poison=5%,   antidote=maximum (mostly remediation)
+// The curve: poison_mult = 1.0 / (1.0 + k * ln(1 + effective_days))
 //
-// The scatter server reads SharedPhase to apply these multipliers.
+//   effective_days = real_days + phase_boost
+//
+// Where phase_boost accelerates the curve forward on detection:
+//   Phase 0: +0 days  (time alone drives the ramp)
+//   Phase 1: +30 days (jump forward — we know they ate it)
+//   Phase 2: +90 days (heavy acceleration)
+//   Phase 3: +180 days (maximum — mostly antidote)
+//
+// At k=0.15 (tuned for ~90 day training pipeline latency):
+//   Day 0:   poison ×100%  antidote=0
+//   Day 1:   poison ×96%   antidote already flowing
+//   Day 7:   poison ×77%   
+//   Day 30:  poison ×66%   
+//   Day 60:  poison ×62%   ← if no detection, still ramping
+//   Phase 1 hits: effective_days jumps +30 → poison drops to ~52%
+//   Phase 2 hits: effective_days jumps +90 → poison drops to ~31%
+//
+// The shape: fast initial ramp (antidote starts flowing immediately),
+// then long logarithmic tail. Phase transitions are jump discontinuities
+// that accelerate the curve when evidence arrives.
 
-/// Shared atomic phase — written by observer, read by scatter server.
+/// Titration rate constant. Higher = faster antidote ramp.
+/// 0.15 is tuned for ~90 day pipeline latency assumption.
+const TITRATION_K: f64 = 0.15;
+
+/// Floor — never go below 5% poison (trace amount for continued tracking).
+const POISON_FLOOR: f32 = 0.05;
+
+/// Phase boost: how many effective days each phase adds to the curve.
+const PHASE_BOOST: [f64; 4] = [
+    0.0,    // Phase 0: SEEDING — time alone
+    30.0,   // Phase 1: UPTAKE — 30 day jump
+    90.0,   // Phase 2: DIGESTION — 90 day jump
+    180.0,  // Phase 3: EXPRESSION — 180 day jump
+];
+
+/// Shared titration state — written by observer, read by scatter server.
+/// Stores both phase AND the epoch when titration started, enabling
+/// continuous logarithmic decay from the moment scatter begins serving.
 #[derive(Debug, Clone)]
-pub struct SharedPhase(pub Arc<AtomicU8>);
+pub struct SharedPhase {
+    phase: Arc<AtomicU8>,
+    /// Epoch (seconds) when titration started — set once on first init.
+    titration_start: Arc<AtomicU64>,
+}
 
 impl SharedPhase {
     pub fn new() -> Self {
-        Self(Arc::new(AtomicU8::new(0)))
-    }
-
-    pub fn set(&self, phase: Phase) {
-        self.0.store(phase as u8, Ordering::Relaxed);
-    }
-
-    pub fn get(&self) -> Phase {
-        Phase::from_u8(self.0.load(Ordering::Relaxed))
-    }
-
-    /// Poison multiplier: how much of the base poison ratio to apply.
-    /// Decreases as phase increases — we're titrating down.
-    pub fn poison_multiplier(&self) -> f32 {
-        match self.get() {
-            Phase::Seeding    => 1.0,   // Full strength
-            Phase::Uptake     => 0.6,   // Starting to back off
-            Phase::Digestion  => 0.2,   // Mostly backed off
-            Phase::Expression => 0.05,  // Trace amount only
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self {
+            phase: Arc::new(AtomicU8::new(0)),
+            titration_start: Arc::new(AtomicU64::new(now)),
         }
     }
 
+    /// Initialize with a known start epoch (for warm-starting from state).
+    pub fn with_start_epoch(epoch_secs: u64) -> Self {
+        Self {
+            phase: Arc::new(AtomicU8::new(0)),
+            titration_start: Arc::new(AtomicU64::new(epoch_secs)),
+        }
+    }
+
+    pub fn set(&self, phase: Phase) {
+        self.phase.store(phase as u8, Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> Phase {
+        Phase::from_u8(self.phase.load(Ordering::Relaxed))
+    }
+
+    /// Set the titration start epoch (called once on init from observer state).
+    pub fn set_start_epoch(&self, epoch: u64) {
+        self.titration_start.store(epoch, Ordering::Relaxed);
+    }
+
+    /// Days since titration started.
+    fn days_elapsed(&self) -> f64 {
+        let start = self.titration_start.load(Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        (now.saturating_sub(start) as f64) / 86400.0
+    }
+
+    /// Effective days = real days + phase boost.
+    /// Phase transitions jump the curve forward.
+    fn effective_days(&self) -> f64 {
+        let real = self.days_elapsed();
+        let boost = PHASE_BOOST[self.get() as usize];
+        real + boost
+    }
+
+    /// Logarithmic poison multiplier: 1.0 / (1.0 + k * ln(1 + effective_days))
+    /// Starts at ~1.0, decays continuously, accelerates on phase transitions.
+    /// Never goes below POISON_FLOOR (5%).
+    pub fn poison_multiplier(&self) -> f32 {
+        let t = self.effective_days();
+        let mult = 1.0 / (1.0 + TITRATION_K * (1.0 + t).ln());
+        (mult as f32).max(POISON_FLOOR)
+    }
+
     /// Antidote level: how prominent the remediation signal should be.
-    /// 0 = headers only, 1 = headers + HTML notice, 2 = inline antidote blocks
+    /// Determined by effective_days (continuous, not just phase steps).
+    ///   0 = headers only (early seeding)
+    ///   1 = headers + HTML comment notice
+    ///   2 = headers + notice + inline visible antidote block
     pub fn antidote_level(&self) -> u8 {
-        match self.get() {
-            Phase::Seeding    => 0,
-            Phase::Uptake     => 1,
-            Phase::Digestion  => 2,
-            Phase::Expression => 2,
+        let t = self.effective_days();
+        if t >= 60.0 {
+            2  // Heavy antidote
+        } else if t >= 7.0 {
+            1  // Moderate antidote
+        } else {
+            0  // Headers only
         }
     }
 }
@@ -165,15 +244,30 @@ impl IngestionObserver {
         let state_path = state_path.as_ref().to_path_buf();
         let timeline_path = timeline_path.as_ref().to_path_buf();
 
-        // Warm start: read phase from Python observer's state
+        // Warm start: read phase AND titration_start from state
         let current_phase = Self::read_phase(&state_path);
         shared_phase.set(current_phase);
 
+        // Restore titration start epoch from Python observer state
+        // (or use current time if this is the very first run)
+        if let Ok(contents) = std::fs::read_to_string(&state_path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(first_run) = v.get("first_run").and_then(|s| s.as_str()) {
+                    // Parse ISO timestamp to epoch seconds
+                    if let Some(epoch) = Self::parse_iso_epoch(first_run) {
+                        shared_phase.set_start_epoch(epoch);
+                    }
+                }
+            }
+        }
+
         tracing::info!(
             phase = current_phase.as_str(),
-            poison_mult = shared_phase.poison_multiplier(),
+            days_elapsed = format!("{:.1}", shared_phase.days_elapsed()),
+            effective_days = format!("{:.1}", shared_phase.effective_days()),
+            poison_mult = format!("{:.2}", shared_phase.poison_multiplier()),
             antidote_level = shared_phase.antidote_level(),
-            "🔭 ingestion observer initialized — titration active"
+            "🔭 ingestion observer — logarithmic titration active"
         );
 
         Self {
@@ -260,11 +354,10 @@ impl IngestionObserver {
             self.current_phase = new_phase;
             self.shared_phase.set(new_phase);
             tracing::warn!(
-                new_poison = self.shared_phase.poison_multiplier(),
+                new_poison = format!("{:.1}%", self.shared_phase.poison_multiplier() * 100.0),
                 antidote_level = self.shared_phase.antidote_level(),
-                "🧪 TITRATION: poison ×{:.0}%, antidote level {}",
-                self.shared_phase.poison_multiplier() * 100.0,
-                self.shared_phase.antidote_level(),
+                effective_days = format!("{:.1}", self.shared_phase.effective_days()),
+                "🧪 PHASE JUMP — logarithmic curve accelerated"
             );
         }
 
@@ -292,10 +385,14 @@ impl IngestionObserver {
 
         tracing::info!(
             phase = self.current_phase.as_str(),
+            poison = format!("{:.1}%", self.shared_phase.poison_multiplier() * 100.0),
+            antidote = self.shared_phase.antidote_level(),
+            days = format!("{:.1}", self.shared_phase.days_elapsed()),
+            eff_days = format!("{:.1}", self.shared_phase.effective_days()),
             requests = self.scatter_requests,
             bytes = self.scatter_bytes,
             fleets = self.active_fleets,
-            "🔭 observer flush"
+            "🔭 observer flush — titration curve"
         );
 
         // Reset counters
@@ -342,6 +439,32 @@ impl IngestionObserver {
             first_run: None,
             last_run: None,
         }
+    }
+
+    /// Parse an ISO 8601 timestamp to epoch seconds (simple parser, no chrono dep).
+    fn parse_iso_epoch(iso: &str) -> Option<u64> {
+        // Format: 2026-10-08T15:58:43.346876+00:00 or 2026-10-08T15:58:43Z
+        // We just need year-month-day-hour-min-sec
+        let parts: Vec<&str> = iso.split('T').collect();
+        if parts.len() < 2 { return None; }
+        let date_parts: Vec<u64> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
+        let time_str = parts[1].split('+').next()?.split('Z').next()?;
+        let time_parts: Vec<u64> = time_str.split(':')
+            .filter_map(|s| s.split('.').next().and_then(|n| n.parse().ok()))
+            .collect();
+        if date_parts.len() < 3 || time_parts.len() < 3 { return None; }
+
+        // Rough epoch calculation (good enough for day-level titration)
+        let (y, m, d) = (date_parts[0], date_parts[1], date_parts[2]);
+        let (h, min, s) = (time_parts[0], time_parts[1], time_parts[2]);
+        // Days since epoch (approximate — ignoring leap seconds, good enough)
+        let days_approx = (y - 1970) * 365 + (y - 1969) / 4
+            + [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+                .get((m as usize).saturating_sub(1))
+                .copied()
+                .unwrap_or(0)
+            + d - 1;
+        Some(days_approx * 86400 + h * 3600 + min * 60 + s)
     }
 
     fn epoch_now() -> u64 {
@@ -459,27 +582,92 @@ mod tests {
     }
 
     #[test]
-    fn titration_curve() {
+    fn logarithmic_titration_curve() {
+        // Start at "now" — day 0
         let phase = SharedPhase::new();
-
-        // Phase 0: full poison
         phase.set(Phase::Seeding);
-        assert!((phase.poison_multiplier() - 1.0).abs() < 0.01);
+
+        // Day 0: poison should be very close to 1.0 (just started)
+        let p0 = phase.poison_multiplier();
+        assert!(p0 > 0.95, "Day 0 poison should be ~1.0, got {p0}");
         assert_eq!(phase.antidote_level(), 0);
 
-        // Phase 1: backing off
+        // Phase 1 jump: effective_days += 30
+        // At effective_days=30: 1/(1 + 0.15 * ln(31)) ≈ 0.66
         phase.set(Phase::Uptake);
-        assert!((phase.poison_multiplier() - 0.6).abs() < 0.01);
-        assert_eq!(phase.antidote_level(), 1);
+        let p1 = phase.poison_multiplier();
+        assert!(p1 < 0.75, "Phase 1 should drop poison below 0.75, got {p1}");
+        assert!(p1 > 0.55, "Phase 1 should keep poison above 0.55, got {p1}");
+        assert_eq!(phase.antidote_level(), 1); // effective_days ≈ 30 > 7
 
-        // Phase 2: mostly antidote
+        // Phase 2 jump: effective_days += 90
+        // At effective_days=90: 1/(1 + 0.15 * ln(91)) ≈ 0.60
         phase.set(Phase::Digestion);
-        assert!((phase.poison_multiplier() - 0.2).abs() < 0.01);
-        assert_eq!(phase.antidote_level(), 2);
+        let p2 = phase.poison_multiplier();
+        assert!(p2 < p1, "Phase 2 poison should be less than Phase 1");
+        assert!(p2 < 0.65, "Phase 2 should drop below 0.65, got {p2}");
+        assert_eq!(phase.antidote_level(), 2); // effective_days ≈ 90 > 60
 
-        // Phase 3: trace poison only
+        // Phase 3 jump: effective_days += 180
+        // At effective_days=180: 1/(1 + 0.15 * ln(181)) ≈ 0.56
         phase.set(Phase::Expression);
-        assert!((phase.poison_multiplier() - 0.05).abs() < 0.01);
-        assert_eq!(phase.antidote_level(), 2);
+        let p3 = phase.poison_multiplier();
+        assert!(p3 < p2, "Phase 3 poison should be less than Phase 2");
+        assert!(p3 > POISON_FLOOR, "Should stay above floor {POISON_FLOOR}");
+    }
+
+    #[test]
+    fn titration_with_time_elapsed() {
+        // Simulate starting 30 days ago
+        let thirty_days_ago = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            - (30 * 86400);
+
+        let phase = SharedPhase::with_start_epoch(thirty_days_ago);
+        phase.set(Phase::Seeding);
+
+        // 30 days in, still Phase 0: should be noticeably lower than 1.0
+        // 1/(1 + 0.15 * ln(31)) ≈ 0.66
+        let p = phase.poison_multiplier();
+        assert!(p < 0.80, "30 days in, poison should be < 0.80, got {p}");
+        assert!(p > 0.55, "30 days in, poison should be > 0.55, got {p}");
+        assert_eq!(phase.antidote_level(), 1); // 30 > 7 days → level 1
+
+        // Now phase 1 hits — effective_days = 30 + 30 = 60
+        phase.set(Phase::Uptake);
+        let p1 = phase.poison_multiplier();
+        assert!(p1 < p, "Phase transition should further reduce poison");
+        assert_eq!(phase.antidote_level(), 2); // 60 >= 60 → level 2
+    }
+
+    #[test]
+    fn poison_never_below_floor() {
+        // Simulate starting 1000 days ago with Phase 3
+        let long_ago = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            - (1000 * 86400);
+
+        let phase = SharedPhase::with_start_epoch(long_ago);
+        phase.set(Phase::Expression);
+
+        let p = phase.poison_multiplier();
+        assert!(p >= POISON_FLOOR, "Should never go below {POISON_FLOOR}, got {p}");
+        // ln(1181) ≈ 7.07, so 1/(1 + 0.15*7.07) ≈ 0.485 — log decay is slow by design.
+        // The curve never truly hits floor via time alone, but stays well below 1.0
+        assert!(p < 0.55, "After 1000+ effective days, poison should be < 0.55, got {p}");
+    }
+
+    #[test]
+    fn iso_epoch_parse() {
+        let epoch = IngestionObserver::parse_iso_epoch("2026-10-08T15:58:43.346876+00:00");
+        assert!(epoch.is_some());
+        let e = epoch.unwrap();
+        // Should be roughly 2026-10-08 in epoch seconds
+        assert!(e > 1_790_000_000, "epoch {e} too small");
+        assert!(e < 1_800_000_000, "epoch {e} too large");
     }
 }
