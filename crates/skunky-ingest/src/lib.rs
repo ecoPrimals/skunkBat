@@ -25,4 +25,5 @@ pub mod scatter_rng;
 pub mod scatter_server;
 pub mod scyborg_prism;
 pub mod signal_spine;
+pub mod signal_writer;
 pub mod threat_feed;

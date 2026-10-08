@@ -12,7 +12,7 @@
 use skunky_ingest::{
     aggregator, caddy, caddy_bridge, cloudflare, cursor, error,
     federation, fleet, inflammatory, lysogeny, rpc, abuse_reporter,
-    bloom_sensor, scatter_server, signal_spine, threat_feed,
+    bloom_sensor, scatter_server, signal_spine, signal_writer, threat_feed,
 };
 
 use error::IngestError;
@@ -118,6 +118,19 @@ struct Cli {
     /// Set to 0 to disable tarpitting (falls back to instant 429).
     #[arg(long, default_value_t = 100)]
     max_tarpit_connections: u32,
+
+    /// Enable signal data writer — replaces gen-signal-data.py cron.
+    /// Accumulates bloom sensor data and writes signal-data.js periodically.
+    #[arg(long, default_value_t = false)]
+    signal_writer: bool,
+
+    /// Output path for signal-data.js (used with --signal-writer).
+    #[arg(long, default_value = "/opt/ecoPrimals/signal/site/public/js/signal-data.js")]
+    signal_data_path: PathBuf,
+
+    /// State file for signal writer cumulative history.
+    #[arg(long, default_value = "/run/membrane/signal-writer-state.json")]
+    signal_state_path: PathBuf,
 }
 
 #[tokio::main]
@@ -362,6 +375,19 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     let bloom_signal_path = PathBuf::from("/run/membrane/bloom.signal");
     tracing::info!("🌸 bloom sensor active — afferent signal accumulation");
 
+    // Signal writer — replaces gen-signal-data.py (559 lines of Python → 0)
+    // Writes signal-data.js every 5 bloom windows (~5 min at 60s windows).
+    let mut signal_acc = if cli.signal_writer {
+        tracing::info!("📡 signal writer active — gen-signal-data.py convergence");
+        Some(signal_writer::SignalAccumulator::new(
+            cli.signal_data_path.clone(),
+            cli.signal_state_path.clone(),
+            5,
+        ))
+    } else {
+        None
+    };
+
     // Signal spine — immune memory (content-addressed observation chain)
     let spine_dir = PathBuf::from("/run/membrane/signal-spine");
     if let Err(e) = std::fs::create_dir_all(&spine_dir) {
@@ -480,6 +506,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     &abuse_queue,
                     cli.window_secs,
                     &opsonize_cache,
+                    signal_acc.as_mut(),
                 ).await;
 
                 if state.lines_read > 0 && state.lines_read.is_multiple_of(1000) {
@@ -559,6 +586,13 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         );
         write_bloom_signal(&bloom_signal_path, &obs).await;
 
+        // Signal writer — final flush
+        if let Some(ref mut acc) = signal_acc {
+            acc.ingest(&obs);
+            acc.flush();
+            tracing::info!("📡 signal writer final flush");
+        }
+
         // Feed the final observation into the spine before shutdown.
         if let Some(spine_entry) = signal_spine.ingest(&obs) {
             tracing::info!(
@@ -617,6 +651,7 @@ async fn process_line(
     abuse_queue: &abuse_reporter::AbuseReportQueue,
     window_secs: u64,
     opsonize_cache: &scatter_server::OpsonizeCache,
+    mut signal_acc: Option<&mut signal_writer::SignalAccumulator>,
 ) {
     if trimmed.is_empty() {
         return;
@@ -645,6 +680,11 @@ async fn process_line(
             "🌸 bloom observation"
         );
         write_bloom_signal(bloom_signal_path, &obs).await;
+
+        // Signal writer — accumulate for signal-data.js output.
+        if let Some(acc) = signal_acc.as_mut() {
+            acc.ingest(&obs);
+        }
 
         // Signal spine — chain the observation into immune memory.
         if let Some(spine_entry) = spine.ingest(&obs) {
