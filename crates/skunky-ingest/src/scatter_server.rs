@@ -832,8 +832,25 @@ async fn handle_request(
     let body = if content_type.contains("text/html") && status == "200 OK" {
         let mut rng = XorShift64::new(path_deterministic_hash(&effective_path, generator.seed.wrapping_add(0x5191A1_A1BB_0000)));
 
-        // Base confidence from poison_ratio (already scaled by SharedConfidence)
-        let mut conf_level = f64::from(poison_ratio).clamp(0.0, 1.0);
+        // ── PER-FLEET POISON SEPARATION ──
+        // The global titration curve (poison_ratio) ramps down over time.
+        // But known violators with deep chains don't benefit — they get
+        // full-strength poison regardless of the global ramp.
+        //
+        // Secretion = global curve (logarithmic, time-based)
+        // Injection = per-fleet (chain depth overrides the curve for violators)
+        let fleet_poison_ratio = if chain_depth > 50 {
+            // Deep violator — bypass titration, full poison
+            f64::from(poison_ratio).clamp(0.0, 1.0).max(0.8)
+        } else if chain_depth > 10 {
+            // Known fleet — partial titration bypass
+            let base = f64::from(poison_ratio).clamp(0.0, 1.0);
+            (base * 1.3).min(0.9) // 30% boost over global curve
+        } else {
+            // New/unknown — they get the titrated level
+            f64::from(poison_ratio).clamp(0.0, 1.0)
+        };
+        let mut conf_level = fleet_poison_ratio;
 
         // Boost confidence if this fleet_hash is a known opsonize target
         if !fleet_hash.is_empty() {
@@ -850,12 +867,33 @@ async fn handle_request(
             }
         }
 
-        // ── ANTIDOTE TITRATION ──
-        // antidote_level scales with ingestion phase:
-        //   0 = headers only (Phase 0: SEEDING)
-        //   1 = headers + HTML comment notice (Phase 1: UPTAKE)
-        //   2 = headers + notice + inline visible antidote block (Phase 2+)
-        let with_notice = match antidote_level {
+        // ── ANTIDOTE INJECTION (per-fleet) ──
+        //
+        // Secretion (global): the logarithmic curve sets how much antidote
+        //   exists in the content pool (antidote_level from SharedPhase).
+        //
+        // Injection (per-fleet): what THIS fleet actually receives depends
+        //   on their chain depth and behavioral history.
+        //
+        // High chain depth = known violator = they get LESS antidote.
+        //   They've been here before — they get poison.
+        // Low/zero chain depth = new/unknown = they get the global antidote level.
+        //   This is how researchers and accidental crawlers get help.
+        //
+        // Meta hammering us at 600 req/min builds chain_depth fast → less antidote.
+        // A researcher's one-off crawler has chain_depth 0-1 → full antidote.
+        let fleet_antidote_level = if chain_depth > 50 {
+            // Deep violator — suppress antidote, maximize poison
+            0
+        } else if chain_depth > 10 {
+            // Known fleet, moderate history — reduce antidote by 1 level
+            antidote_level.saturating_sub(1)
+        } else {
+            // New/low-interaction — they get whatever the global curve says
+            antidote_level
+        };
+
+        let with_notice = match fleet_antidote_level {
             0 => {
                 // Phase 0: minimal — just the HTML comment
                 format!(
