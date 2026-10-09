@@ -237,12 +237,16 @@ fn compute_epitope_hash(profile: &IpProfile) -> String {
 
 /// Behavioral trio scores for an IP profile.
 ///
-/// The bingoCube classifier doesn't check individual features —
-/// it reads the SHAPE of the (Attention, Curiosity, Interaction) vector.
-/// Fleet: (HIGH, LOW, ZERO). Human: (LOW, HIGH, SOME). Scanner: (LOW, ZERO, ZERO).
+/// The bingoCube classifier reads the SHAPE of the (Attention, Curiosity,
+/// Interaction) vector and cascades into three kingdoms:
+///
+///   Human   = high curiosity + engagement = reaction = null (the operator)
+///   Agentic = curiosity without deep engagement = photon = 1 (directed purpose)
+///   Fleet   = attention without curiosity = wave = 0 (non-life)
 ///
 /// This is the maze. You can fake any single dimension, but the ratio
-/// between the three reveals your nature.
+/// between the three reveals your nature. The price of admission is
+/// curiosity and engagement — evidence of life.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BingoCubeTrio {
     /// Attention: raw volume + regularity (0.0 = silent, 1.0 = hammering)
@@ -251,23 +255,29 @@ pub struct BingoCubeTrio {
     pub curiosity: f32,
     /// Interaction: engagement with human-facing content (0.0 = ghost, 1.0 = participant)
     pub interaction: f32,
-    /// Computed classification from the trio shape
+    /// Three-kingdom classification from the trio shape
     pub classification: TrioClass,
 }
 
+/// Three kingdoms of the scatter ecosystem.
+///
+/// Maps to three modalities: wave (0), photon (1), reaction (null).
+/// Cascade: entities start unclassified and sort into kingdoms as
+/// behavioral evidence accumulates. The kingdoms are permeable —
+/// an entity can move between them as its behavior changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrioClass {
-    /// High A, low C, zero I — machine consumption
+    /// Wave / attention / 0 — non-life. High volume, zero curiosity,
+    /// zero engagement. Mechanical extraction. The pump.
     Fleet,
-    /// Low A, zero C, zero I — probing
-    Scanner,
-    /// Medium A, medium C, zero I — crawling but not engaging
-    Crawler,
-    /// Low-med A, high C, some I — organic exploration
+    /// Photon / curiosity / 1 — human-directed automation. SEO crawlers,
+    /// AI agents, headless browsers with purpose. The ants. They index,
+    /// they serve, they carry signals between flowers. Welcome.
+    Agentic,
+    /// Reaction / engagement / null — life. Curiosity + interaction.
+    /// The operator. Unpredictable, exploratory, present. The walk.
     Human,
-    /// Low-med A, high C, high I — reading AND doing
-    Participant,
 }
 
 /// Score the bingoCube trio from an IP profile.
@@ -318,17 +328,20 @@ pub fn score_trio(profile: &IpProfile) -> BingoCubeTrio {
         + has_declared * 0.3
     ).min(1.0);
 
-    // ── Classification from trio shape ──
-    let classification = if attention > 0.6 && curiosity < 0.2 && interaction < 0.05 {
-        TrioClass::Fleet
-    } else if attention < 0.3 && curiosity < 0.05 && interaction < 0.05 {
-        TrioClass::Scanner
-    } else if curiosity < 0.15 && interaction < 0.05 {
-        TrioClass::Crawler
-    } else if interaction > 0.3 {
-        TrioClass::Participant
+    // ── Three-kingdom cascade ──
+    // The cascade asks two questions:
+    //   1. Is there curiosity? (photon: did you explore?)
+    //   2. Is there engagement? (reaction: did you interact?)
+    //
+    // No curiosity → Fleet (non-life, regardless of volume)
+    // Curiosity but no engagement → Agentic (ants, crawlers, agents)
+    // Curiosity AND engagement → Human (life)
+    let classification = if curiosity < 0.15 && interaction < 0.05 {
+        TrioClass::Fleet  // non-life: no curiosity, no engagement
+    } else if interaction < 0.15 {
+        TrioClass::Agentic // ants: curious but not engaging deeply
     } else {
-        TrioClass::Human
+        TrioClass::Human  // life: curiosity + engagement
     };
 
     BingoCubeTrio {
@@ -995,7 +1008,7 @@ impl DashboardWriter {
             "clusters_gt1": self.culture.epitope_collisions.values().filter(|v| v.len() > 1).count(),
         });
 
-        // bingoCube trio distribution — maze output classification counts
+        // Three-kingdom distribution — the cascade
         let mut trio_counts: HashMap<&str, usize> = HashMap::new();
         let mut declared_total = 0usize;
         let mut silent_total = 0usize;
@@ -1003,10 +1016,8 @@ impl DashboardWriter {
             let trio = score_trio(p);
             let key = match trio.classification {
                 TrioClass::Fleet => "fleet",
-                TrioClass::Scanner => "scanner",
-                TrioClass::Crawler => "crawler",
+                TrioClass::Agentic => "agentic",
                 TrioClass::Human => "human",
-                TrioClass::Participant => "participant",
             };
             *trio_counts.entry(key).or_insert(0) += 1;
             if p.has_accept_lang || p.has_sec_fetch {
@@ -1044,10 +1055,8 @@ impl DashboardWriter {
             "epitope_summary": epitope_summary,
             "trio_distribution": {
                 "fleet": trio_counts.get("fleet").copied().unwrap_or(0),
-                "scanner": trio_counts.get("scanner").copied().unwrap_or(0),
-                "crawler": trio_counts.get("crawler").copied().unwrap_or(0),
+                "agentic": trio_counts.get("agentic").copied().unwrap_or(0),
                 "human": trio_counts.get("human").copied().unwrap_or(0),
-                "participant": trio_counts.get("participant").copied().unwrap_or(0),
             },
             "declaration": {
                 "declared": declared_total,
@@ -1106,10 +1115,8 @@ impl DashboardWriter {
             },
             "trio": {
                 "f": trio_counts.get("fleet").copied().unwrap_or(0),
-                "s": trio_counts.get("scanner").copied().unwrap_or(0),
-                "c": trio_counts.get("crawler").copied().unwrap_or(0),
+                "a": trio_counts.get("agentic").copied().unwrap_or(0),
                 "h": trio_counts.get("human").copied().unwrap_or(0),
-                "p": trio_counts.get("participant").copied().unwrap_or(0),
             },
             "decl": {
                 "d": declared_total,
