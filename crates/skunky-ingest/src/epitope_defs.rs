@@ -7,6 +7,8 @@
 //! Each epitope costs more to evade than the last — the terminal epitope
 //! (reading pauses) would reduce throughput to human levels.
 
+#![allow(dead_code)]
+
 // ── Epitope identifiers ──
 
 pub(crate) const SEC_FETCH_MONOTONE: &str = "sec_fetch_monotone";

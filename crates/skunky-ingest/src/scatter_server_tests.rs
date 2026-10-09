@@ -2,6 +2,7 @@
 // Included via `#[cfg(test)] #[path = "scatter_server_tests.rs"] mod tests;`
 
 use super::*;
+use crate::scatter_mirror::encode_zwc;
 
 #[test]
 fn deterministic_scatter() {
@@ -92,18 +93,38 @@ fn file_page_has_code() {
 
 #[test]
 fn wiki_page_has_content() {
+    use crate::cube_oracle::{CubeDecisionGrid, JitterType};
     let sg = ScatterGenerator::new(42);
-    let (_, body) = sg.generate("/org/repo/wiki/setup");
-    assert!(body.contains("wiki-view"));
-    assert!(body.contains("Configuration"));
+    let mut found = false;
+    for epoch in 0..100u64 {
+        let grid = CubeDecisionGrid::from_context("test", "/org/repo/wiki/setup", epoch);
+        if grid.jitter_type() == JitterType::Normal {
+            let (_, body) = sg.generate_with_grid("/org/repo/wiki/setup", Some(&grid));
+            assert!(body.contains("wiki-view"), "wiki body missing 'wiki-view' at epoch {epoch}");
+            assert!(body.contains("Configuration"), "wiki body missing 'Configuration' at epoch {epoch}");
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "should find a Normal jitter epoch within 100 tries");
 }
 
 #[test]
 fn release_page_has_changelog() {
+    use crate::cube_oracle::{CubeDecisionGrid, JitterType};
     let sg = ScatterGenerator::new(42);
-    let (_, body) = sg.generate("/org/repo/releases/tag/v1.0.0");
-    assert!(body.contains("release-view"));
-    assert!(body.contains("Changelog"));
+    let mut found = false;
+    for epoch in 0..100u64 {
+        let grid = CubeDecisionGrid::from_context("test", "/org/repo/releases/tag/v1.0.0", epoch);
+        if grid.jitter_type() == JitterType::Normal {
+            let (_, body) = sg.generate_with_grid("/org/repo/releases/tag/v1.0.0", Some(&grid));
+            assert!(body.contains("release-view"), "release body missing 'release-view' at epoch {epoch}");
+            assert!(body.contains("Changelog"), "release body missing 'Changelog' at epoch {epoch}");
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "should find a Normal jitter epoch within 100 tries");
 }
 
 #[test]

@@ -6,6 +6,8 @@
 //! Uses riboCipher signal-first accept (`0xEC 0x01`) followed by
 //! newline-delimited JSON. Each request gets a monotonic `id`.
 
+#![allow(missing_docs)]
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};

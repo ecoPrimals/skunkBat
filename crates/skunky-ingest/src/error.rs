@@ -3,6 +3,8 @@
 
 //! skunky-ingest error types.
 
+#![allow(missing_docs)]
+
 #[derive(Debug, thiserror::Error)]
 pub enum IngestError {
     #[error("io: {0}")]

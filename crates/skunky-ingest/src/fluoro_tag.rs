@@ -34,6 +34,8 @@
 //   Layer 5: Comment cadence — comment frequency/style encodes bits
 //   Layer 6: Structural markers — HTML attribute ordering, CSS class names
 
+#![allow(missing_docs)]
+
 use crate::scatter_mirror::path_deterministic_hash;
 use crate::scatter_rng::XorShift64;
 
@@ -397,7 +399,7 @@ impl FluoroTag {
 
     /// Inject fluorescent tags into source code / markdown scatter content.
     pub fn inject_code(&self, code: &str, seed: u64) -> String {
-        let mut rng = XorShift64::new(seed.wrapping_add(self.as_u128() as u64));
+        let _rng = XorShift64::new(seed.wrapping_add(self.as_u128() as u64));
         let mut lines: Vec<String> = code.lines().map(|l| l.to_string()).collect();
 
         // Layer 3: Replace/add license header

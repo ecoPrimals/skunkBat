@@ -26,7 +26,9 @@
 //! - **Mixed response**: Not all requests get poison — some still abort,
 //!   creating uncertainty for the fleet about which responses are real
 
-use std::sync::atomic::{AtomicU32, Ordering};
+#![allow(missing_docs)]
+
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -41,19 +43,14 @@ pub use crate::scatter_prism::{PrismMode, PrismMix};
 // ScatterGenerator is now in scatter_generator.rs
 pub(crate) use crate::scatter_generator::ScatterGenerator;
 // Mirror/epitope/compliance functions are in scatter_mirror.rs
-use crate::scatter_constants::{
-    COMPLIANCE_NOTICES, EVASION_COST_TABLE, MIRROR_MODULES,
-    MIRROR_METRICS,
-};
 use crate::scatter_mirror::{
-    encode_zwc, path_deterministic_hash, generate_epitope_maze, generate_cross_mirror,
-    generate_violation_mirror,
+    path_deterministic_hash, generate_violation_mirror,
 };
 use crate::scatter_temporal::{
     temporal_phaseout_body, temporal_ghost_body,
 };
 use crate::cube_oracle::{
-    CubeDecisionGrid, CubeOracle, SharedOracle,
+    CubeDecisionGrid, SharedOracle,
     ScatterObservation, ResponseType,
 };
 use crate::scatter_defense::*;
@@ -708,6 +705,13 @@ async fn handle_request(
         return Ok(());
     }
 
+    // ── Hoisted OpsonizeCache lookup — needed by honeycomb AND main scatter paths ──
+    let cached_tag = if !fleet_hash.is_empty() {
+        opsonize_cache.lookup(&fleet_hash).await
+    } else {
+        None
+    };
+
     // ── Layer 0: HONEYCOMB PRISM — fleet teams enter and see chimera'd data
     //    from OTHER teams. 12 surfaces, topology shifts per request path.
     if is_honeycomb && !fleet_hash.is_empty() {
@@ -751,7 +755,7 @@ async fn handle_request(
                 timestamp_window: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default().as_secs() / 3600,
-                epitope_flags: 0, // will be populated once epitope wiring completes
+                epitope_flags: cached_tag.as_ref().map(|t| detector_bitmap(&t.detectors)).unwrap_or(0),
                 violation_count: chain_depth,
                 surface_idx: honeycomb_surface,
                 chain_depth,
@@ -814,6 +818,22 @@ async fn handle_request(
             );
             metrics.prism_served.fetch_add(1, Ordering::Relaxed);
             metrics.record(body.len() as u64);
+
+            // Honeycomb path also feeds the reservoir — same signal as main scatter
+            let (epi, conf) = match cached_tag.as_ref() {
+                Some(tag) => (detector_bitmap(&tag.detectors), tag.confidence),
+                None => (0u8, f64::from(poison_ratio).clamp(0.0, 1.0)),
+            };
+            oracle.observe(ScatterObservation {
+                fleet_hash: fleet_hash.clone(),
+                epitope_flags: epi,
+                target_class: classify_request_target(effective_path),
+                detector_bitmap: epi,
+                confidence: conf,
+                chain_depth: chain_depth.min(255) as u8,
+                response_type: ResponseType::Prism,
+            });
+
             return Ok(());
         }
     }
@@ -865,7 +885,7 @@ async fn handle_request(
 
     // Probabilistic poison: use path hash to decide deterministically
     // (same path always gets the same decision — prevents detection via retries)
-    let path_hash = path_deterministic_hash(&effective_path, generator.seed);
+    let _path_hash = path_deterministic_hash(&effective_path, generator.seed);
 
     // BingoCube decision grid: one per request, drives all probability gates
     let decision_epoch = std::time::SystemTime::now()
@@ -874,13 +894,6 @@ async fn handle_request(
         .as_secs() / 180;
     let fleet_id = if fleet_hash.is_empty() { "unknown" } else { &fleet_hash };
     let grid = CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch);
-
-    // Check OpsonizeCache for known fleet behavioral hash
-    let cached_tag = if !fleet_hash.is_empty() {
-        opsonize_cache.lookup(&fleet_hash).await
-    } else {
-        None
-    };
 
     let mut response_type = ResponseType::Normal;
     let (status, content_type, body) = if is_disperse {

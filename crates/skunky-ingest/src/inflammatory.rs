@@ -11,6 +11,8 @@
 //! This runs as a background task within skunky-ingest itself, eliminating
 //! the need for a separate systemd timer + bash script.
 
+#![allow(missing_docs)]
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

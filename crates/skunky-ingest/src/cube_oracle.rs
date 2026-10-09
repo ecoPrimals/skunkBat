@@ -9,6 +9,8 @@
 //! The CubeOracle trait defines an IPC-ready boundary: any primal consuming
 //! bingoCube gets the same interface, whether in-process or via IPC.
 
+#![allow(missing_docs)]
+
 use bingocube_core::{BingoCube, Color, Config};
 use bingocube_nautilus::{
     InstanceId, NautilusShell, ReservoirInput, ShellConfig,
@@ -38,14 +40,14 @@ use std::sync::{Arc, Mutex};
 /// row3  reserved(nautilus-override) ...
 /// row4  reserved(nautilus-override) ...
 /// ```
-pub(crate) struct CubeDecisionGrid {
+pub struct CubeDecisionGrid {
     colors: [[Color; 5]; 5],
     scalars: [[u64; 5]; 5],
 }
 
 /// Jitter type derived from cell (0,0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum JitterType {
+pub enum JitterType {
     /// Normal path-based content (colors 0-12, ~81%)
     Normal,
     /// Cross-type: wrong content for the path (colors 13-14, ~12.5%)
@@ -56,7 +58,8 @@ pub(crate) enum JitterType {
 
 /// Content variant for cross-type jitter, derived from cell (0,1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContentVariant {
+#[allow(missing_docs)]
+pub enum ContentVariant {
     Blame,
     Commit,
     File,
@@ -239,9 +242,15 @@ impl CubeDecisionGrid {
     }
 
     // ── Row 3-4: Reserved for nautilus overrides ──
+    // Integration point: when predict() is wired to the scatter serve path,
+    // the oracle populates rows 3-4 with strategy overrides. The scatter path
+    // reads nautilus_cell(3, col) for jitter type and nautilus_cell(4, col)
+    // for content variant. Until then, rows 3-4 carry the deterministic hash
+    // values and are not consulted by the decision logic.
 
     /// Nautilus override value at (row, col) in the reserved region.
     /// Row 3-4 are reserved for trained model predictions.
+    #[allow(dead_code)] // Nautilus integration point — wired when predict() feeds scatter serve
     pub fn nautilus_cell(&self, row: usize, col: usize) -> u8 {
         assert!(row >= 3 && row < 5 && col < 5);
         self.colors[row][col]
@@ -259,8 +268,9 @@ impl CubeDecisionGrid {
 
 /// An observation from a scatter interaction, fed to nautilus for training.
 #[derive(Debug, Clone)]
-pub(crate) struct ScatterObservation {
+pub struct ScatterObservation {
     /// Fleet identity hash.
+    #[allow(dead_code)]
     pub fleet_hash: String,
     /// Epitope flags (8-bit): which behavioral markers were detected.
     pub epitope_flags: u8,
@@ -278,7 +288,8 @@ pub(crate) struct ScatterObservation {
 
 /// What kind of scatter response was served.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ResponseType {
+#[allow(missing_docs)]
+pub enum ResponseType {
     Normal,
     CrossType,
     PersonalityShift,
@@ -287,6 +298,8 @@ pub(crate) enum ResponseType {
     Honeytoken,
     TemporalPhaseout,
     TemporalGhost,
+    /// Honeycomb prism — fleet team sees chimera'd data from other teams.
+    Prism,
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -295,7 +308,8 @@ pub(crate) enum ResponseType {
 
 /// Nautilus-predicted scatter strategy for a given fleet cluster.
 #[derive(Debug, Clone)]
-pub(crate) struct ScatterStrategy {
+#[allow(dead_code)]
+pub struct ScatterStrategy {
     /// Recommended jitter type weight adjustments.
     /// [0] = normal weight, [1] = cross-type weight, [2] = personality weight
     pub jitter_weights: [f64; 3],
@@ -372,6 +386,7 @@ pub trait CubeOracle: Send + Sync {
 const EVOLVE_BATCH_SIZE: usize = 100;
 
 /// Confidence threshold below which predictions are ignored.
+#[allow(dead_code)] // Nautilus integration point — used when predict() is wired to scatter serve path
 const PREDICTION_CONFIDENCE_THRESHOLD: f64 = 0.3;
 
 /// Number of targets the nautilus shell predicts:
@@ -380,6 +395,7 @@ const N_TARGETS: usize = 5;
 
 /// Number of input features per observation:
 /// [epitope_flags/255, target_class/7, detector_bitmap/255, confidence, chain_depth/255]
+#[allow(dead_code)] // Nautilus integration point — used when predict() is wired to scatter serve path
 const N_FEATURES: usize = 5;
 
 /// In-process bingoCube oracle backed by bingocube-core + bingocube-nautilus.
@@ -396,7 +412,7 @@ pub(crate) struct InProcessOracle {
 
 impl InProcessOracle {
     /// Create a new oracle with a fresh nautilus shell.
-    pub fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         let config = ShellConfig {
             population_size: 12,
             n_targets: N_TARGETS,
@@ -415,8 +431,8 @@ impl InProcessOracle {
     }
 
     /// Create an oracle that persists its shell to disk (sourdough pattern).
-    pub fn with_persistence(seed: u64, path: PathBuf) -> Self {
-        let mut oracle = if path.exists() {
+    pub(crate) fn with_persistence(seed: u64, path: PathBuf) -> Self {
+        let oracle = if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(json) => match serde_json::from_str::<NautilusShell>(&json) {
                     Ok(shell) => {
@@ -493,6 +509,7 @@ impl InProcessOracle {
             ResponseType::TemporalGhost => 0.5,
             ResponseType::TemporalPhaseout => 0.4,
             ResponseType::Honeytoken => 0.8,
+            ResponseType::Prism => 0.85,
             ResponseType::Disperse => 0.3,
             ResponseType::Normal => 0.2,
         };

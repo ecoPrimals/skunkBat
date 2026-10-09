@@ -7,6 +7,8 @@
 //! back at scrapers, cross-mirror content that feeds teams each other's violation
 //! data, and the epitope pressure maze that maps evasion paths to higher observability.
 
+#![allow(missing_docs)]
+
 use crate::scatter_constants::*;
 use crate::scatter_prism::PrismMix;
 use crate::scatter_rng::XorShift64;
@@ -70,7 +72,7 @@ pub(crate) fn path_deterministic_hash(path: &str, seed: u64) -> u64 {
 /// epitopes are triggered and how to "evade" them. Each evasion path
 /// is designed to create a more observable behavior than the original.
 pub(crate) fn generate_epitope_maze(
-    rng: &mut XorShift64,
+    _rng: &mut XorShift64,
     mix: &PrismMix,
     req_short: &str,
     pri_short: &str,
@@ -214,6 +216,7 @@ pub(crate) fn generate_epitope_maze(
 /// - AGPL enforcement audit (license framing)
 /// - Behavioral correlation brief (intelligence framing)
 /// - Immune response log (biological framing)
+#[allow(dead_code)] // Pre-cube cross-mirror — retained for future A/B path testing
 pub(crate) fn generate_cross_mirror(
     sg: &ScatterGenerator,
     rng: &mut XorShift64,

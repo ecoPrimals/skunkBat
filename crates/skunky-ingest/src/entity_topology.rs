@@ -1,0 +1,522 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
+
+//! Entity topology builder and writer — accumulates request fingerprints
+//! and periodically writes topology.json.
+//!
+//! Extracted from entity_classifier.rs for modularity.
+
+#![allow(missing_docs)]
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use crate::caddy;
+use crate::entity_classifier::{EntityId, RequestFingerprint, classify, classify_with_registry};
+use crate::entity_profile::{EntityAccum, EntityProfile, EntityTopology, build_profile, build_comparative};
+
+/// Accumulator for building entity profiles from raw request fingerprints.
+pub struct TopologyBuilder {
+    entities: HashMap<EntityId, EntityAccum>,
+}
+
+impl TopologyBuilder {
+    /// Create a new topology builder.
+    pub fn new() -> Self {
+        Self {
+            entities: HashMap::new(),
+        }
+    }
+
+    /// Load a topology builder from a persisted state file (sourdough culture).
+    /// Falls back to empty builder if file doesn't exist or is corrupt.
+    pub fn load(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(json) => match serde_json::from_str::<HashMap<EntityId, EntityAccum>>(&json) {
+                Ok(entities) => {
+                    let total: u64 = entities.values().map(|a| a.total).sum();
+                    tracing::info!(
+                        entities = entities.len(),
+                        requests = total,
+                        path = %path.display(),
+                        "🧬 topology culture loaded — sourdough warm start"
+                    );
+                    Self { entities }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        path = %path.display(),
+                        "topology culture corrupt — starting fresh (should not happen)"
+                    );
+                    Self::new()
+                }
+            },
+            Err(_) => {
+                tracing::info!(
+                    path = %path.display(),
+                    "no topology culture file — first generation"
+                );
+                Self::new()
+            }
+        }
+    }
+
+    /// Save the accumulated state to disk (preserve the sourdough culture).
+    pub fn save(&self, path: &Path) {
+        match serde_json::to_string(&self.entities) {
+            Ok(json) => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(path, &json) {
+                    tracing::warn!(error = %e, path = %path.display(), "topology culture save failed");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "topology culture serialization failed");
+            }
+        }
+    }
+
+    /// Ingest a request fingerprint (static classification fallback).
+    pub fn ingest(&mut self, fp: &RequestFingerprint) {
+        let entity_id = classify(fp);
+        self.ingest_classified(fp, entity_id);
+    }
+
+    /// Ingest a request fingerprint using the culture-derived registry.
+    pub fn ingest_with_registry(
+        &mut self,
+        fp: &RequestFingerprint,
+        registry: &crate::epitope_registry::SharedRegistry,
+    ) {
+        let entity_id = classify_with_registry(fp, registry);
+        // Record the match in the registry for observation counting
+        if entity_id == EntityId::DeclaredBot {
+            if let Ok(mut reg) = registry.write() {
+                reg.record_match(&fp.user_agent);
+            }
+        }
+        self.ingest_classified(fp, entity_id);
+    }
+
+    /// Ingest a request fingerprint with a pre-computed entity classification.
+    fn ingest_classified(&mut self, fp: &RequestFingerprint, entity_id: EntityId) {
+        let accum = self.entities.entry(entity_id).or_insert_with(EntityAccum::new);
+
+        accum.ips.insert(fp.ip.clone());
+        accum.subnets.insert(fp.subnet());
+        accum.uas.insert(fp.user_agent.clone());
+        accum.timestamps.push(fp.timestamp);
+        accum.total += 1;
+        accum.first_ts = accum.first_ts.min(fp.timestamp);
+        accum.last_ts = accum.last_ts.max(fp.timestamp);
+
+        let cv = fp.chrome_major();
+        if cv > 0 {
+            *accum.chrome_versions.entry(cv).or_insert(0) += 1;
+        }
+        *accum.ua_os.entry(fp.ua_os().to_string()).or_insert(0) += 1;
+        *accum.path_ops.entry(fp.path_op()).or_insert(0) += 1;
+
+        if let Some(repo) = fp.repo_name() {
+            *accum.repos.entry(repo.clone()).or_insert(0) += 1;
+            *accum.ip_repos
+                .entry(fp.ip.clone())
+                .or_default()
+                .entry(repo)
+                .or_insert(0) += 1;
+        }
+
+        if !fp.accept_encoding.is_empty() {
+            accum.accept_enc.insert(fp.accept_encoding.clone());
+        }
+        if !fp.accept_language.is_empty() {
+            accum.accept_lang.insert(fp.accept_language.clone());
+        } else {
+            accum.accept_lang.insert("(empty)".to_string());
+        }
+        if !fp.accept.is_empty() {
+            accum.accept.insert(fp.accept.clone());
+        }
+
+        if fp.has_sec_fetch_mode { accum.sec_fetch_present += 1; }
+        else { accum.sec_fetch_absent += 1; }
+        if fp.has_sec_ch_ua { accum.sec_ch_ua_present += 1; }
+        else { accum.sec_ch_ua_absent += 1; }
+        if fp.has_connection { accum.conn_present += 1; }
+        else { accum.conn_absent += 1; }
+
+        // Wave 166f epitope collection
+        if !fp.sec_fetch_triplet.is_empty() {
+            *accum.sec_fetch_triplets.entry(fp.sec_fetch_triplet.clone()).or_insert(0) += 1;
+        }
+        if fp.has_cookie { accum.cookie_present += 1; }
+        else { accum.cookie_absent += 1; }
+        if fp.referer.is_empty() {
+            accum.referer_absent += 1;
+        } else if fp.referer.contains("google") || fp.referer.contains("bing")
+                || fp.referer.contains("duckduckgo") {
+            accum.referer_external += 1;
+        } else if !fp.referer.contains(&fp.host) {
+            accum.referer_external += 1;
+        }
+    }
+
+    /// Build the final topology — sorted by request count descending.
+    /// Consumes the builder.
+    pub fn build(self) -> Vec<EntityProfile> {
+        let mut profiles: Vec<EntityProfile> = self.entities
+            .into_iter()
+            .map(|(entity_id, accum)| build_profile(entity_id, accum))
+            .collect();
+        profiles.sort_by(|a, b| b.total_requests.cmp(&a.total_requests));
+        profiles
+    }
+
+    /// Total ingested requests across all entities.
+    pub fn total_requests(&self) -> u64 {
+        self.entities.values().map(|a| a.total).sum()
+    }
+
+    /// Extract UA sets from entities that would score high fleet_confidence.
+    /// Used by the epitope registry to discover novel bot UA tokens.
+    pub fn high_confidence_uas(&self) -> Vec<(EntityId, HashSet<String>)> {
+        self.entities
+            .iter()
+            .filter(|(_, accum)| {
+                // Quick pre-filter: needs enough data for meaningful epitope scoring
+                accum.total > 50 && accum.ips.len() > 1
+            })
+            .filter_map(|(entity_id, accum)| {
+                // Build a lightweight fleet_confidence estimate without the full profile
+                let mut epitope_count = 0u32;
+                let mut epitope_triggered = 0u32;
+
+                // sec_fetch_monotone
+                if !accum.sec_fetch_triplets.is_empty() && accum.total > 10 {
+                    let top = accum.sec_fetch_triplets.values().max().copied().unwrap_or(0);
+                    let pct = top as f64 / accum.total as f64 * 100.0;
+                    epitope_count += 1;
+                    if pct > 95.0 { epitope_triggered += 1; }
+                }
+                // session_absent
+                if accum.total > 20 {
+                    let pct = accum.cookie_present as f64 / accum.total as f64 * 100.0;
+                    epitope_count += 1;
+                    if pct < 5.0 { epitope_triggered += 1; }
+                }
+                // referer_self_loop
+                if accum.total > 20 {
+                    let pct = accum.referer_external as f64 / accum.total as f64 * 100.0;
+                    epitope_count += 1;
+                    if pct < 2.0 { epitope_triggered += 1; }
+                }
+
+                let confidence = if epitope_count > 0 {
+                    epitope_triggered as f64 / epitope_count as f64 * 100.0
+                } else {
+                    0.0
+                };
+
+                if confidence > 80.0 {
+                    Some((entity_id.clone(), accum.uas.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Number of distinct entity types seen.
+    pub fn entity_count(&self) -> usize {
+        self.entities.len()
+    }
+
+    /// Take a snapshot without consuming the builder — clones internal
+    /// state so accumulation continues uninterrupted.
+    pub fn snapshot(&self) -> Vec<EntityProfile> {
+        let mut profiles: Vec<EntityProfile> = self.entities
+            .iter()
+            .map(|(entity_id, accum)| build_profile(entity_id.clone(), accum.clone()))
+            .collect();
+        profiles.sort_by(|a, b| b.total_requests.cmp(&a.total_requests));
+        profiles
+    }
+}
+
+/// Accumulates entity fingerprints and periodically writes `topology.json`.
+///
+/// Replaces `entity_topology.py` (534 lines) which re-parsed ALL Caddy logs
+/// from scratch every ~30 seconds. This module classifies live from the
+/// bloom sensor stream and writes the same JSON output.
+///
+/// ## Convergence
+///
+/// entity_topology.py → skunky-ingest entity_classifier:
+/// - Classification engine → [`classify`] + [`TopologyBuilder`] (this module)
+/// - Sub-system detection → [`build_profile`] (entity_profile)
+/// - Epitope scoring → [`EpitopeScores`] (entity_profile)
+/// - JSON output → [`TopologyWriter`] (this struct)
+///
+/// No more re-parsing. Topology is a side output of the existing pipeline.
+pub struct TopologyWriter {
+    builder: TopologyBuilder,
+    output_path: PathBuf,
+    /// Persistent state file — sourdough culture.
+    state_path: PathBuf,
+    /// How many ingest calls between flushes.
+    flush_interval: u64,
+    ingest_count: u64,
+    /// Save culture every N flushes (don't write state on every topology flush).
+    culture_save_counter: u32,
+    /// Shared epitope registry — culture-fed bot detection.
+    registry: crate::epitope_registry::SharedRegistry,
+}
+
+impl TopologyWriter {
+    /// Create a new topology writer with persistent culture.
+    ///
+    /// * `output_path` — where to write `topology.json`
+    /// * `state_path` — where to persist the sourdough culture
+    /// * `flush_interval` — write after this many ingested entries
+    pub fn new(
+        output_path: PathBuf,
+        state_path: PathBuf,
+        flush_interval: u64,
+        registry: crate::epitope_registry::SharedRegistry,
+    ) -> Self {
+        let builder = TopologyBuilder::load(&state_path);
+        let state = Self {
+            builder,
+            output_path,
+            state_path,
+            flush_interval,
+            ingest_count: 0,
+            culture_save_counter: 0,
+            registry,
+        };
+        tracing::info!(
+            output = %state.output_path.display(),
+            culture = %state.state_path.display(),
+            interval = state.flush_interval,
+            "🗺️ topology writer loaded"
+        );
+        state
+    }
+
+    /// Ingest a parsed caddy log entry — uses the shared epitope registry
+    /// for culture-derived bot detection.
+    pub fn ingest(&mut self, entry: &caddy::LogEntry) {
+        let fp = RequestFingerprint::from_caddy_entry(entry);
+        self.builder.ingest_with_registry(&fp, &self.registry);
+        self.ingest_count += 1;
+
+        if self.ingest_count % self.flush_interval == 0 {
+            self.flush();
+        }
+    }
+
+    /// Force a topology snapshot and write to disk.
+    pub fn flush(&mut self) {
+        let profiles = self.builder.snapshot();
+        if profiles.is_empty() {
+            return;
+        }
+
+        // Culture-fed epitope learning: extract bot UA tokens from entities
+        // with high fleet_confidence and feed them to the registry.
+        self.feed_registry(&profiles);
+
+        let comparative = build_comparative(&profiles);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let topology = EntityTopology {
+            generated_epoch: now,
+            generated_iso: chrono::Utc::now()
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string(),
+            log_entries_analyzed: self.builder.total_requests(),
+            entities: profiles,
+            comparative_fingerprints: comparative,
+        };
+
+        match serde_json::to_string_pretty(&topology) {
+            Ok(json) => {
+                if let Some(parent) = self.output_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::write(&self.output_path, &json) {
+                    Ok(()) => {
+                        tracing::info!(
+                            entities = topology.entities.len(),
+                            requests = topology.log_entries_analyzed,
+                            bytes = json.len(),
+                            "🗺️ topology.json updated"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            path = %self.output_path.display(),
+                            "topology.json write failed"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "topology serialization failed");
+            }
+        }
+
+        // Save the sourdough culture every 10 topology flushes (~5000 entries).
+        // Always save on explicit flush (shutdown path).
+        self.culture_save_counter += 1;
+        if self.culture_save_counter % 10 == 0 || self.culture_save_counter == 1 {
+            self.save_culture();
+        }
+    }
+
+    /// Feed the epitope registry with novel bot UA tokens from high-confidence
+    /// fleet entities. This is the unsupervised learning loop — the culture
+    /// teaches the registry which UA patterns correlate with fleet behavior.
+    fn feed_registry(&self, _profiles: &[EntityProfile]) {
+        let high_conf = self.builder.high_confidence_uas();
+        if high_conf.is_empty() {
+            return;
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+
+        let mut total_new = 0u32;
+        if let Ok(mut registry) = self.registry.write() {
+            for (_entity_id, uas) in &high_conf {
+                let tokens = crate::epitope_registry::extract_bot_tokens(uas);
+                for token in tokens {
+                    // Only feed tokens that aren't already seed tokens at full confidence
+                    if !registry.is_declared_bot(&token) {
+                        registry.observe_token(token, 0.85, now);
+                        total_new += 1;
+                    }
+                }
+            }
+            if total_new > 0 {
+                registry.advance_generation();
+                tracing::info!(
+                    novel_tokens = total_new,
+                    entities = high_conf.len(),
+                    generation = registry.generation(),
+                    "🧬 epitope registry fed from topology culture"
+                );
+            }
+        }
+    }
+
+    /// Persist the sourdough culture to disk — survives reboots.
+    pub fn save_culture(&self) {
+        self.builder.save(&self.state_path);
+        tracing::info!(
+            entities = self.builder.entity_count(),
+            requests = self.builder.total_requests(),
+            path = %self.state_path.display(),
+            "🧬 topology culture saved"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity_classifier::*;
+
+    #[test]
+    fn topology_builder_basics() {
+        let mut builder = TopologyBuilder::new();
+        for i in 0..10 {
+            let fp = RequestFingerprint {
+                ip: format!("203.0.113.{}", i),
+                user_agent: "ClaudeBot/1.0".into(),
+                host: "git.primals.eco".into(),
+                uri: "/ecoPrimals/ecoPrimals/src/main/README.md".into(),
+                accept: "*/*".into(),
+                accept_encoding: "gzip, br, zstd, deflate".into(),
+                accept_language: String::new(),
+                has_sec_fetch_mode: false,
+                has_sec_ch_ua: false,
+                has_connection: false,
+                has_cookie: false,
+                timestamp: i as f64,
+                status: 200,
+                sec_fetch_triplet: String::new(),
+                referer: String::new(),
+            };
+            builder.ingest(&fp);
+        }
+
+        assert_eq!(builder.total_requests(), 10);
+        assert_eq!(builder.entity_count(), 1);
+
+        let snapshot = builder.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].entity, EntityId::AnthropicClaudeBot);
+        assert_eq!(snapshot[0].total_requests, 10);
+        assert_eq!(snapshot[0].unique_ips, 10);
+
+        // Builder still works after snapshot
+        assert_eq!(builder.total_requests(), 10);
+    }
+
+    #[test]
+    fn topology_writer_creates_output() {
+        let dir = std::env::temp_dir().join("topology-writer-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let output = dir.join("topology.json");
+        let state = dir.join("topology-state.json");
+
+        let registry = crate::epitope_registry::create_shared_registry(None);
+        let mut writer = TopologyWriter::new(output.clone(), state.clone(), 5, registry.clone());
+        for i in 0..5 {
+            let entry = caddy::LogEntry {
+                request: caddy::RequestInfo {
+                    remote_ip: format!("10.0.0.{}", i),
+                    host: "git.primals.eco".into(),
+                    uri: "/ecoPrimals/ecoPrimals".into(),
+                    method: "GET".into(),
+                    headers: caddy::Headers {
+                        user_agent: vec!["ClaudeBot/1.0".into()],
+                        ..Default::default()
+                    },
+                },
+                status: 200,
+                size: 1000,
+                duration: 0.01,
+                ts: i as f64,
+            };
+            writer.ingest(&entry);
+        }
+
+        assert!(output.exists(), "topology.json should have been created");
+        let content = std::fs::read_to_string(&output).unwrap();
+        assert!(content.contains("Anthropic (ClaudeBot)"));
+        assert!(content.contains("log_entries_analyzed"));
+
+        // Culture should have been saved on first flush
+        assert!(state.exists(), "topology state file should exist");
+
+        // Simulate restart — new writer loads the culture
+        let mut writer2 = TopologyWriter::new(output.clone(), state.clone(), 5, registry);
+        // Should have warm state from previous generation
+        writer2.flush();
+        let content2 = std::fs::read_to_string(&output).unwrap();
+        assert!(content2.contains("Anthropic (ClaudeBot)"), "sourdough culture should survive restart");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

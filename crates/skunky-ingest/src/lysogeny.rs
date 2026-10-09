@@ -27,6 +27,8 @@
 //! anomalies are detected. It does NOT store IP addresses — it stores only
 //! behavioral counters and hashes.
 
+#![allow(missing_docs)]
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

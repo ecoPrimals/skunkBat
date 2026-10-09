@@ -20,8 +20,10 @@
 //! conserved epitope. The registry is the adaptive immune memory that
 //! recognizes these proteins across generations.
 
+#![allow(missing_docs)]
+
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};

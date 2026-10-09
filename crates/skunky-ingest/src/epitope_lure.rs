@@ -33,6 +33,8 @@
 //   5. Antibody generator creates protective patterns for allies
 //   6. Published via epitope feed for mesh-wide distribution
 
+#![allow(missing_docs)]
+
 use crate::scatter_rng::CubePrng;
 
 use std::collections::HashMap;
@@ -625,7 +627,7 @@ impl LureEngine {
             "2026-06-18", "2026-09-28", "2026-08-11", "2026-10-05",
         ];
 
-        let target_file = if !profile.blame_targets.is_empty() {
+        let _target_file = if !profile.blame_targets.is_empty() {
             let idx = rng.next_u64() as usize % profile.blame_targets.len();
             profile.blame_targets[idx].0.clone()
         } else {

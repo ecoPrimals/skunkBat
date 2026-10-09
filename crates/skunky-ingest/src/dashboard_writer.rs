@@ -20,6 +20,8 @@
 //!
 //! No more duplicate log tailing. Dashboard is a side output of the pipeline.
 
+#![allow(missing_docs)]
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -239,7 +241,10 @@ enum CollisionClass {
     Genuine,
     /// Single deep hit, 200 status, possibly has sec-fetch
     Agentic,
-    /// Hits same paths as other IPs within coordination window
+    /// Hits same paths as other IPs within coordination window.
+    /// Reserved — coordination detector (10s sliding-window path index) not yet
+    /// ported from bloom_live.py Wave 165i. See BLOOM_V3_COLLISION_CLASSIFICATION_LIVE_WAVE165I.md.
+    #[allow(dead_code)]
     Coordinated,
     /// Fleet-like behavior (default)
     Fleet,
@@ -265,6 +270,13 @@ fn classify_collision_l2(profile: &IpProfile) -> CollisionClass {
     if ratio_200 > 0.5 && total <= 3 {
         return CollisionClass::Agentic;
     }
+
+    // TODO(wave-next): Port coordination detector from bloom_live.py (Wave 165i).
+    // Requires: DashboardCulture.path_recent_hits: HashMap<String, Vec<(String, f64)>>
+    // — 10-second sliding window of (ip, timestamp) per path.
+    // When another IP hits the same path within 10s: coordination_score > 0.
+    // Branch: if coordination_score > 0 && ratio_404 > 0.5 → Coordinated
+    //         elif coordination_score > 0 → Coordinated
 
     // Fleet (default)
     CollisionClass::Fleet

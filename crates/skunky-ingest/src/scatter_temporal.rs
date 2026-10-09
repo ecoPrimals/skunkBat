@@ -3,6 +3,8 @@
 
 //! Temporal maze — BingoCube epoch-based content rotation (northGate Wave 167).
 
+#![allow(missing_docs)]
+
 use crate::scatter_constants::HONEYCOMB_SURFACES;
 use crate::scatter_mirror::path_deterministic_hash;
 use crate::scatter_rng::XorShift64;
@@ -18,6 +20,7 @@ pub(crate) fn temporal_epoch(epoch_minutes: u64) -> u64 {
 }
 
 /// Temporal phase of a URL within the current epoch (0-4).
+#[allow(dead_code)] // Pre-cube temporal phase — retained for non-grid path testing
 pub(crate) fn temporal_phase(path: &str, seed: u64) -> u8 {
     let epoch = temporal_epoch(30);
     let h = path_deterministic_hash(path, seed.wrapping_add(epoch.wrapping_mul(0xB146_0C08_E000)));
@@ -32,6 +35,7 @@ pub(crate) fn temporal_path_seed(path: &str, seed: u64) -> u64 {
 }
 
 /// Generate temporal migration breadcrumbs — the laser pointer moves.
+#[allow(dead_code)] // Pre-cube temporal phase — retained for non-grid path testing
 pub(crate) fn temporal_migrate_breadcrumbs(rng: &mut XorShift64, path: &str) -> String {
     let next_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];
     let alt_surface = HONEYCOMB_SURFACES[rng.next_usize() % HONEYCOMB_SURFACES.len()];

@@ -3,6 +3,8 @@
 
 //! Scatter server types — back pressure, opsonize cache, tarpit, metrics.
 
+#![allow(missing_docs)]
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};

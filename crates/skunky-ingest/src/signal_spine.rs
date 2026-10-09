@@ -13,6 +13,8 @@
 //! When the provenance trio (rhizoCrypt/loamSpine/sweetGrass) comes online,
 //! the spine files can be ingested directly into the proper provenance DAG.
 
+#![allow(missing_docs)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

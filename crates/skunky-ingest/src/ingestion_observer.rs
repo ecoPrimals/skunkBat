@@ -24,6 +24,8 @@
 //!
 //! Future evolution: absorb Python probing into async reqwest tasks.
 
+#![allow(missing_docs)]
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};

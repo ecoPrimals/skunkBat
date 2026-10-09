@@ -6,6 +6,8 @@
 //! Each line in `/var/log/caddy/access.log` is a JSON object with the
 //! structure documented in the Caddy v2 logging output.
 
+#![allow(missing_docs)]
+
 use serde::Deserialize;
 
 /// Top-level Caddy access log entry.

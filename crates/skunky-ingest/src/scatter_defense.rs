@@ -3,6 +3,8 @@
 
 //! Scatter defense helpers — opsonization, epitope feeds, tarpits, pressure-aware temporal.
 
+#![allow(missing_docs)]
+
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -331,6 +333,7 @@ pub(crate) async fn handle_tarpit(
 /// look like legitimate metadata — license identifiers, build hashes,
 /// federation markers, contributor signatures. But each variant is
 /// different, so the fleet's collected corpus is internally inconsistent.
+#[allow(dead_code)] // Pre-cube antibody injection — retained for non-grid path testing
 pub(crate) fn inject_opsonize_antibody(fleet_hash: &str, path_seed: u64, html: &str) -> String {
     let epoch_3min = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -435,7 +438,7 @@ pub(crate) fn inject_opsonize_antibody(fleet_hash: &str, path_seed: u64, html: &
 /// Grid cells provide variant (16 antibody chains), position (16 injection points),
 /// and federation flags — richer than the original hash-based 10 variants.
 pub(crate) fn inject_opsonize_antibody_cube(
-    fleet_hash: &str,
+    _fleet_hash: &str,
     _path_seed: u64,
     html: &str,
     grid: &CubeDecisionGrid,
@@ -702,6 +705,7 @@ pub(crate) fn detector_bitmap(detectors: &[String]) -> u8 {
 /// unpredictably. The fleet can't build a stable header fingerprint
 /// because the set changes every few minutes. Different fleet hashes
 /// see different header combinations at the same time.
+#[allow(dead_code)] // Pre-cube header jitter — retained for non-grid path testing
 pub(crate) fn generate_header_jitter(fleet_hash: &str, path_seed: u64) -> String {
     let epoch_3min = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -776,6 +780,7 @@ pub(crate) fn pressure_epoch(pressure: &BackPressure) -> u64 {
 /// The fleet experiences a codebase that's "falling apart" — repos migrating,
 /// content vanishing, federation links everywhere. But they can't tell if it's
 /// real restructuring or if they're pushing too hard. They have no sensation.
+#[allow(dead_code)] // Pre-cube temporal phase — retained for non-grid path testing
 pub(crate) fn pressure_temporal_phase(path: &str, seed: u64, pressure: &BackPressure) -> u8 {
     let epoch = pressure_epoch(pressure);
     let h = path_deterministic_hash(path, seed.wrapping_add(epoch.wrapping_mul(0xB146_0C08_E000)));

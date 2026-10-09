@@ -15,6 +15,8 @@
 //! perspective: traffic that Cloudflare sees but Caddy may not (blocked
 //! at CDN, cached, DDoS-filtered).
 
+#![allow(missing_docs)]
+
 use crate::aggregator::ObservationPayload;
 
 /// Cloudflare Analytics API configuration.
@@ -23,11 +25,11 @@ use crate::aggregator::ObservationPayload;
 /// on deployment team providing `CF_API_TOKEN` + `CF_ZONE_ID` on golgi).
 #[derive(Debug, Clone)]
 pub struct CfConfig {
-    #[cfg_attr(not(test), expect(dead_code, reason = "awaiting CF credential wiring"))]
+    #[cfg_attr(not(test), allow(dead_code, reason = "awaiting CF credential wiring"))]
     pub api_token: String,
-    #[cfg_attr(not(test), expect(dead_code, reason = "awaiting CF credential wiring"))]
+    #[cfg_attr(not(test), allow(dead_code, reason = "awaiting CF credential wiring"))]
     pub zone_id: String,
-    #[cfg_attr(not(test), expect(dead_code, reason = "awaiting CF credential wiring"))]
+    #[cfg_attr(not(test), allow(dead_code, reason = "awaiting CF credential wiring"))]
     pub poll_interval_secs: u64,
 }
 
@@ -61,7 +63,7 @@ impl CfConfig {
 /// to produce per-source metrics matching `ObservationPayload`.
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "awaiting CF credential wiring into main loop")
+    allow(dead_code, reason = "awaiting CF credential wiring into main loop")
 )]
 pub fn poll_analytics(_config: &CfConfig) -> Vec<ObservationPayload> {
     tracing::debug!("CF analytics poll — awaiting HTTP client implementation");

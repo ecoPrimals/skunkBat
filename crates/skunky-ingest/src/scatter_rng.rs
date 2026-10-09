@@ -13,6 +13,8 @@
 //! Same seed -> same output, always. Fleet scrapers that request the same
 //! path twice get identical poison, preventing detection via request diffing.
 
+#![allow(missing_docs)]
+
 use bingocube_core::{BingoCube, Config};
 
 /// BingoCube-backed deterministic PRNG for scatter content generation.
@@ -20,7 +22,7 @@ use bingocube_core::{BingoCube, Config};
 /// Replaces XorShift64 with BLAKE3-derived entropy. Each 5x5 cube provides
 /// 25 scalar field values; when exhausted, chains to the next cube
 /// via BLAKE3 re-seeding. Deterministic for the same seed.
-pub(crate) struct CubePrng {
+pub struct CubePrng {
     /// Current cube's scalar values, flattened row-major.
     scalars: Vec<u64>,
     /// Index into the current scalars buffer.

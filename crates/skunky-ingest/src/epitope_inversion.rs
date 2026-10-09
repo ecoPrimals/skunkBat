@@ -24,6 +24,8 @@
 //   5. THIS MODULE correlates epitope hashes across all sources
 //      to build fleet movement timelines and crawl graphs
 
+#![allow(missing_docs)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

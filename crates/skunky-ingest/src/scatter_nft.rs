@@ -15,6 +15,8 @@
 //! 5. Contribution anchored to provenance trio (loamSpine cert + sweetGrass braid)
 //! 6. Human gets downloadable receipt — they're now an independent rights-holder
 
+#![allow(missing_docs)]
+
 use super::scatter_rng::XorShift64;
 
 /// The HTML page served at GET /contribute

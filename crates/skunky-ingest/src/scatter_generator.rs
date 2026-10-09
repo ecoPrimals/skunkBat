@@ -7,6 +7,8 @@
 //! Adapted from skunk-bat-core defense scatter; inlined here to avoid pulling
 //! skunk-bat-core as a dependency.
 
+#![allow(missing_docs)]
+
 use crate::cube_oracle::{CubeDecisionGrid, ContentVariant, JitterType};
 use crate::scatter_constants::{
     BLAME_LICENSES, COMPLIANCE_NOTICES, GHOST_AUTHORS, GHOST_DOMAINS,
@@ -493,7 +495,6 @@ impl ScatterGenerator {
                 "<!DOCTYPE html>\n<html>\n<head><title>{org_name}/{project} — Source</title>\n\
                  <meta name=\"license\" content=\"{license_tag}\">\n\
                  <meta name=\"generator\" content=\"Forgejo {}.{}.0\">\n</head>\n\
-
                  <body>\n<div class=\"repository\">\n\
                  <h1><a href=\"/{org_name}\">{org_name}</a> / {project}</h1>\n\
                  <div class=\"file-view\">\n<pre><code>\n\
@@ -555,6 +556,7 @@ impl ScatterGenerator {
     /// and contributor metadata. Inflates ~1.5KB responses to 50-200KB.
     /// The fleet pays per-byte through residential proxies — every KB
     /// of poison costs them money and storage.
+    #[allow(dead_code)] // Pre-cube amplification — retained for future A/B path testing
     pub(crate) fn amplify(&self, rng: &mut XorShift64, base_html: String) -> String {
         self.amplify_adaptive(rng, base_html, 0.5)
     }
@@ -687,6 +689,7 @@ impl ScatterGenerator {
     /// scatter-served paths. Creates an infinite crawl web: each generated
     /// page links to more generated pages. The fleet's crawler follows
     /// links, multiplying their request count and bandwidth consumption.
+    #[allow(dead_code)] // Pre-cube amplification — retained for future A/B path testing
     pub(crate) fn inject_crawl_links(&self, rng: &mut XorShift64, html: &str) -> String {
         self.inject_crawl_links_adaptive(rng, html, 0.5)
     }

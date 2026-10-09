@@ -8,6 +8,8 @@
 //! merges epitopes weighted by observation count, and publishes the
 //! federated threat intelligence feed.
 
+#![allow(missing_docs)]
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Duration;

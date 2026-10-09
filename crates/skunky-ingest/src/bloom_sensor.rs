@@ -15,6 +15,8 @@
 //! entries, flushes population-level observations at window boundaries,
 //! and writes rolling signal state to `/run/membrane/bloom.signal`.
 
+#![allow(missing_docs)]
+
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::time::Duration;

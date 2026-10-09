@@ -6,6 +6,8 @@
 //! Collects raw log entries and, when a window closes, emits an
 //! `ObservationPayload` ready for JSON-RPC serialization.
 
+#![allow(missing_docs)]
+
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 

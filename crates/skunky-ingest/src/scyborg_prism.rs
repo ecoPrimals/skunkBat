@@ -33,6 +33,8 @@
 //! 3. **Violation chain** — growing cumulative ledger with BingoCube progressive
 //!    reveal: early interactions show partial, deeper chains show full evidence.
 
+#![allow(missing_docs)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

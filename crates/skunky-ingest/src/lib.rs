@@ -14,6 +14,8 @@ pub mod cube_oracle;
 pub mod dashboard_writer;
 pub mod cursor;
 pub mod entity_classifier;
+pub mod entity_profile;
+pub mod entity_topology;
 pub mod epitope_defs;
 pub mod epitope_inversion;
 pub mod epitope_registry;
