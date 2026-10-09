@@ -277,10 +277,33 @@ impl PathOp {
 // ── Classify a single request ──
 
 /// Classify a request fingerprint into an entity.
+///
+/// This is the static fallback — uses the hardcoded `is_declared_bot()` list.
+/// Prefer `classify_with_registry()` when a shared registry is available.
 pub fn classify(fp: &RequestFingerprint) -> EntityId {
+    classify_inner(fp, |ua| is_declared_bot(ua))
+}
+
+/// Classify a request fingerprint using the culture-derived epitope registry.
+///
+/// Same classification logic as `classify()`, but bot detection is backed by
+/// the living registry instead of the static phone book.
+pub fn classify_with_registry(
+    fp: &RequestFingerprint,
+    registry: &crate::epitope_registry::SharedRegistry,
+) -> EntityId {
+    classify_inner(fp, |ua| {
+        registry.read()
+            .map(|reg| reg.is_declared_bot(ua))
+            .unwrap_or_else(|_| is_declared_bot(ua))
+    })
+}
+
+/// Core classification logic — parametric over how bot detection is performed.
+fn classify_inner(fp: &RequestFingerprint, check_declared_bot: impl Fn(&str) -> bool) -> EntityId {
     let ua = &fp.user_agent;
 
-    // Explicit bot identifiers (honest entities)
+    // Tier 1: Explicit bot identifiers (named entities with specific tracking)
     if ua.contains("ClaudeBot") { return EntityId::AnthropicClaudeBot; }
     if ua.contains("facebookexternalhit") { return EntityId::MetaFacebookBot; }
     if ua.contains("Googlebot") { return EntityId::GoogleBot; }
@@ -304,23 +327,19 @@ pub fn classify(fp: &RequestFingerprint) -> EntityId {
         return EntityId::VulnScanner;
     }
 
-    // Wave 167: Declared bots — identify as bots in UA but send browser-grade
-    // headers (Sec-Fetch, Accept-Language). These bypass the old sec-fetch →
-    // human shortcut. The bot identity is an evolving epitope: they can't stop
-    // declaring without losing crawler-specific robots.txt treatment.
-    if is_declared_bot(ua) {
+    // Tier 2: Culture-derived bot detection — uses registry or static fallback.
+    // Bot identity is an evolving epitope: they can't stop declaring without
+    // losing robots.txt treatment. The registry learns new patterns from
+    // topology culture observations.
+    if check_declared_bot(ua) {
         return EntityId::DeclaredBot;
     }
 
+    // Tier 3: Behavioral classification from header patterns.
     // Real browser (Sec-Fetch-Mode is mandatory since Chrome 76)
-    // Wave 167: referer-absent single-request IPs are ghosts, not humans.
-    // Real humans arrive from somewhere (search, link, bookmark → referer).
-    // Residential proxy exits are programmatic → no referer.
+    // Referer-absent single-request IPs are ghosts, not humans.
     if fp.has_sec_fetch_mode {
         if fp.referer.is_empty() && !fp.accept_language.is_empty() {
-            // Has browser headers but no referer — could be ghost or human.
-            // Ghost classification is probabilistic at single-request level;
-            // the dashboard_writer refines this with multi-request evidence.
             return EntityId::Ghost;
         }
         return EntityId::HumanBrowser;
@@ -425,7 +444,7 @@ pub struct EntityProfile {
     pub fleet_confidence: f64,
 }
 
-/// Six conserved epitopes from antigenic drift analysis (Wave 166f).
+/// Seven conserved epitopes from antigenic drift analysis (Wave 166f+167).
 ///
 /// Each epitope costs the fleet more to evade than the last.
 /// The terminal epitope (reading pauses) would reduce throughput to
@@ -444,6 +463,11 @@ pub struct EpitopeScores {
     pub referer_self_loop: Option<EpitopeResult>,
     /// >50% of intervals <3s (reducing bursts conflicts with extraction economics).
     pub burst_ratio: Option<EpitopeResult>,
+    /// Wave 167: >95% of Sec-Fetch-bearing requests have no referer.
+    /// Residential proxy exits are programmatic → no referer chain.
+    /// Faking referrer chains creates detectable patterns (self-loops, impossible
+    /// navigation sequences). Absence is the conserved epitope.
+    pub referer_absence: Option<EpitopeResult>,
 }
 
 /// Result for a single epitope check.
@@ -633,9 +657,30 @@ impl TopologyBuilder {
         }
     }
 
-    /// Ingest a request fingerprint.
+    /// Ingest a request fingerprint (static classification fallback).
     pub fn ingest(&mut self, fp: &RequestFingerprint) {
         let entity_id = classify(fp);
+        self.ingest_classified(fp, entity_id);
+    }
+
+    /// Ingest a request fingerprint using the culture-derived registry.
+    pub fn ingest_with_registry(
+        &mut self,
+        fp: &RequestFingerprint,
+        registry: &crate::epitope_registry::SharedRegistry,
+    ) {
+        let entity_id = classify_with_registry(fp, registry);
+        // Record the match in the registry for observation counting
+        if entity_id == EntityId::DeclaredBot {
+            if let Ok(mut reg) = registry.write() {
+                reg.record_match(&fp.user_agent);
+            }
+        }
+        self.ingest_classified(fp, entity_id);
+    }
+
+    /// Ingest a request fingerprint with a pre-computed entity classification.
+    fn ingest_classified(&mut self, fp: &RequestFingerprint, entity_id: EntityId) {
         let accum = self.entities.entry(entity_id).or_insert_with(EntityAccum::new);
 
         accum.ips.insert(fp.ip.clone());
@@ -711,6 +756,55 @@ impl TopologyBuilder {
     /// Total ingested requests across all entities.
     pub fn total_requests(&self) -> u64 {
         self.entities.values().map(|a| a.total).sum()
+    }
+
+    /// Extract UA sets from entities that would score high fleet_confidence.
+    /// Used by the epitope registry to discover novel bot UA tokens.
+    pub fn high_confidence_uas(&self) -> Vec<(EntityId, HashSet<String>)> {
+        self.entities
+            .iter()
+            .filter(|(_, accum)| {
+                // Quick pre-filter: needs enough data for meaningful epitope scoring
+                accum.total > 50 && accum.ips.len() > 1
+            })
+            .filter_map(|(entity_id, accum)| {
+                // Build a lightweight fleet_confidence estimate without the full profile
+                let mut epitope_count = 0u32;
+                let mut epitope_triggered = 0u32;
+
+                // sec_fetch_monotone
+                if !accum.sec_fetch_triplets.is_empty() && accum.total > 10 {
+                    let top = accum.sec_fetch_triplets.values().max().copied().unwrap_or(0);
+                    let pct = top as f64 / accum.total as f64 * 100.0;
+                    epitope_count += 1;
+                    if pct > 95.0 { epitope_triggered += 1; }
+                }
+                // session_absent
+                if accum.total > 20 {
+                    let pct = accum.cookie_present as f64 / accum.total as f64 * 100.0;
+                    epitope_count += 1;
+                    if pct < 5.0 { epitope_triggered += 1; }
+                }
+                // referer_self_loop
+                if accum.total > 20 {
+                    let pct = accum.referer_external as f64 / accum.total as f64 * 100.0;
+                    epitope_count += 1;
+                    if pct < 2.0 { epitope_triggered += 1; }
+                }
+
+                let confidence = if epitope_count > 0 {
+                    epitope_triggered as f64 / epitope_count as f64 * 100.0
+                } else {
+                    0.0
+                };
+
+                if confidence > 80.0 {
+                    Some((entity_id.clone(), accum.uas.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Number of distinct entity types seen.
@@ -923,7 +1017,7 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         });
     }
 
-    // ── Wave 166f: Six conserved epitopes ──
+    // ── Wave 166f+167: Seven conserved epitopes ──
     let mut epitope_count = 0u32;
     let mut epitope_triggered = 0u32;
 
@@ -1003,6 +1097,29 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
         })
     } else { None };
 
+    // Wave 167: referer_absence — conserved ghost army epitope.
+    // Among Sec-Fetch-bearing requests, what fraction have NO referer?
+    // Residential proxy exits are programmatic → no referer chain.
+    // Real humans arrive via search/links → they HAVE referers.
+    // Faking referrer chains creates detectable patterns.
+    let referer_absence_epitope = if accum.sec_fetch_present > 20 {
+        // Only count referer absence among sec-fetch-bearing requests
+        // (non-sec-fetch requests are already classified as stealth/unknown)
+        let sec_fetch_total = accum.sec_fetch_present;
+        let absent_pct = accum.referer_absent as f64 / sec_fetch_total as f64 * 100.0;
+        let triggered = absent_pct > 95.0;
+        epitope_count += 1;
+        if triggered { epitope_triggered += 1; }
+        Some(EpitopeResult {
+            score: (absent_pct * 10.0).round() / 10.0,
+            triggered,
+            description: format!(
+                "{:.1}% of Sec-Fetch requests have no referer ({} absent / {} with sec-fetch)",
+                absent_pct, accum.referer_absent, sec_fetch_total
+            ),
+        })
+    } else { None };
+
     let fleet_confidence = if epitope_count > 0 {
         (epitope_triggered as f64 / epitope_count as f64 * 1000.0).round() / 10.0
     } else {
@@ -1060,6 +1177,7 @@ fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityProfile {
             session_absent,
             referer_self_loop,
             burst_ratio: burst_ratio_epitope,
+            referer_absence: referer_absence_epitope,
         },
         fleet_confidence,
     }
@@ -1165,6 +1283,8 @@ pub struct TopologyWriter {
     ingest_count: u64,
     /// Save culture every N flushes (don't write state on every topology flush).
     culture_save_counter: u32,
+    /// Shared epitope registry — culture-fed bot detection.
+    registry: crate::epitope_registry::SharedRegistry,
 }
 
 impl TopologyWriter {
@@ -1173,7 +1293,12 @@ impl TopologyWriter {
     /// * `output_path` — where to write `topology.json`
     /// * `state_path` — where to persist the sourdough culture
     /// * `flush_interval` — write after this many ingested entries
-    pub fn new(output_path: PathBuf, state_path: PathBuf, flush_interval: u64) -> Self {
+    pub fn new(
+        output_path: PathBuf,
+        state_path: PathBuf,
+        flush_interval: u64,
+        registry: crate::epitope_registry::SharedRegistry,
+    ) -> Self {
         let builder = TopologyBuilder::load(&state_path);
         let state = Self {
             builder,
@@ -1182,6 +1307,7 @@ impl TopologyWriter {
             flush_interval,
             ingest_count: 0,
             culture_save_counter: 0,
+            registry,
         };
         tracing::info!(
             output = %state.output_path.display(),
@@ -1192,10 +1318,11 @@ impl TopologyWriter {
         state
     }
 
-    /// Ingest a parsed caddy log entry.
+    /// Ingest a parsed caddy log entry — uses the shared epitope registry
+    /// for culture-derived bot detection.
     pub fn ingest(&mut self, entry: &caddy::LogEntry) {
         let fp = RequestFingerprint::from_caddy_entry(entry);
-        self.builder.ingest(&fp);
+        self.builder.ingest_with_registry(&fp, &self.registry);
         self.ingest_count += 1;
 
         if self.ingest_count % self.flush_interval == 0 {
@@ -1209,6 +1336,10 @@ impl TopologyWriter {
         if profiles.is_empty() {
             return;
         }
+
+        // Culture-fed epitope learning: extract bot UA tokens from entities
+        // with high fleet_confidence and feed them to the registry.
+        self.feed_registry(&profiles);
 
         let comparative = build_comparative(&profiles);
         let now = std::time::SystemTime::now()
@@ -1259,6 +1390,44 @@ impl TopologyWriter {
         self.culture_save_counter += 1;
         if self.culture_save_counter % 10 == 0 || self.culture_save_counter == 1 {
             self.save_culture();
+        }
+    }
+
+    /// Feed the epitope registry with novel bot UA tokens from high-confidence
+    /// fleet entities. This is the unsupervised learning loop — the culture
+    /// teaches the registry which UA patterns correlate with fleet behavior.
+    fn feed_registry(&self, _profiles: &[EntityProfile]) {
+        let high_conf = self.builder.high_confidence_uas();
+        if high_conf.is_empty() {
+            return;
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+
+        let mut total_new = 0u32;
+        if let Ok(mut registry) = self.registry.write() {
+            for (_entity_id, uas) in &high_conf {
+                let tokens = crate::epitope_registry::extract_bot_tokens(uas);
+                for token in tokens {
+                    // Only feed tokens that aren't already seed tokens at full confidence
+                    if !registry.is_declared_bot(&token) {
+                        registry.observe_token(token, 0.85, now);
+                        total_new += 1;
+                    }
+                }
+            }
+            if total_new > 0 {
+                registry.advance_generation();
+                tracing::info!(
+                    novel_tokens = total_new,
+                    entities = high_conf.len(),
+                    generation = registry.generation(),
+                    "🧬 epitope registry fed from topology culture"
+                );
+            }
         }
     }
 
@@ -1463,7 +1632,8 @@ mod tests {
         let output = dir.join("topology.json");
         let state = dir.join("topology-state.json");
 
-        let mut writer = TopologyWriter::new(output.clone(), state.clone(), 5);
+        let registry = crate::epitope_registry::create_shared_registry(None);
+        let mut writer = TopologyWriter::new(output.clone(), state.clone(), 5, registry.clone());
         for i in 0..5 {
             let entry = caddy::LogEntry {
                 request: caddy::RequestInfo {
@@ -1493,7 +1663,7 @@ mod tests {
         assert!(state.exists(), "topology state file should exist");
 
         // Simulate restart — new writer loads the culture
-        let mut writer2 = TopologyWriter::new(output.clone(), state.clone(), 5);
+        let mut writer2 = TopologyWriter::new(output.clone(), state.clone(), 5, registry);
         // Should have warm state from previous generation
         writer2.flush();
         let content2 = std::fs::read_to_string(&output).unwrap();

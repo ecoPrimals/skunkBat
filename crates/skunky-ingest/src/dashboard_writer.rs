@@ -321,11 +321,18 @@ pub struct DashboardWriter {
     write_interval: u64,
     /// Culture save counter
     culture_save_counter: u32,
+    /// Shared epitope registry — culture-derived bot detection.
+    registry: crate::epitope_registry::SharedRegistry,
 }
 
 impl DashboardWriter {
     /// Create a new dashboard writer with sourdough culture.
-    pub fn new(output_path: PathBuf, state_path: PathBuf, write_interval: u64) -> Self {
+    pub fn new(
+        output_path: PathBuf,
+        state_path: PathBuf,
+        write_interval: u64,
+        registry: crate::epitope_registry::SharedRegistry,
+    ) -> Self {
         let culture = Self::load_culture(&state_path);
         let writer = Self {
             last_fleet_ts: 0.0,
@@ -335,6 +342,7 @@ impl DashboardWriter {
             output_path,
             state_path,
             culture,
+            registry,
         };
         tracing::info!(
             output = %writer.output_path.display(),
@@ -418,7 +426,9 @@ impl DashboardWriter {
         // Human: has Sec-Fetch AND has referer (arrived from somewhere real)
         let has_sf = !h.sec_fetch_mode.is_empty();
         let has_referer = !h.referer.is_empty();
-        let is_bot_ua = crate::entity_classifier::is_declared_bot(&ua);
+        let is_bot_ua = self.registry.read()
+            .map(|reg| reg.is_declared_bot(&ua))
+            .unwrap_or_else(|_| crate::entity_classifier::is_declared_bot(&ua));
         let is_fleet = is_bot_ua || (ua.contains("Chrome/") && !has_sf);
         let is_human = has_sf && !is_bot_ua && (has_referer || profile.has_referer);
         if is_fleet {
@@ -981,7 +991,8 @@ mod tests {
         let output = dir.join("dashboard.json");
         let state = dir.join("dashboard-culture.json");
 
-        let mut writer = DashboardWriter::new(output.clone(), state.clone(), 10);
+        let registry = crate::epitope_registry::create_shared_registry(None);
+        let mut writer = DashboardWriter::new(output.clone(), state.clone(), 10, registry.clone());
 
         for i in 0..10 {
             writer.ingest(&make_entry(
@@ -1003,7 +1014,7 @@ mod tests {
         assert!(state.exists(), "culture file should exist");
 
         // Sourdough test — new writer should warm start
-        let writer2 = DashboardWriter::new(output.clone(), state.clone(), 10);
+        let writer2 = DashboardWriter::new(output.clone(), state.clone(), 10, registry.clone());
         assert_eq!(writer2.culture.total_requests, 10);
         assert_eq!(writer2.culture.ips.len(), 10);
 
@@ -1052,7 +1063,8 @@ mod tests {
         let output = dir.join("dashboard.json");
         let state = dir.join("dashboard-culture.json");
 
-        let mut writer = DashboardWriter::new(output.clone(), state, 5);
+        let registry = crate::epitope_registry::create_shared_registry(None);
+        let mut writer = DashboardWriter::new(output.clone(), state, 5, registry);
         for i in 0..5 {
             writer.ingest(&make_entry("10.0.0.1", "/", "primals.eco", "curl/7", i as f64));
         }

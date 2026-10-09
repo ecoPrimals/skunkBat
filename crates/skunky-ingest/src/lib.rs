@@ -16,6 +16,7 @@ pub mod cursor;
 pub mod entity_classifier;
 pub mod epitope_defs;
 pub mod epitope_inversion;
+pub mod epitope_registry;
 pub mod epitope_lure;
 pub mod error;
 pub mod federation;

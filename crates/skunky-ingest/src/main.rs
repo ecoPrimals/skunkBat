@@ -11,8 +11,8 @@
 
 use skunky_ingest::{
     aggregator, caddy_bridge, cloudflare, cursor, dashboard_writer,
-    entity_classifier, error, federation, fleet, inflammatory,
-    ingestion_observer, lysogeny,
+    entity_classifier, epitope_registry, error, federation, fleet,
+    inflammatory, ingestion_observer, lysogeny,
     rpc, abuse_reporter, bloom_sensor, scatter_server, signal_spine,
     signal_writer, threat_feed,
 };
@@ -174,6 +174,14 @@ struct Cli {
     /// State file for dashboard sourdough culture.
     #[arg(long, default_value = "/var/lib/skunky-ingest/dashboard-culture.json")]
     dashboard_state_path: PathBuf,
+
+    /// Persist path for epitope registry (culture-derived bot patterns).
+    #[arg(long, default_value = "/var/lib/skunky-ingest/epitope-registry.json")]
+    epitope_registry_path: PathBuf,
+
+    /// OSINT bot token feed (merged into epitope registry at startup).
+    #[arg(long, default_value = "/var/lib/skunky-ingest/osint-bots.json")]
+    osint_bots_path: PathBuf,
 
     /// Flush dashboard.json after this many log entries.
     #[arg(long, default_value_t = 200)]
@@ -433,6 +441,24 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         None
     };
 
+    // Epitope registry — culture-derived bot detection (replaces hardcoded is_declared_bot).
+    // Loads sourdough culture + OSINT feed, evolves with topology observations.
+    let epitope_registry = epitope_registry::create_shared_registry(
+        Some(&cli.epitope_registry_path),
+    );
+    epitope_registry::load_osint_feed(&cli.osint_bots_path, &epitope_registry);
+    {
+        let stats = epitope_registry.read().unwrap().stats();
+        tracing::info!(
+            active = stats.active_tokens,
+            seed = stats.seed_count,
+            culture = stats.culture_count,
+            osint = stats.osint_count,
+            generation = stats.generation,
+            "🧬 epitope registry active — immune memory loaded"
+        );
+    }
+
     // Entity topology writer — replaces entity_topology.py (534 lines of Python → 0)
     // Classifies every request into entity profiles and writes topology.json.
     // Loads sourdough culture from persistent state — never cold-starts.
@@ -442,6 +468,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             cli.topology_path.clone(),
             cli.topology_state_path.clone(),
             cli.topology_flush_interval,
+            epitope_registry.clone(),
         ))
     } else {
         None
@@ -455,6 +482,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             cli.dashboard_path.clone(),
             cli.dashboard_state_path.clone(),
             cli.dashboard_flush_interval,
+            epitope_registry.clone(),
         ))
     } else {
         None
@@ -712,6 +740,20 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         dw.flush();
         dw.save_culture();
         tracing::info!("📊 dashboard writer final flush — culture preserved");
+    }
+
+    // Flush epitope registry — save immune memory before shutdown.
+    if let Ok(reg) = epitope_registry.read() {
+        reg.save(&cli.epitope_registry_path);
+        let stats = reg.stats();
+        tracing::info!(
+            active = stats.active_tokens,
+            culture = stats.culture_count,
+            generation = stats.generation,
+            lookups = stats.total_lookups,
+            matches = stats.total_matches,
+            "🧬 epitope registry saved — immune memory preserved"
+        );
     }
 
     // Flush ingestion observer — final timeline entry before shutdown.
