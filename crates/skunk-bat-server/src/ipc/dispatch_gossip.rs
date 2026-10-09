@@ -92,6 +92,10 @@ fn forward_to_swarmvine(
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
 
     let mut writer = std::io::BufWriter::new(&stream);
+    // riboCipher signal prefix — required by ecosystem JSON-RPC servers
+    writer
+        .write_all(&[0xEC, 0x01])
+        .map_err(|e| format!("write riboCipher: {e}"))?;
     writer
         .write_all(line.as_bytes())
         .map_err(|e| format!("write: {e}"))?;
@@ -150,6 +154,10 @@ pub(crate) fn fire_and_forget_inject(topic: &str, key: &str, payload: &serde_jso
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
 
     let mut writer = std::io::BufWriter::new(&stream);
+    // riboCipher signal prefix — required by ecosystem JSON-RPC servers
+    if writer.write_all(&[0xEC, 0x01]).is_err() {
+        return false;
+    }
     if writer.write_all(line.as_bytes()).is_err() {
         return false;
     }

@@ -329,6 +329,8 @@ async fn anchor_to_provenance_trio(
 
     let loam_result = tokio::time::timeout(timeout, async {
         let mut stream = TcpStream::connect(format!("{trio_addr}:9700")).await?;
+        // riboCipher signal prefix — required by ecosystem JSON-RPC servers
+        stream.write_all(&[0xEC, 0x01]).await?;
         stream.write_all(loam_request.as_bytes()).await?;
         stream.write_all(b"\n").await?;
         stream.flush().await?;
