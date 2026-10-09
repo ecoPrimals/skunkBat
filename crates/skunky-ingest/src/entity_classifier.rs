@@ -68,8 +68,14 @@ pub enum EntityId {
     AppleBot,
     /// SEO analysis tools (Semrush, Ahrefs, Moz, etc.)
     SeoTooling,
-    /// Real human browser (Sec-Fetch-Mode present).
+    /// Declared bot — sends Sec-Fetch headers but identifies as a bot in UA.
+    /// Wave 167: Amazon Reflectionbot, AI search crawlers, etc.
+    DeclaredBot,
+    /// Real human browser (Sec-Fetch-Mode present, no bot UA).
     HumanBrowser,
+    /// Ghost — single-request with browser headers but no referer.
+    /// Wave 167: residential proxy exits for fleet crawlers.
+    Ghost,
     /// Stealth scraper — Chrome UA without mandatory headers.
     StealthScraper,
     /// Vulnerability scanner / probe.
@@ -92,7 +98,9 @@ impl EntityId {
             Self::HuaweiPetalBot => "Huawei (PetalBot)",
             Self::AppleBot => "Apple (Applebot)",
             Self::SeoTooling => "SEO Tooling",
+            Self::DeclaredBot => "Declared Bot (browser headers)",
             Self::HumanBrowser => "Human (Browser)",
+            Self::Ghost => "Ghost (proxy exit)",
             Self::StealthScraper => "Stealth Scraper",
             Self::VulnScanner => "Vulnerability Scanner",
             Self::Unknown => "Unknown",
@@ -102,14 +110,21 @@ impl EntityId {
     /// Whether this entity is a confirmed corporate scraping fleet.
     pub fn is_fleet(&self) -> bool {
         matches!(self, Self::MetaFleet | Self::AnthropicClaudeBot |
-                 Self::OpenAiGptBot | Self::ByteDanceBytespider)
+                 Self::OpenAiGptBot | Self::ByteDanceBytespider |
+                 Self::DeclaredBot)
+    }
+
+    /// Whether this entity is a ghost (residential proxy exit).
+    pub fn is_ghost(&self) -> bool {
+        matches!(self, Self::Ghost)
     }
 
     /// Whether this entity honestly identifies itself.
     pub fn is_honest(&self) -> bool {
         matches!(self, Self::AnthropicClaudeBot | Self::GoogleBot |
                  Self::MicrosoftBingBot | Self::HuaweiPetalBot |
-                 Self::AppleBot | Self::MetaFacebookBot | Self::HumanBrowser)
+                 Self::AppleBot | Self::MetaFacebookBot | Self::HumanBrowser |
+                 Self::DeclaredBot)
     }
 }
 
@@ -289,8 +304,27 @@ pub fn classify(fp: &RequestFingerprint) -> EntityId {
         return EntityId::VulnScanner;
     }
 
+    // Wave 167: Declared bots — identify as bots in UA but send browser-grade
+    // headers (Sec-Fetch, Accept-Language). These bypass the old sec-fetch →
+    // human shortcut. The bot identity is an evolving epitope: they can't stop
+    // declaring without losing crawler-specific robots.txt treatment.
+    if is_declared_bot(ua) {
+        return EntityId::DeclaredBot;
+    }
+
     // Real browser (Sec-Fetch-Mode is mandatory since Chrome 76)
-    if fp.has_sec_fetch_mode { return EntityId::HumanBrowser; }
+    // Wave 167: referer-absent single-request IPs are ghosts, not humans.
+    // Real humans arrive from somewhere (search, link, bookmark → referer).
+    // Residential proxy exits are programmatic → no referer.
+    if fp.has_sec_fetch_mode {
+        if fp.referer.is_empty() && !fp.accept_language.is_empty() {
+            // Has browser headers but no referer — could be ghost or human.
+            // Ghost classification is probabilistic at single-request level;
+            // the dashboard_writer refines this with multi-request evidence.
+            return EntityId::Ghost;
+        }
+        return EntityId::HumanBrowser;
+    }
 
     // Stealth scraper — Chrome UA without mandatory headers
     if ua.contains("Chrome/") && !fp.has_sec_fetch_mode {
@@ -298,6 +332,45 @@ pub fn classify(fp: &RequestFingerprint) -> EntityId {
     }
 
     EntityId::Unknown
+}
+
+/// Wave 167: Detect bots that send browser-grade headers (Sec-Fetch) but
+/// identify as bots in their UA string. This is an evolving epitope set —
+/// each bot identity is a conserved surface protein. They can't stop
+/// declaring without losing crawler-specific treatment in robots.txt.
+///
+/// The list grows as new declared bots appear in the culture.
+pub fn is_declared_bot(ua: &str) -> bool {
+    // Amazon product crawlers
+    if ua.contains("Reflectionbot") { return true; }
+    if ua.contains("Amazonbot") { return true; }
+    // AI search/training crawlers that send browser headers
+    if ua.contains("ChatGPT-User") { return true; }
+    if ua.contains("Claude-SearchBot") { return true; }
+    if ua.contains("Claude-User") { return true; }
+    if ua.contains("Perplexity-User") { return true; }
+    if ua.contains("PerplexityBot") { return true; }
+    if ua.contains("xAI-Grok") || ua.contains("GrokBot") { return true; }
+    if ua.contains("DeepSeekBot") { return true; }
+    if ua.contains("KimiBot") || ua.contains("Kimi-SearchBot") || ua.contains("MoonshotBot") { return true; }
+    if ua.contains("MistralAI-User") { return true; }
+    if ua.contains("cohere-ai") { return true; }
+    if ua.contains("Qwenbot") { return true; }
+    if ua.contains("PanguBot") { return true; }
+    if ua.contains("Hunyuan") { return true; }
+    if ua.contains("YiBot") { return true; }
+    if ua.contains("ChatGLM-Spider") { return true; }
+    if ua.contains("Meta-ExternalAgent") { return true; }
+    if ua.contains("Google-Extended") { return true; }
+    if ua.contains("Bravebot") { return true; }
+    if ua.contains("YouBot") { return true; }
+    if ua.contains("DuckAssistBot") { return true; }
+    if ua.contains("CCBot") { return true; }
+    if ua.contains("Baiduspider") { return true; }
+    // Generic bot pattern: "compatible; *Bot/" with browser Accept headers
+    if ua.contains("HeadlessChrome") { return true; }
+    if ua.contains("okhttp/") { return true; }
+    false
 }
 
 // ── Entity accumulator (population-level) ──
@@ -1230,6 +1303,7 @@ mod tests {
 
     #[test]
     fn classify_human_browser() {
+        // Real human: has sec-fetch AND a referer (arrived from search/link)
         let fp = RequestFingerprint {
             ip: "203.0.113.1".into(),
             user_agent: "Mozilla/5.0 Chrome/155.0.0.0".into(),
@@ -1245,10 +1319,57 @@ mod tests {
             timestamp: 1.0,
             status: 200,
             sec_fetch_triplet: "navigate|document|none".into(),
-            referer: String::new(),
+            referer: "https://www.google.com/".into(),
         };
         assert_eq!(classify(&fp), EntityId::HumanBrowser);
         assert_eq!(fp.chrome_major(), 155);
+    }
+
+    #[test]
+    fn classify_ghost() {
+        // Ghost: has sec-fetch + accept-lang but NO referer
+        let fp = RequestFingerprint {
+            ip: "69.141.210.241".into(),
+            user_agent: "Mozilla/5.0 Chrome/155.0.0.0".into(),
+            host: "git.primals.eco".into(),
+            uri: "/ecoPrimals/wateringHole".into(),
+            accept: "text/html,application/xhtml+xml".into(),
+            accept_encoding: "gzip, deflate, br".into(),
+            accept_language: "en-US,en;q=0.9".into(),
+            has_sec_fetch_mode: true,
+            has_sec_ch_ua: true,
+            has_connection: true,
+            has_cookie: false,
+            timestamp: 1.0,
+            status: 200,
+            sec_fetch_triplet: "navigate|document|none".into(),
+            referer: String::new(),
+        };
+        assert_eq!(classify(&fp), EntityId::Ghost);
+    }
+
+    #[test]
+    fn classify_declared_bot() {
+        // Reflectionbot: has sec-fetch but identifies as bot in UA
+        let fp = RequestFingerprint {
+            ip: "16.216.88.116".into(),
+            user_agent: "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Reflectionbot/1.0; +https://developer.amazon.com/)".into(),
+            host: "git.primals.eco".into(),
+            uri: "/event-bus/commit/abc123".into(),
+            accept: "text/html,application/xhtml+xml".into(),
+            accept_encoding: "gzip, deflate, br".into(),
+            accept_language: "en-US,en;q=0.9".into(),
+            has_sec_fetch_mode: true,
+            has_sec_ch_ua: false,
+            has_connection: true,
+            has_cookie: false,
+            timestamp: 1.0,
+            status: 200,
+            sec_fetch_triplet: "navigate|document|none".into(),
+            referer: String::new(),
+        };
+        assert_eq!(classify(&fp), EntityId::DeclaredBot);
+        assert!(EntityId::DeclaredBot.is_fleet());
     }
 
     #[test]
