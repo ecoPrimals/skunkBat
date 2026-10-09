@@ -757,6 +757,8 @@ impl DashboardWriter {
                         .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
                         .unwrap_or_default()
                 };
+                let trio = score_trio(p);
+                let declared = p.has_accept_lang || p.has_sec_fetch;
                 serde_json::json!({
                     "ip": ip,
                     "requests": p.requests,
@@ -770,6 +772,13 @@ impl DashboardWriter {
                     "desc": format!("{} ({})", geo.org, geo.country),
                     "subnet": subnet,
                     "is_fleet": p.is_fleet,
+                    "declared": declared,
+                    "trio_class": format!("{:?}", trio.classification),
+                    "trio": {
+                        "attention": (trio.attention * 1000.0).round() / 1000.0,
+                        "curiosity": (trio.curiosity * 1000.0).round() / 1000.0,
+                        "interaction": (trio.interaction * 1000.0).round() / 1000.0,
+                    },
                     "top_repos": top_repos,
                     "top_paths": top_paths,
                 })
@@ -941,6 +950,23 @@ impl DashboardWriter {
                     .iter()
                     .any(|ip| self.culture.ips.get(ip).map(|p| p.has_accept_lang).unwrap_or(false));
 
+                let has_sec = ips
+                    .iter()
+                    .any(|ip| self.culture.ips.get(ip).map(|p| p.has_sec_fetch).unwrap_or(false));
+                let declared_count = ips
+                    .iter()
+                    .filter(|ip| self.culture.ips.get(*ip).map(|p| p.has_accept_lang || p.has_sec_fetch).unwrap_or(false))
+                    .count();
+                let declared_ratio = if ips.is_empty() { 0.0 } else { declared_count as f64 / ips.len() as f64 };
+
+                // Score trio for the cluster using first IP as representative
+                let trio = ips
+                    .iter()
+                    .next()
+                    .and_then(|ip| self.culture.ips.get(ip))
+                    .map(|p| score_trio(p));
+                let trio_class = trio.as_ref().map(|t| format!("{:?}", t.classification)).unwrap_or_else(|| "unknown".to_string());
+
                 serde_json::json!({
                     "hash": hash,
                     "ips": ips.len(),
@@ -948,6 +974,9 @@ impl DashboardWriter {
                     "ua_pool_size": max_ua_pool,
                     "blame_ratio": (blame_ratio * 100.0).round() / 100.0,
                     "has_lang": has_lang,
+                    "has_sec": has_sec,
+                    "declared_ratio": (declared_ratio * 100.0).round() / 100.0,
+                    "trio_class": trio_class,
                 })
             })
             .collect();
@@ -965,6 +994,27 @@ impl DashboardWriter {
             "largest_cluster": self.culture.epitope_collisions.values().map(|v| v.len()).max().unwrap_or(0),
             "clusters_gt1": self.culture.epitope_collisions.values().filter(|v| v.len() > 1).count(),
         });
+
+        // bingoCube trio distribution — maze output classification counts
+        let mut trio_counts: HashMap<&str, usize> = HashMap::new();
+        let mut declared_total = 0usize;
+        let mut silent_total = 0usize;
+        for p in self.culture.ips.values() {
+            let trio = score_trio(p);
+            let key = match trio.classification {
+                TrioClass::Fleet => "fleet",
+                TrioClass::Scanner => "scanner",
+                TrioClass::Crawler => "crawler",
+                TrioClass::Human => "human",
+                TrioClass::Participant => "participant",
+            };
+            *trio_counts.entry(key).or_insert(0) += 1;
+            if p.has_accept_lang || p.has_sec_fetch {
+                declared_total += 1;
+            } else {
+                silent_total += 1;
+            }
+        }
 
         let dashboard = serde_json::json!({
             "ts": now,
@@ -992,6 +1042,20 @@ impl DashboardWriter {
             },
             "epitope_clusters": epitope_clusters,
             "epitope_summary": epitope_summary,
+            "trio_distribution": {
+                "fleet": trio_counts.get("fleet").copied().unwrap_or(0),
+                "scanner": trio_counts.get("scanner").copied().unwrap_or(0),
+                "crawler": trio_counts.get("crawler").copied().unwrap_or(0),
+                "human": trio_counts.get("human").copied().unwrap_or(0),
+                "participant": trio_counts.get("participant").copied().unwrap_or(0),
+            },
+            "declaration": {
+                "declared": declared_total,
+                "silent": silent_total,
+                "declared_pct": if (declared_total + silent_total) > 0 {
+                    ((declared_total as f64 / (declared_total + silent_total) as f64) * 1000.0).round() / 10.0
+                } else { 0.0 },
+            },
         });
 
         // Write dashboard.json
@@ -1039,6 +1103,17 @@ impl DashboardWriter {
                 "unique": self.culture.epitope_collisions.len(),
                 "largest": self.culture.epitope_collisions.values().map(|v| v.len()).max().unwrap_or(0),
                 "gt1": self.culture.epitope_collisions.values().filter(|v| v.len() > 1).count(),
+            },
+            "trio": {
+                "f": trio_counts.get("fleet").copied().unwrap_or(0),
+                "s": trio_counts.get("scanner").copied().unwrap_or(0),
+                "c": trio_counts.get("crawler").copied().unwrap_or(0),
+                "h": trio_counts.get("human").copied().unwrap_or(0),
+                "p": trio_counts.get("participant").copied().unwrap_or(0),
+            },
+            "decl": {
+                "d": declared_total,
+                "s": silent_total,
             },
         });
         let _ = serde_json::to_string(&state).map(|s| std::fs::write(&state_json_path, s));
