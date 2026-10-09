@@ -391,12 +391,19 @@ async fn handle_request(
         return Ok(());
     }
 
-    // ── PLASMID EXPORT — /plasmid endpoint for federation ──
+    // ── PLASMID EXPORT — /plasmid endpoint for peer federation ──
     if path == "/plasmid" {
         let layer_name = std::env::var("LAYER_NAME")
             .or_else(|_| std::fs::read_to_string("/etc/membrane/gate-name").map(|s| s.trim().to_string()))
             .unwrap_or_else(|_| "unknown".to_string());
-        let body = opsonize_cache.export_plasmid_json(&layer_name).await;
+        let mut body = opsonize_cache.export_plasmid_json(&layer_name).await;
+
+        // Inject Anderson profile from dashboard writer's periodic analysis
+        if let Ok(anderson_json) = std::fs::read_to_string("/run/membrane/anderson-profile.json") {
+            if body.ends_with('}') {
+                body = format!("{},\"anderson_profile\":{}}}", &body[..body.len()-1], anderson_json);
+            }
+        }
         let response = format!(
             "HTTP/1.1 200 OK\r\n\
              Content-Type: application/json\r\n\

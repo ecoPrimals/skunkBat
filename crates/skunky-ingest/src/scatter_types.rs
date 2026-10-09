@@ -394,9 +394,9 @@ impl OpsonizeCache {
 
     /// Export the conserved plasmid as a JSON string for the federation feed.
     ///
-    /// This is the `/plasmid` endpoint: each golgi layer publishes its local
-    /// conserved plasmid so the central aggregator can merge all layers into
-    /// the published threat intelligence feed at signal.primals.eco/feed/.
+    /// This is the `/plasmid` endpoint: each golgi body publishes its local
+    /// conserved plasmid so peer bodies can merge into their own federated
+    /// threat intelligence feed. No body is central — any body's merge is valid.
     pub async fn export_plasmid_json(&self, layer_name: &str) -> String {
         let plasmid = self.plasmid.read().await;
         let entries = self.entries.read().await;
@@ -483,6 +483,27 @@ impl OpsonizeCache {
             plasmid.total_observations,
             plasmid.mean_confidence,
         )
+    }
+
+    /// Export plasmid JSON with Anderson profile appended.
+    pub async fn export_plasmid_with_anderson(
+        &self,
+        layer_name: &str,
+        anderson: &crate::anderson_bridge::SharedAndersonProfile,
+    ) -> String {
+        let base = self.export_plasmid_json(layer_name).await;
+
+        // Inject anderson_profile before the closing brace
+        let profile_json = match anderson.read().await.as_ref() {
+            Some(profile) => serde_json::to_string(profile).unwrap_or_else(|_| "null".into()),
+            None => "null".into(),
+        };
+
+        if base.ends_with('}') {
+            format!("{},\"anderson_profile\":{}}}", &base[..base.len()-1], profile_json)
+        } else {
+            base
+        }
     }
 
     /// Look up a behavioral hash in the cache.

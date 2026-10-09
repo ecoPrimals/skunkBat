@@ -10,7 +10,7 @@
 //! Module declarations live in `lib.rs` for reuse; binary owns CLI + tail loop.
 
 use skunky_ingest::{
-    aggregator, caddy_bridge, cloudflare, cursor, dashboard_writer,
+    aggregator, anderson_bridge, caddy_bridge, cloudflare, cursor, dashboard_writer,
     entity_classifier, epitope_registry, error, federation, fleet,
     inflammatory, ingestion_observer, lysogeny,
     rpc, abuse_reporter, bloom_sensor, scatter_server, signal_spine,
@@ -410,9 +410,10 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     if cli.caddy_bridge {
         tokio::spawn(inflammatory::run(inflammatory::InflammatoryConfig::default()));
 
-        // Plasmid federation — periodic merge (replaces plasmid-federation cron)
-        tokio::spawn(async {
-            let config = federation::FederationConfig::default();
+        // Plasmid federation — peer-to-peer merge across all golgi bodies
+        let layer_name_fed = std::env::var("LAYER_NAME").unwrap_or_else(|_| "golgiBody".into());
+        tokio::spawn(async move {
+            let config = federation::FederationConfig::peer_mesh(&layer_name_fed);
             loop {
                 match federation::run_once(&config).await {
                     Ok(path) => tracing::info!(path = %path.display(), "🧬 plasmid federation cycle complete"),
@@ -478,15 +479,20 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
         None
     };
 
+    // Shared Anderson profile — updated by dashboard writer, read by /plasmid endpoint
+    let anderson_profile: anderson_bridge::SharedAndersonProfile =
+        std::sync::Arc::new(tokio::sync::RwLock::new(None));
+
     // Dashboard writer — replaces bloom_live.py (793 lines of Python → 0)
     // Writes dashboard.json for the signal site from live pipeline data.
     let mut dashboard_writer = if cli.dashboard_writer {
         tracing::info!("📊 dashboard writer active — bloom_live.py convergence");
-        Some(dashboard_writer::DashboardWriter::new(
+        Some(dashboard_writer::DashboardWriter::with_anderson(
             cli.dashboard_path.clone(),
             cli.dashboard_state_path.clone(),
             cli.dashboard_flush_interval,
             epitope_registry.clone(),
+            anderson_profile.clone(),
         ))
     } else {
         None

@@ -527,6 +527,8 @@ pub struct DashboardWriter {
     culture_save_counter: u32,
     /// Shared epitope registry — culture-derived bot detection.
     registry: crate::epitope_registry::SharedRegistry,
+    /// Shared Anderson profile — updated on flush, read by /plasmid endpoint.
+    anderson_profile: crate::anderson_bridge::SharedAndersonProfile,
 }
 
 impl DashboardWriter {
@@ -536,6 +538,17 @@ impl DashboardWriter {
         state_path: PathBuf,
         write_interval: u64,
         registry: crate::epitope_registry::SharedRegistry,
+    ) -> Self {
+        Self::with_anderson(output_path, state_path, write_interval, registry, std::sync::Arc::new(tokio::sync::RwLock::new(None)))
+    }
+
+    /// Create a new dashboard writer with shared Anderson profile output.
+    pub fn with_anderson(
+        output_path: PathBuf,
+        state_path: PathBuf,
+        write_interval: u64,
+        registry: crate::epitope_registry::SharedRegistry,
+        anderson_profile: crate::anderson_bridge::SharedAndersonProfile,
     ) -> Self {
         let culture = Self::load_culture(&state_path);
         let writer = Self {
@@ -547,6 +560,7 @@ impl DashboardWriter {
             state_path,
             culture,
             registry,
+            anderson_profile,
         };
         tracing::info!(
             output = %writer.output_path.display(),
@@ -1128,6 +1142,39 @@ impl DashboardWriter {
         self.culture_save_counter += 1;
         if self.culture_save_counter % 10 == 0 || self.culture_save_counter == 1 {
             self.save_culture();
+        }
+
+        // Update shared Anderson profile from population observations
+        self.update_anderson_profile();
+    }
+
+    /// Compute and publish the Anderson profile from current culture data.
+    fn update_anderson_profile(&self) {
+        if self.culture.ips.is_empty() {
+            return;
+        }
+
+        let mesh_size = 4_u32; // current operational bodies
+        let membrane_thickness = 10.0; // detection rule count (L)
+        let observations = crate::anderson_bridge::extract_observations(
+            &self.culture.ips,
+            mesh_size,
+        );
+        let profile = crate::anderson_bridge::compute_profile(
+            &observations,
+            mesh_size,
+            membrane_thickness,
+        );
+
+        // Write to /run/membrane/ so the scatter server's /plasmid endpoint reads it
+        if let Ok(json) = serde_json::to_string(&profile) {
+            let _ = std::fs::create_dir_all("/run/membrane");
+            let _ = std::fs::write("/run/membrane/anderson-profile.json", &json);
+        }
+
+        // Also update the shared profile for in-process consumers
+        if let Ok(mut guard) = self.anderson_profile.try_write() {
+            *guard = Some(profile);
         }
     }
 

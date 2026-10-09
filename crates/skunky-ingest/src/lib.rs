@@ -7,6 +7,7 @@
 //! future tooling). The binary crate (`main.rs`) owns the CLI and tail loop.
 
 pub mod aggregator;
+pub mod anderson_bridge;
 pub mod caddy;
 pub mod caddy_bridge;
 pub mod cloudflare;

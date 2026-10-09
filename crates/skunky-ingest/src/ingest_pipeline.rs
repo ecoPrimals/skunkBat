@@ -278,11 +278,13 @@ pub(crate) async fn process_line(
                     base_confidence
                 };
 
+                let origin = std::env::var("LAYER_NAME")
+                    .unwrap_or_else(|_| "unknown".to_string());
                 let tag = cellmembrane_types::fleet::OpsonizeTag {
                     behavioral_hash: bhash.clone(),
                     detectors: detectors.clone(),
                     confidence,
-                    origin_gate: "golgiBody".to_string(),
+                    origin_gate: origin,
                     invariants,
                     response: cellmembrane_types::fleet::OpsonizeResponse::Scatter { ratio: 0.3 },
                     created_epoch: fleet_obs.timestamp_epoch,

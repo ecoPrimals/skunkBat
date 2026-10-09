@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 
-//! Plasmid federation — Merge conserved plasmids from all golgi layers.
+//! Plasmid federation — Peer-to-peer merge of conserved plasmids across golgi bodies.
 //!
 //! Replaces `plasmid-federation.sh` + its embedded Python merger.
-//! Runs on golgiBody (central). Fetches `/plasmid` from each layer,
+//! Every golgi body runs federation: fetches `/plasmid` from all peers,
 //! merges epitopes weighted by observation count, and publishes the
-//! federated threat intelligence feed.
+//! federated threat intelligence feed locally. No body is central —
+//! any body's merge is equally valid.
 
 #![allow(missing_docs)]
 
@@ -33,22 +34,56 @@ pub struct FederationConfig {
     pub feed_dir: PathBuf,
     pub work_dir: PathBuf,
     pub fetch_timeout: Duration,
+    /// This body's name — used to skip self when pulling from peers.
+    pub self_name: String,
+}
+
+impl FederationConfig {
+    /// Build the default peer mesh. Every body is listed.
+    /// `self_name` determines which body to skip during pull.
+    pub fn peer_mesh(self_name: &str) -> Self {
+        Self {
+            layers: vec![
+                LayerEntry {
+                    name: "golgiBody".into(),
+                    url: "https://signal.primals.eco/plasmid".into(),
+                    provider: "DigitalOcean".into(),
+                    location: "NYC, US".into(),
+                    jurisdiction: "US federal".into(),
+                },
+                LayerEntry {
+                    name: "golgiLayerHetzner".into(),
+                    url: "https://golgi-de.primals.eco/plasmid".into(),
+                    provider: "Hetzner".into(),
+                    location: "Frankfurt, DE".into(),
+                    jurisdiction: "EU/DE".into(),
+                },
+                LayerEntry {
+                    name: "golgiLayerVultr".into(),
+                    url: "https://golgi-jp.primals.eco/plasmid".into(),
+                    provider: "Vultr".into(),
+                    location: "Tokyo, JP".into(),
+                    jurisdiction: "JP".into(),
+                },
+                LayerEntry {
+                    name: "golgiLayerLinode".into(),
+                    url: "https://golgi-in.primals.eco/plasmid".into(),
+                    provider: "Linode".into(),
+                    location: "Mumbai, IN".into(),
+                    jurisdiction: "IN".into(),
+                },
+            ],
+            feed_dir: PathBuf::from("/opt/ecoPrimals/signal/site/public/feed"),
+            work_dir: PathBuf::from("/run/membrane/plasmid-sync"),
+            fetch_timeout: Duration::from_secs(10),
+            self_name: self_name.to_string(),
+        }
+    }
 }
 
 impl Default for FederationConfig {
     fn default() -> Self {
-        Self {
-            layers: vec![LayerEntry {
-                name: "golgiBody".into(),
-                url: "http://localhost:9753/plasmid".into(),
-                provider: "DigitalOcean".into(),
-                location: "NYC, US".into(),
-                jurisdiction: "US federal".into(),
-            }],
-            feed_dir: PathBuf::from("/opt/ecoPrimals/signal/site/public/feed"),
-            work_dir: PathBuf::from("/run/membrane/plasmid-sync"),
-            fetch_timeout: Duration::from_secs(10),
-        }
+        Self::peer_mesh("golgiBody")
     }
 }
 
@@ -100,6 +135,8 @@ struct LayerHash {
 #[derive(Debug, Serialize)]
 pub struct FederatedFeed {
     pub schema: String,
+    /// Which body produced this merge. Any body's merge is equally valid.
+    pub origin_body: String,
     pub generated: u64,
     pub generated_iso: String,
     pub license: String,
@@ -197,12 +234,43 @@ pub async fn run_once(config: &FederationConfig) -> Result<PathBuf, FederationEr
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(config.fetch_timeout)
+        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| FederationError::Http(e.to_string()))?;
 
-    // ── Fetch from each layer ──
     let mut fetched: Vec<(String, LayerPlasmid)> = Vec::new();
+
+    // ── Fetch self (localhost) ──
+    // Always include self via localhost — no network round-trip.
+    let self_url = "http://localhost:9753/plasmid";
+    match client.get(self_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<LayerPlasmid>().await {
+                Ok(mut data) => {
+                    if data.layer.is_none() {
+                        data.layer = Some(config.self_name.clone());
+                    }
+                    tracing::info!(layer = %config.self_name, "✓ self plasmid fetched");
+                    fetched.push((config.self_name.clone(), data));
+                }
+                Err(e) => {
+                    tracing::warn!(layer = %config.self_name, error = %e, "✗ self plasmid parse failed");
+                }
+            }
+        }
+        Ok(resp) => {
+            tracing::warn!(layer = %config.self_name, status = %resp.status(), "✗ self plasmid non-200");
+        }
+        Err(e) => {
+            tracing::warn!(layer = %config.self_name, error = %e, "✗ self plasmid unreachable");
+        }
+    }
+
+    // ── Fetch from peers (skip self) ──
     for layer in &config.layers {
+        if layer.name == config.self_name {
+            continue; // already fetched via localhost
+        }
         match client.get(&layer.url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 match resp.json::<LayerPlasmid>().await {
@@ -232,7 +300,7 @@ pub async fn run_once(config: &FederationConfig) -> Result<PathBuf, FederationEr
     }
 
     // ── Merge ──
-    let feed = merge_plasmids(&fetched);
+    let feed = merge_plasmids(&fetched, &config.self_name);
 
     // ── Publish ──
     let output_path = config.feed_dir.join("conserved-plasmid.json");
@@ -250,7 +318,7 @@ pub async fn run_once(config: &FederationConfig) -> Result<PathBuf, FederationEr
     Ok(output_path)
 }
 
-fn merge_plasmids(layers: &[(String, LayerPlasmid)]) -> FederatedFeed {
+fn merge_plasmids(layers: &[(String, LayerPlasmid)], origin_body: &str) -> FederatedFeed {
     let mut all_epitopes: HashMap<String, (u64, u64, Vec<String>)> = HashMap::new();
     let mut all_hashes: BTreeMap<String, MergedHash> = BTreeMap::new();
     let mut total_subgroups: u64 = 0;
@@ -346,7 +414,8 @@ fn merge_plasmids(layers: &[(String, LayerPlasmid)]) -> FederatedFeed {
     let now = chrono::Utc::now();
 
     FederatedFeed {
-        schema: "ecoPrimals/conserved-plasmid/v2".into(),
+        schema: "ecoPrimals/conserved-plasmid/v3".into(),
+        origin_body: origin_body.to_string(),
         generated: now.timestamp() as u64,
         generated_iso: now.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         license: "CC-BY-SA-4.0".into(),
