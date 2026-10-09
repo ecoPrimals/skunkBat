@@ -27,6 +27,7 @@ pub mod fluoro_tag;
 pub mod ingestion_observer;
 pub mod inflammatory;
 pub mod lysogeny;
+pub mod plasmid;
 pub(crate) mod ribocipher_const;
 pub mod rpc;
 pub mod abuse_reporter;

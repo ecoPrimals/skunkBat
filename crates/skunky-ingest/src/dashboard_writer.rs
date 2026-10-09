@@ -120,46 +120,46 @@ fn geo_lookup(ip: &str) -> GeoInfo {
 
 /// Accumulated behavioral data for one IP address.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct IpProfile {
-    requests: u64,
-    first_seen: f64,
-    last_seen: f64,
-    is_fleet: bool,
-    is_human: bool,
+pub struct IpProfile {
+    pub requests: u64,
+    pub first_seen: f64,
+    pub last_seen: f64,
+    pub is_fleet: bool,
+    pub is_human: bool,
     /// Top repos targeted: repo → count
-    repos: HashMap<String, u32>,
+    pub repos: HashMap<String, u32>,
     /// Path operation types: type → count
-    path_types: HashMap<String, u32>,
+    pub path_types: HashMap<String, u32>,
     /// Status code distribution
-    statuses: HashMap<u16, u32>,
+    pub statuses: HashMap<u16, u32>,
     /// Accept-Encoding value (conserved epitope — first value wins)
-    accept_encoding: Option<String>,
+    pub accept_encoding: Option<String>,
     /// Number of distinct UAs seen from this IP
-    ua_pool_size: u16,
+    pub ua_pool_size: u16,
     /// Blame endpoint hits
-    blame_count: u32,
+    pub blame_count: u32,
     /// Commit endpoint hits
-    commit_count: u32,
+    pub commit_count: u32,
     /// Has Accept-Language header
-    has_accept_lang: bool,
+    pub has_accept_lang: bool,
     /// Has loaded CSS/JS/font assets
-    has_assets: bool,
+    pub has_assets: bool,
     /// Has sent Referer header
-    has_referer: bool,
+    pub has_referer: bool,
     /// Has Sec-Fetch-Mode
-    has_sec_fetch: bool,
+    pub has_sec_fetch: bool,
     /// Has Cookie
-    has_cookie: bool,
+    pub has_cookie: bool,
     /// Hosts visited
-    host_count: u16,
+    pub host_count: u16,
     /// Computed epitope hash (None until >= 3 requests)
-    epitope_hash: Option<String>,
+    pub epitope_hash: Option<String>,
     /// Accept header value (conserved epitope)
-    accept: Option<String>,
+    pub accept: Option<String>,
 }
 
 impl IpProfile {
-    fn new(ts: f64) -> Self {
+    pub fn new(ts: f64) -> Self {
         Self {
             requests: 0,
             first_seen: ts,
