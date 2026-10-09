@@ -894,7 +894,30 @@ async fn handle_request(
         .unwrap_or_default()
         .as_secs() / 180;
     let fleet_id = if fleet_hash.is_empty() { "unknown" } else { &fleet_hash };
-    let grid = CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch);
+
+    // Cross-frame mixing: when we have a known fleet entity AND other entities
+    // in the cache, probabilistically mix maze frames. Entity A gets a grid
+    // partially seeded by entity B. We observe A's reaction to learn.
+    // ~25% of known-fleet requests get cross-framed (rows 3-4 from donor).
+    let grid = if cached_tag.is_some() && !fleet_hash.is_empty() {
+        let cross_gate = path_deterministic_hash(&effective_path, decision_epoch) % 4;
+        if cross_gate == 0 {
+            if let Some((donor_hash, _)) = opsonize_cache.cross_mirror_lookup(&fleet_hash).await {
+                tracing::debug!(
+                    requester = %&fleet_hash[..fleet_hash.len().min(8)],
+                    donor = %&donor_hash[..donor_hash.len().min(8)],
+                    "🔀 cross-frame mixing activated"
+                );
+                CubeDecisionGrid::from_cross_frame(fleet_id, &donor_hash, &effective_path, decision_epoch)
+            } else {
+                CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch)
+            }
+        } else {
+            CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch)
+        }
+    } else {
+        CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch)
+    };
 
     let mut response_type = ResponseType::Normal;
     let (status, content_type, body) = if is_disperse {

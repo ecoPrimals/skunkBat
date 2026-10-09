@@ -76,6 +76,48 @@ impl CubeDecisionGrid {
     /// Same (fleet_hash, path, epoch) -> same grid -> same decisions.
     pub fn from_context(fleet_hash: &str, path: &str, epoch: u64) -> Self {
         let seed = format!("scatter:decision:{fleet_hash}:{path}:{epoch}");
+        Self::from_seed_string(&seed)
+    }
+
+    /// Cross-frame mixing: create a grid seeded by TWO entities.
+    ///
+    /// Entity A's request gets a grid partially determined by entity B's
+    /// behavioral fingerprint. Rows 0-2 come from A's seed (response-level
+    /// decisions stay entity-specific). Rows 3-4 come from the mixed seed
+    /// (nautilus-override rows absorb the donor's influence).
+    ///
+    /// This creates "mirrors" — A sees content shaped by B's maze frame.
+    /// We observe A's reaction: does A mimic B's pattern? Does A abort
+    /// (apoptosis)? Does A change behavior? Each reaction is a new signal.
+    ///
+    /// Biological parallel: MHC cross-presentation. Dendritic cells present
+    /// fragments of OTHER cells' antigens to T cells. The T cell's response
+    /// (activate, ignore, suppress) classifies the presented antigen.
+    pub fn from_cross_frame(
+        fleet_hash: &str,
+        donor_hash: &str,
+        path: &str,
+        epoch: u64,
+    ) -> Self {
+        let own_seed = format!("scatter:decision:{fleet_hash}:{path}:{epoch}");
+        let mix_seed = format!("scatter:crossframe:{fleet_hash}:{donor_hash}:{path}:{epoch}");
+
+        let own = Self::from_seed_string(&own_seed);
+        let mixed = Self::from_seed_string(&mix_seed);
+
+        // Rows 0-2: entity's own decisions (jitter, content, temporal)
+        // Rows 3-4: mixed with donor (nautilus-override rows)
+        let mut colors = own.colors;
+        let mut scalars = own.scalars;
+        colors[3] = mixed.colors[3];
+        colors[4] = mixed.colors[4];
+        scalars[3] = mixed.scalars[3];
+        scalars[4] = mixed.scalars[4];
+
+        Self { colors, scalars }
+    }
+
+    fn from_seed_string(seed: &str) -> Self {
         let config = Config {
             grid_size: 5,
             universe_size: 100,
