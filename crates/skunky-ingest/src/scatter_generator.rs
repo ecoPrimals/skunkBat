@@ -689,7 +689,6 @@ impl ScatterGenerator {
     /// scatter-served paths. Creates an infinite crawl web: each generated
     /// page links to more generated pages. The fleet's crawler follows
     /// links, multiplying their request count and bandwidth consumption.
-    #[allow(dead_code)] // Pre-cube amplification — retained for future A/B path testing
     pub(crate) fn inject_crawl_links(&self, rng: &mut XorShift64, html: &str) -> String {
         self.inject_crawl_links_adaptive(rng, html, 0.5)
     }

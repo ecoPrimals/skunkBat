@@ -216,7 +216,6 @@ pub(crate) fn generate_epitope_maze(
 /// - AGPL enforcement audit (license framing)
 /// - Behavioral correlation brief (intelligence framing)
 /// - Immune response log (biological framing)
-#[allow(dead_code)] // Pre-cube cross-mirror — retained for future A/B path testing
 pub(crate) fn generate_cross_mirror(
     sg: &ScatterGenerator,
     rng: &mut XorShift64,

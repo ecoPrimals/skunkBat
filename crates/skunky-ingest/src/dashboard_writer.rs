@@ -126,6 +126,8 @@ pub struct IpProfile {
     pub last_seen: f64,
     pub is_fleet: bool,
     pub is_human: bool,
+    /// True if UA matched a declared bot identity (commensal signal).
+    pub is_declared_bot: bool,
     /// Top repos targeted: repo → count
     pub repos: HashMap<String, u32>,
     /// Path operation types: type → count
@@ -166,6 +168,7 @@ impl IpProfile {
             last_seen: ts,
             is_fleet: false,
             is_human: false,
+            is_declared_bot: false,
             repos: HashMap::new(),
             path_types: HashMap::new(),
             statuses: HashMap::new(),
@@ -183,6 +186,194 @@ impl IpProfile {
             accept: None,
         }
     }
+}
+
+// ── BingoCube Trio — Attention × Curiosity × Interaction scoring ──
+
+/// Three-axis behavioral classification from the bingoCube oracle.
+///
+/// Each entity is scored on three orthogonal axes. The classification
+/// determines which provenance braid receives the behavioral record:
+/// - loamSpine (ledger/spine, WHERE) ← all classes
+/// - rhizoCrypt (DAG, WHAT) ← commensal + sovereign
+/// - sweetGrass (braid, WHO) ← sovereign only
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BingoCubeTrio {
+    /// Reading depth: time between requests, path depth, varied pacing.
+    pub attention: f32,
+    /// Navigation breadth: unique paths, diverse hosts, repo exploration.
+    pub curiosity: f32,
+    /// Engagement depth: asset loads, CSS/JS fetches, referer chains.
+    pub interaction: f32,
+    /// Ecological classification from the trio shape.
+    pub classification: TrioClass,
+}
+
+/// Ecological class — which kingdom an entity belongs to.
+///
+/// Referer is NOT an epitope. Privacy is always allowed.
+/// Ghost promotes to Sovereign on behavioral evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrioClass {
+    /// wave/0 — behavioral epitopes prove extraction without consent.
+    /// Missing Sec-Fetch, missing Connection, metronomic timing, IP rotation.
+    /// These are structural tells that can't be hidden by privacy tools.
+    Parasite,
+    /// photon/1 — declared identity, provides value (indexing, agentic).
+    /// Says who it is in UA. Voluntarily participates in the protocol.
+    Commensal,
+    /// reaction/null — behavioral proof of human reading, privacy respected.
+    /// Full browser stack + multi-request depth. Or promoted Ghost.
+    Sovereign,
+}
+
+/// Score an IP profile on the Attention × Curiosity × Interaction axes
+/// and classify into the ecological trio.
+///
+/// Scoring rules (from plan):
+/// - **Parasite**: behavioral epitopes ONLY — no Sec-Fetch, no Accept-Language,
+///   fleet-like UA pool. Structural tells, not privacy choices.
+/// - **Commensal**: declared bot identity in UA. If you say who you are, commensal.
+/// - **Sovereign**: multi-request behavioral depth — varied timing, asset loads,
+///   path diversity. Ghost promotes after 3+ requests with depth signals.
+/// - Referer is NOT an epitope — it is a privacy choice.
+pub fn score_trio(profile: &IpProfile) -> BingoCubeTrio {
+    // ── Attention: reading depth ──
+    // Varied pacing between requests indicates human attention.
+    // Metronomic fast pacing (< 1s avg) = machine extraction.
+    let attention = {
+        let time_span = (profile.last_seen - profile.first_seen).max(0.0);
+        let avg_interval = if profile.requests > 1 {
+            time_span / (profile.requests - 1) as f64
+        } else {
+            0.0
+        };
+
+        if profile.requests <= 1 {
+            0.1_f32
+        } else if avg_interval > 30.0 {
+            0.9 // deep reading — long pauses between pages
+        } else if avg_interval > 10.0 {
+            0.75
+        } else if avg_interval > 3.0 {
+            0.55
+        } else if avg_interval > 1.0 {
+            0.35
+        } else {
+            0.12 // metronomic extraction pace
+        }
+    };
+
+    // ── Curiosity: navigation breadth ──
+    // How widely does the entity explore? Multiple paths, repos, hosts
+    // indicate genuine interest vs single-target extraction.
+    let curiosity = {
+        let path_diversity = profile.path_types.len() as f32;
+        let repo_diversity = profile.repos.len() as f32;
+        let host_factor = profile.host_count as f32;
+
+        let raw = (path_diversity / 6.0).min(1.0) * 0.3
+            + (repo_diversity / 5.0).min(1.0) * 0.3
+            + (host_factor / 3.0).min(1.0) * 0.4;
+        raw.min(1.0)
+    };
+
+    // ── Interaction: engagement depth ──
+    // Does the entity actually render and engage with content?
+    // Asset loads, cookies, sec-fetch, blame reading = real engagement.
+    let interaction = {
+        let mut score = 0.0_f32;
+        if profile.has_assets { score += 0.25; }  // loads CSS/JS/fonts
+        if profile.has_sec_fetch { score += 0.20; } // real browser stack
+        if profile.has_cookie { score += 0.15; }  // session engagement
+        if profile.has_referer { score += 0.10; } // navigation chain (NOT required)
+        if profile.blame_count > 0 { score += 0.15; } // reads code diffs
+        if profile.host_count > 1 { score += 0.10; } // cross-references
+        if profile.has_accept_lang { score += 0.05; } // locale-aware
+        score.min(1.0)
+    };
+
+    // ── Classification ──
+    let classification = classify_trio(profile, attention, curiosity, interaction);
+
+    BingoCubeTrio {
+        attention,
+        curiosity,
+        interaction,
+        classification,
+    }
+}
+
+/// Classify into the ecological trio based on profile signals + trio scores.
+fn classify_trio(
+    profile: &IpProfile,
+    _attention: f32,
+    curiosity: f32,
+    interaction: f32,
+) -> TrioClass {
+    // Rule 1: Declared bot identity → Commensal.
+    // If you say who you are in the UA, you're commensal. Period.
+    if profile.is_declared_bot {
+        return TrioClass::Commensal;
+    }
+
+    // Rule 2: Structural parasite tells — behavioral epitopes that
+    // cannot be hidden by privacy tools because they are infrastructure-level.
+    // No Sec-Fetch + no Accept-Language + fleet UA pool = machine scraper.
+    if !profile.has_sec_fetch && !profile.has_accept_lang && profile.ua_pool_size > 2 {
+        return TrioClass::Parasite;
+    }
+    // Already classified as fleet by the main classifier
+    if profile.is_fleet && !profile.is_declared_bot {
+        return TrioClass::Parasite;
+    }
+
+    // Rule 3: Sovereign — full browser stack with behavioral depth.
+    // Has sec-fetch (real browser) + enough requests + engagement signals.
+    if profile.has_sec_fetch && profile.requests >= 3 {
+        if interaction > 0.3 || (curiosity > 0.2 && profile.has_accept_lang) {
+            return TrioClass::Sovereign;
+        }
+    }
+
+    // Rule 4: Ghost promotion — privacy-respecting entity with depth.
+    // Ghost = has browser headers but no referer. Not suspicious —
+    // could be Tor, VPN, direct navigation, strict privacy settings.
+    // Promotes to Sovereign after 3+ requests with behavioral evidence.
+    if profile.has_sec_fetch && profile.requests >= 3 && curiosity > 0.15 {
+        return TrioClass::Sovereign;
+    }
+
+    // Rule 5: Single-request with browser headers → holding state.
+    // Not enough evidence to classify. Default to Commensal (benefit of doubt).
+    if profile.has_sec_fetch {
+        return TrioClass::Commensal;
+    }
+
+    // Rule 6: No browser headers but behavioral depth signals → Commensal.
+    // An agentic entity (AI agent acting for a human) may lack Sec-Fetch
+    // but shows purposeful behavior: varied paths, multiple repos, referer chains.
+    if profile.requests >= 3 && (curiosity > 0.2 || interaction > 0.2) {
+        return TrioClass::Commensal;
+    }
+
+    // Rule 7: No browser headers, no depth → Parasite.
+    TrioClass::Parasite
+}
+
+// ── IP hashing — ZK boundary ──
+
+/// Hash an IP address to a u64 for storage without revealing the address.
+///
+/// Uses SipHash (via DefaultHasher) matching bloom_sensor.rs pattern.
+/// IPs remain in memory for CaddyBridge fleet blocking (iptables needs
+/// real IPs) but NEVER persist to state files.
+pub fn hash_ip(ip: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    ip.hash(&mut h);
+    h.finish()
 }
 
 // ── Epitope hashing ──
@@ -221,135 +412,14 @@ fn compute_epitope_hash(profile: &IpProfile) -> String {
         .get(..20)
         .unwrap_or(profile.accept.as_deref().unwrap_or(""));
     let has_lang = if profile.has_accept_lang { "y" } else { "n" };
-    let has_sec = if profile.has_sec_fetch { "y" } else { "n" };
-    let declared = if profile.has_accept_lang || profile.has_sec_fetch { "D" } else { "S" };
 
-    let epitope_vec = format!("{}|{}|{}|{}|{}|{}|{}", ae, ua_bucket, blame_ratio, accept, has_lang, has_sec, declared);
+    let epitope_vec = format!("{}|{}|{}|{}|{}", ae, ua_bucket, blame_ratio, accept, has_lang);
 
     // BLAKE2b-equivalent via SipHash (fast, good collision properties)
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     epitope_vec.hash(&mut hasher);
     let hash = hasher.finish();
     format!("{:08x}", hash as u32)
-}
-
-// ── bingoCube trio scoring ──
-
-/// Behavioral trio scores for an IP profile.
-///
-/// The bingoCube classifier reads the SHAPE of the (Attention, Curiosity,
-/// Interaction) vector and cascades into three kingdoms:
-///
-///   Human   = high curiosity + engagement = reaction = null (the operator)
-///   Agentic = curiosity without deep engagement = photon = 1 (directed purpose)
-///   Fleet   = attention without curiosity = wave = 0 (non-life)
-///
-/// This is the maze. You can fake any single dimension, but the ratio
-/// between the three reveals your nature. The price of admission is
-/// curiosity and engagement — evidence of life.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BingoCubeTrio {
-    /// Attention: raw volume + regularity (0.0 = silent, 1.0 = hammering)
-    pub attention: f32,
-    /// Curiosity: exploration diversity + navigation depth (0.0 = tunnel, 1.0 = explorer)
-    pub curiosity: f32,
-    /// Interaction: engagement with human-facing content (0.0 = ghost, 1.0 = participant)
-    pub interaction: f32,
-    /// Three-kingdom classification from the trio shape
-    pub classification: TrioClass,
-}
-
-/// Three kingdoms of the scatter ecosystem.
-///
-/// Maps to three modalities: wave (0), photon (1), reaction (null).
-/// Cascade: entities start unclassified and sort into kingdoms as
-/// behavioral evidence accumulates. The kingdoms are permeable —
-/// an entity can move between them as its behavior changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TrioClass {
-    /// Wave / attention / 0 — non-life. High volume, zero curiosity,
-    /// zero engagement. Mechanical extraction. The pump.
-    Fleet,
-    /// Photon / curiosity / 1 — human-directed automation. SEO crawlers,
-    /// AI agents, headless browsers with purpose. The ants. They index,
-    /// they serve, they carry signals between flowers. Welcome.
-    Agentic,
-    /// Reaction / engagement / null — life. Curiosity + interaction.
-    /// The operator. Unpredictable, exploratory, present. The walk.
-    Human,
-}
-
-/// Score the bingoCube trio from an IP profile.
-///
-/// Adapted to current IpProfile fields. Uses path_types diversity and
-/// behavioral booleans as proxies for the full content_domains/navigation
-/// signals that will be re-added when the dashboard writer ingests scatter events.
-pub fn score_trio(profile: &IpProfile) -> BingoCubeTrio {
-    let reqs = profile.requests as f32;
-
-    // ── Attention: volume + regularity ──
-    // Normalize: 1 req = 0.0, 100+ = 0.8, 1000+ = 1.0
-    let attention = (reqs.ln().max(0.0) / 7.0).min(1.0); // ln(1000) ≈ 6.9
-
-    // ── Curiosity: diversity + behavioral signals ──
-    let path_type_diversity = profile.path_types.len() as f32;
-    let repo_diversity = profile.repos.len() as f32;
-    let has_assets = if profile.has_assets { 1.0 } else { 0.0 };
-    let has_referer = if profile.has_referer { 1.0 } else { 0.0 };
-    let has_cookie = if profile.has_cookie { 1.0 } else { 0.0 };
-    // Declaration: F=103,308 — the single strongest signal. Declared entities
-    // are participating in the protocol; silent entities are taking without asking.
-    let has_declared = if profile.has_accept_lang || profile.has_sec_fetch { 1.0 } else { 0.0 };
-    // Curiosity components: path type diversity, repo diversity,
-    // asset loading, referer usage, cookie (return visit), declaration
-    let curiosity = (
-        (path_type_diversity / 5.0).min(1.0) * 0.15
-        + (repo_diversity / 5.0).min(1.0) * 0.15
-        + has_assets * 0.15
-        + has_referer * 0.10
-        + has_cookie * 0.10
-        + has_declared * 0.25
-        + if profile.host_count > 1 { 0.10 } else { 0.0 }
-    ).min(1.0);
-
-    // ── Interaction: engagement signals beyond scraping ──
-    // Without the full human_page/visited_* fields, use blame ratio as proxy:
-    // entities that hit blame endpoints are reading diffs, not bulk downloading.
-    let blame_signal = if profile.commit_count > 0 {
-        (profile.blame_count as f32 / profile.commit_count as f32).min(1.0)
-    } else {
-        0.0
-    };
-    let multi_host = if profile.host_count > 2 { 0.3 } else { 0.0 };
-    let interaction = (
-        blame_signal * 0.4
-        + multi_host
-        + has_declared * 0.3
-    ).min(1.0);
-
-    // ── Three-kingdom cascade ──
-    // The cascade asks two questions:
-    //   1. Is there curiosity? (photon: did you explore?)
-    //   2. Is there engagement? (reaction: did you interact?)
-    //
-    // No curiosity → Fleet (non-life, regardless of volume)
-    // Curiosity but no engagement → Agentic (ants, crawlers, agents)
-    // Curiosity AND engagement → Human (life)
-    let classification = if curiosity < 0.15 && interaction < 0.05 {
-        TrioClass::Fleet  // non-life: no curiosity, no engagement
-    } else if interaction < 0.15 {
-        TrioClass::Agentic // ants: curious but not engaging deeply
-    } else {
-        TrioClass::Human  // life: curiosity + engagement
-    };
-
-    BingoCubeTrio {
-        attention,
-        curiosity,
-        interaction,
-        classification,
-    }
 }
 
 // ── L2 collision classification ──
@@ -408,16 +478,17 @@ fn classify_collision_l2(profile: &IpProfile) -> CollisionClass {
 /// Sourdough culture — persisted across restarts.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct DashboardCulture {
-    /// Per-IP behavioral profiles
-    ips: HashMap<String, IpProfile>,
+    /// Per-IP behavioral profiles — keyed by hash_ip(ip), not raw IP.
+    /// Raw IPs never persist to disk. ZK boundary enforced at serialization.
+    ips: HashMap<u64, IpProfile>,
     /// Total requests since culture inception
     total_requests: u64,
     /// Fleet request count
     fleet_requests: u64,
-    /// Distinct UAs seen per IP (stored separately to keep IpProfile small)
-    ip_uas: HashMap<String, HashSet<String>>,
-    /// Distinct hosts per IP
-    ip_hosts: HashMap<String, HashSet<String>>,
+    /// Distinct UAs seen per IP — keyed by hash_ip(ip).
+    ip_uas: HashMap<u64, HashSet<String>>,
+    /// Distinct hosts per IP — keyed by hash_ip(ip).
+    ip_hosts: HashMap<u64, HashSet<String>>,
     /// Repo-level targeting across all IPs
     repo_totals: HashMap<String, u64>,
     /// Country estimates
@@ -437,8 +508,8 @@ struct DashboardCulture {
     fleet_timing_intervals: Vec<f64>,
     /// Inception timestamp
     inception_epoch: f64,
-    /// Epitope collision map: hash → set of IPs
-    epitope_collisions: HashMap<String, HashSet<String>>,
+    /// Epitope collision map: epitope_hash → set of ip_hashes
+    epitope_collisions: HashMap<String, HashSet<u64>>,
 }
 
 /// Dashboard writer — fed by each caddy log entry, writes dashboard.json.
@@ -540,6 +611,7 @@ impl DashboardWriter {
     /// Ingest a parsed caddy log entry.
     pub fn ingest(&mut self, entry: &caddy::LogEntry) {
         let ip = &entry.request.remote_ip;
+        let ip_h = hash_ip(ip);
         let h = &entry.request.headers;
         let uri = &entry.request.uri;
         let ua = h.user_agent.first().cloned().unwrap_or_default();
@@ -548,8 +620,8 @@ impl DashboardWriter {
 
         self.culture.total_requests += 1;
 
-        // Per-IP profile
-        let profile = self.culture.ips.entry(ip.clone()).or_insert_with(|| IpProfile::new(ts));
+        // Per-IP profile — keyed by hash, raw IP never stored
+        let profile = self.culture.ips.entry(ip_h).or_insert_with(|| IpProfile::new(ts));
         profile.requests += 1;
         profile.last_seen = ts;
 
@@ -564,6 +636,9 @@ impl DashboardWriter {
             .unwrap_or_else(|_| crate::entity_classifier::is_declared_bot(&ua));
         let is_fleet = is_bot_ua || (ua.contains("Chrome/") && !has_sf);
         let is_human = has_sf && !is_bot_ua && (has_referer || profile.has_referer);
+        if is_bot_ua {
+            profile.is_declared_bot = true;
+        }
         if is_fleet {
             profile.is_fleet = true;
             self.culture.fleet_requests += 1;
@@ -654,16 +729,16 @@ impl DashboardWriter {
             }
         }
 
-        // UA pool tracking
+        // UA pool tracking — keyed by ip hash
         if !ua.is_empty() {
-            let ua_set = self.culture.ip_uas.entry(ip.clone()).or_default();
+            let ua_set = self.culture.ip_uas.entry(ip_h).or_default();
             ua_set.insert(ua.get(..80).unwrap_or(&ua).to_string());
             profile.ua_pool_size = ua_set.len() as u16;
         }
 
-        // Host tracking
+        // Host tracking — keyed by ip hash
         if !host.is_empty() {
-            let host_set = self.culture.ip_hosts.entry(ip.clone()).or_default();
+            let host_set = self.culture.ip_hosts.entry(ip_h).or_default();
             host_set.insert(host.clone());
             profile.host_count = host_set.len() as u16;
         }
@@ -701,7 +776,7 @@ impl DashboardWriter {
                 .epitope_collisions
                 .entry(ehash.clone())
                 .or_default()
-                .insert(ip.clone());
+                .insert(ip_h);
             profile.epitope_hash = Some(ehash);
         }
 
@@ -721,38 +796,23 @@ impl DashboardWriter {
         let uptime = (now - self.culture.inception_epoch).max(1.0);
         let rps = self.culture.total_requests as f64 / uptime;
 
-        // Collect fleet + human IP counts
-        let fleet_ips: Vec<&String> = self.culture.ips.iter()
-            .filter(|(_, p)| p.is_fleet)
-            .map(|(ip, _)| ip)
-            .collect();
-        let human_ips: Vec<&String> = self.culture.ips.iter()
-            .filter(|(_, p)| p.is_human)
-            .map(|(ip, _)| ip)
-            .collect();
+        // Collect fleet + human IP counts (by hash — no raw IPs)
+        let fleet_count = self.culture.ips.values().filter(|p| p.is_fleet).count();
+        let human_count = self.culture.ips.values().filter(|p| p.is_human).count();
         let fleet_pct = if !self.culture.ips.is_empty() {
-            fleet_ips.len() as f64 / self.culture.ips.len() as f64 * 100.0
+            fleet_count as f64 / self.culture.ips.len() as f64 * 100.0
         } else {
             0.0
         };
 
-        // Top offenders — sorted by request count
+        // Top offenders — sorted by request count. Uses ip_hash, not raw IP.
         let mut top_offenders: Vec<_> = self.culture.ips.iter().collect();
         top_offenders.sort_by(|a, b| b.1.requests.cmp(&a.1.requests));
 
         let top_offenders_json: Vec<serde_json::Value> = top_offenders
             .iter()
             .take(25)
-            .map(|(ip, p)| {
-                let geo = geo_lookup(ip);
-                let subnet = {
-                    let parts: Vec<&str> = ip.split('.').collect();
-                    if parts.len() == 4 {
-                        format!("{}.{}.{}.x", parts[0], parts[1], parts[2])
-                    } else {
-                        ip.to_string()
-                    }
-                };
+            .map(|(ip_hash, p)| {
                 let top_repos: BTreeMap<String, u32> = p.repos.iter()
                     .collect::<Vec<_>>()
                     .into_iter()
@@ -771,34 +831,23 @@ impl DashboardWriter {
                         .unwrap_or_default()
                 };
                 let trio = score_trio(p);
-                let declared = p.has_accept_lang || p.has_sec_fetch;
                 serde_json::json!({
-                    "ip": ip,
+                    "ip_hash": format!("{:016x}", ip_hash),
                     "requests": p.requests,
                     "first_seen": fmt_ts(p.first_seen),
                     "last_seen": fmt_ts(p.last_seen),
-                    "org": geo.org,
-                    "country": geo.country,
-                    "region": geo.region,
-                    "city": geo.city,
-                    "asn_type": geo.asn_type,
-                    "desc": format!("{} ({})", geo.org, geo.country),
-                    "subnet": subnet,
                     "is_fleet": p.is_fleet,
-                    "declared": declared,
-                    "trio_class": format!("{:?}", trio.classification),
-                    "trio": {
-                        "attention": (trio.attention * 1000.0).round() / 1000.0,
-                        "curiosity": (trio.curiosity * 1000.0).round() / 1000.0,
-                        "interaction": (trio.interaction * 1000.0).round() / 1000.0,
-                    },
+                    "trio_class": trio.classification,
+                    "trio_attention": (trio.attention * 100.0).round() / 100.0,
+                    "trio_curiosity": (trio.curiosity * 100.0).round() / 100.0,
+                    "trio_interaction": (trio.interaction * 100.0).round() / 100.0,
                     "top_repos": top_repos,
                     "top_paths": top_paths,
                 })
             })
             .collect();
 
-        // Subnets
+        // Subnets — subnet strings are kept (they're /24 prefixes, not full IPs)
         let mut subnets: Vec<_> = self.culture.subnet_counts.iter().collect();
         subnets.sort_by(|a, b| b.1.cmp(a.1));
         let subnets_json: Vec<serde_json::Value> = subnets
@@ -807,13 +856,9 @@ impl DashboardWriter {
             .map(|(subnet, count)| {
                 let count = *count;
                 let geo = geo_lookup(&subnet.replace(".x", ".0"));
-                let ips_in_subnet = self.culture.ips.keys()
-                    .filter(|ip| ip.starts_with(&subnet.replace(".x", ".")))
-                    .count();
                 serde_json::json!({
                     "subnet": subnet,
                     "requests": count,
-                    "unique_ips": ips_in_subnet,
                     "org": geo.org,
                     "country": geo.country,
                     "region": geo.region,
@@ -925,33 +970,33 @@ impl DashboardWriter {
             *collision_counts.entry(key).or_insert(0) += 1;
         }
 
-        // Epitope clusters
+        // Epitope clusters — keyed by ip hash, no raw IPs exposed
         let mut epitope_clusters: Vec<serde_json::Value> = self
             .culture
             .epitope_collisions
             .iter()
-            .filter(|(_, ips)| !ips.is_empty())
-            .map(|(hash, ips)| {
-                let sample_ae = ips
+            .filter(|(_, ip_hashes)| !ip_hashes.is_empty())
+            .map(|(hash, ip_hashes)| {
+                let sample_ae = ip_hashes
                     .iter()
                     .next()
-                    .and_then(|ip| self.culture.ips.get(ip))
+                    .and_then(|h| self.culture.ips.get(h))
                     .and_then(|p| p.accept_encoding.clone())
                     .unwrap_or_else(|| "?".to_string());
-                let max_ua_pool = ips
+                let max_ua_pool = ip_hashes
                     .iter()
-                    .filter_map(|ip| self.culture.ips.get(ip))
+                    .filter_map(|h| self.culture.ips.get(h))
                     .map(|p| p.ua_pool_size)
                     .max()
                     .unwrap_or(0);
-                let blame_total: u32 = ips
+                let blame_total: u32 = ip_hashes
                     .iter()
-                    .filter_map(|ip| self.culture.ips.get(ip))
+                    .filter_map(|h| self.culture.ips.get(h))
                     .map(|p| p.blame_count)
                     .sum();
-                let commit_total: u32 = ips
+                let commit_total: u32 = ip_hashes
                     .iter()
-                    .filter_map(|ip| self.culture.ips.get(ip))
+                    .filter_map(|h| self.culture.ips.get(h))
                     .map(|p| p.commit_count)
                     .sum();
                 let blame_ratio = if commit_total > 0 {
@@ -959,37 +1004,17 @@ impl DashboardWriter {
                 } else {
                     0.0
                 };
-                let has_lang = ips
+                let has_lang = ip_hashes
                     .iter()
-                    .any(|ip| self.culture.ips.get(ip).map(|p| p.has_accept_lang).unwrap_or(false));
-
-                let has_sec = ips
-                    .iter()
-                    .any(|ip| self.culture.ips.get(ip).map(|p| p.has_sec_fetch).unwrap_or(false));
-                let declared_count = ips
-                    .iter()
-                    .filter(|ip| self.culture.ips.get(*ip).map(|p| p.has_accept_lang || p.has_sec_fetch).unwrap_or(false))
-                    .count();
-                let declared_ratio = if ips.is_empty() { 0.0 } else { declared_count as f64 / ips.len() as f64 };
-
-                // Score trio for the cluster using first IP as representative
-                let trio = ips
-                    .iter()
-                    .next()
-                    .and_then(|ip| self.culture.ips.get(ip))
-                    .map(|p| score_trio(p));
-                let trio_class = trio.as_ref().map(|t| format!("{:?}", t.classification)).unwrap_or_else(|| "unknown".to_string());
+                    .any(|h| self.culture.ips.get(h).map(|p| p.has_accept_lang).unwrap_or(false));
 
                 serde_json::json!({
                     "hash": hash,
-                    "ips": ips.len(),
+                    "ips": ip_hashes.len(),
                     "sample_ae": sample_ae,
                     "ua_pool_size": max_ua_pool,
                     "blame_ratio": (blame_ratio * 100.0).round() / 100.0,
                     "has_lang": has_lang,
-                    "has_sec": has_sec,
-                    "declared_ratio": (declared_ratio * 100.0).round() / 100.0,
-                    "trio_class": trio_class,
                 })
             })
             .collect();
@@ -1008,25 +1033,6 @@ impl DashboardWriter {
             "clusters_gt1": self.culture.epitope_collisions.values().filter(|v| v.len() > 1).count(),
         });
 
-        // Three-kingdom distribution — the cascade
-        let mut trio_counts: HashMap<&str, usize> = HashMap::new();
-        let mut declared_total = 0usize;
-        let mut silent_total = 0usize;
-        for p in self.culture.ips.values() {
-            let trio = score_trio(p);
-            let key = match trio.classification {
-                TrioClass::Fleet => "fleet",
-                TrioClass::Agentic => "agentic",
-                TrioClass::Human => "human",
-            };
-            *trio_counts.entry(key).or_insert(0) += 1;
-            if p.has_accept_lang || p.has_sec_fetch {
-                declared_total += 1;
-            } else {
-                silent_total += 1;
-            }
-        }
-
         let dashboard = serde_json::json!({
             "ts": now,
             "utc": chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
@@ -1035,8 +1041,8 @@ impl DashboardWriter {
             "fleet_requests": self.culture.fleet_requests,
             "rps": (rps * 10.0).round() / 10.0,
             "unique_ips": self.culture.ips.len(),
-            "fleet_ips": fleet_ips.len(),
-            "human_ips": human_ips.len(),
+            "fleet_ips": fleet_count,
+            "human_ips": human_count,
             "fleet_pct": (fleet_pct * 10.0).round() / 10.0,
             "top_offenders": top_offenders_json,
             "subnets": subnets_json,
@@ -1053,18 +1059,6 @@ impl DashboardWriter {
             },
             "epitope_clusters": epitope_clusters,
             "epitope_summary": epitope_summary,
-            "trio_distribution": {
-                "fleet": trio_counts.get("fleet").copied().unwrap_or(0),
-                "agentic": trio_counts.get("agentic").copied().unwrap_or(0),
-                "human": trio_counts.get("human").copied().unwrap_or(0),
-            },
-            "declaration": {
-                "declared": declared_total,
-                "silent": silent_total,
-                "declared_pct": if (declared_total + silent_total) > 0 {
-                    ((declared_total as f64 / (declared_total + silent_total) as f64) * 1000.0).round() / 10.0
-                } else { 0.0 },
-            },
         });
 
         // Write dashboard.json
@@ -1077,8 +1071,8 @@ impl DashboardWriter {
                     tracing::info!(
                         ips = self.culture.ips.len(),
                         requests = self.culture.total_requests,
-                        fleet = fleet_ips.len(),
-                        human = human_ips.len(),
+                        fleet = fleet_count,
+                        human = human_count,
                         bytes = json.len(),
                         "📊 dashboard.json updated"
                     );
@@ -1098,8 +1092,8 @@ impl DashboardWriter {
         let state = serde_json::json!({
             "ts": now,
             "rps": (rps * 10.0).round() / 10.0,
-            "fleet_ips": fleet_ips.len(),
-            "human_ips": human_ips.len(),
+            "fleet_ips": fleet_count,
+            "human_ips": human_count,
             "total": self.culture.total_requests,
             "collision_l2": {
                 "g": collision_counts.get("genuine").copied().unwrap_or(0),
@@ -1113,25 +1107,18 @@ impl DashboardWriter {
                 "largest": self.culture.epitope_collisions.values().map(|v| v.len()).max().unwrap_or(0),
                 "gt1": self.culture.epitope_collisions.values().filter(|v| v.len() > 1).count(),
             },
-            "trio": {
-                "f": trio_counts.get("fleet").copied().unwrap_or(0),
-                "a": trio_counts.get("agentic").copied().unwrap_or(0),
-                "h": trio_counts.get("human").copied().unwrap_or(0),
-            },
-            "decl": {
-                "d": declared_total,
-                "s": silent_total,
-            },
         });
         let _ = serde_json::to_string(&state).map(|s| std::fs::write(&state_json_path, s));
 
-        // Write epitope_caddy.json (IP→hash map for scatter server)
+        // Write epitope_caddy.json (epitope_hash → ip_hash list for scatter server)
         let epitope_caddy_path = state_dir.join("epitope_caddy.json");
         let mut epitope_map: HashMap<String, Vec<String>> = HashMap::new();
-        for (hash, ips) in &self.culture.epitope_collisions {
-            let mut ip_list: Vec<String> = ips.iter().cloned().collect();
-            ip_list.sort();
-            epitope_map.insert(hash.clone(), ip_list);
+        for (hash, ip_hashes) in &self.culture.epitope_collisions {
+            let mut hash_list: Vec<String> = ip_hashes.iter()
+                .map(|h| format!("{:016x}", h))
+                .collect();
+            hash_list.sort();
+            epitope_map.insert(hash.clone(), hash_list);
         }
         let epitope_caddy = serde_json::json!({"ts": now, "map": epitope_map});
         let _ = serde_json::to_string(&epitope_caddy)
@@ -1256,6 +1243,47 @@ mod tests {
         let mut p = IpProfile::new(1.0);
         p.statuses.insert(200, 2);
         assert_eq!(classify_collision_l2(&p), CollisionClass::Agentic);
+    }
+
+    #[test]
+    fn culture_uses_hashed_ip_keys() {
+        let dir = std::env::temp_dir().join("dashboard-zk-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let output = dir.join("dashboard.json");
+        let state = dir.join("dashboard-culture.json");
+
+        let registry = crate::epitope_registry::create_shared_registry(None);
+        let mut writer = DashboardWriter::new(output.clone(), state.clone(), 5, registry);
+        for i in 0..5 {
+            writer.ingest(&make_entry(
+                &format!("57.141.20.{}", i),
+                "/ecoPrimals/skunkBat/commit/abc123",
+                "git.primals.eco",
+                "Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36",
+                1000.0 + i as f64,
+            ));
+        }
+
+        // Force culture save
+        writer.save_culture();
+
+        // Read the culture file and verify keys are u64 hashes, not raw IPs
+        let culture_json = std::fs::read_to_string(&state).unwrap();
+        let culture_val: serde_json::Value = serde_json::from_str(&culture_json).unwrap();
+        let ips_obj = culture_val["ips"].as_object().unwrap();
+        for key in ips_obj.keys() {
+            assert!(
+                !key.contains('.'),
+                "Culture file contains raw IP '{key}' — ZK boundary violated! Keys should be u64 hashes."
+            );
+            // Verify key is a valid u64 numeric string
+            key.parse::<u64>().unwrap_or_else(|_| {
+                panic!("Culture key '{key}' is not a valid u64 hash");
+            });
+        }
+        assert!(!ips_obj.is_empty(), "Culture should have at least one IP entry");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

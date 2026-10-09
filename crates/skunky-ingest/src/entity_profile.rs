@@ -149,7 +149,8 @@ fn is_real_repo(name: &str) -> bool {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct EntityAccum {
-    pub(crate) ips: HashSet<String>,
+    /// IP hashes (SipHash of raw IP). Raw IPs never stored — ZK boundary.
+    pub(crate) ip_hashes: HashSet<u64>,
     pub(crate) subnets: HashSet<String>,
     pub(crate) uas: HashSet<String>,
     pub(crate) timestamps: Vec<f64>,
@@ -169,8 +170,8 @@ pub(crate) struct EntityAccum {
     pub(crate) total: u64,
     pub(crate) first_ts: f64,
     pub(crate) last_ts: f64,
-    // Per-IP repo tracking (for specialist vs generalist detection)
-    pub(crate) ip_repos: HashMap<String, HashMap<String, u64>>,
+    // Per-IP repo tracking (for specialist vs generalist detection) — keyed by ip hash
+    pub(crate) ip_repos: HashMap<u64, HashMap<String, u64>>,
     // Wave 166f epitope tracking
     pub(crate) sec_fetch_triplets: HashMap<String, u64>,
     pub(crate) cookie_present: u64,
@@ -182,7 +183,7 @@ pub(crate) struct EntityAccum {
 impl EntityAccum {
     pub(crate) fn new() -> Self {
         Self {
-            ips: HashSet::new(),
+            ip_hashes: HashSet::new(),
             subnets: HashSet::new(),
             uas: HashSet::new(),
             timestamps: Vec::new(),
@@ -299,12 +300,12 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
     let has_real = repo_vec.iter().any(|(r, _)| is_real_repo(r));
     let has_scatter = repo_vec.iter().any(|(r, _)| !is_real_repo(r));
 
-    // IP rotation
+    // IP rotation — keyed by ip hash (no raw IPs)
     let ip_req_counts: Vec<u64> = {
-        let mut counts: HashMap<&str, u64> = HashMap::new();
-        for (ip, repos) in &accum.ip_repos {
+        let mut counts: HashMap<u64, u64> = HashMap::new();
+        for (ip_hash, repos) in &accum.ip_repos {
             let total: u64 = repos.values().sum();
-            *counts.entry(ip.as_str()).or_insert(0) += total;
+            *counts.entry(*ip_hash).or_insert(0) += total;
         }
         let mut v: Vec<u64> = counts.values().copied().collect();
         v.sort();
@@ -331,14 +332,14 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
         (max_repo as f64 / total as f64) <= 0.5
     });
 
-    let strategy = if accum.ips.len() == 1 {
+    let strategy = if accum.ip_hashes.len() == 1 {
         "single-IP (no rotation)".to_string()
     } else if single_pct > 80.0 {
         "heavy rotation (>80% single-request IPs)".to_string()
     } else if all_generalists {
-        format!("{} generalist IPs", accum.ips.len())
+        format!("{} generalist IPs", accum.ip_hashes.len())
     } else {
-        format!("{} IPs with some specialization", accum.ips.len())
+        format!("{} IPs with some specialization", accum.ip_hashes.len())
     };
 
     // Sub-systems detection
@@ -369,7 +370,7 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
             description: format!(
                 "{} OS variants from {} IPs with {} unique UA strings. \
                  Ratio reveals pool size, not real OS diversity.",
-                accum.ua_os.len(), accum.ips.len(), accum.uas.len()
+                accum.ua_os.len(), accum.ip_hashes.len(), accum.uas.len()
             ),
             evidence: os_evidence,
         });
@@ -398,7 +399,7 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
             description: format!(
                 "All {} requests share identical Accept-Encoding: '{}'. \
                  {} IPs, one config. This is a fleet, not browsers.",
-                accum.total, enc, accum.ips.len()
+                accum.total, enc, accum.ip_hashes.len()
             ),
             evidence: vec![
                 format!("Accept-Encoding: {}", enc),
@@ -523,7 +524,7 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
         is_honest: entity_id.is_honest(),
         entity: entity_id,
         total_requests: accum.total,
-        unique_ips: accum.ips.len(),
+        unique_ips: accum.ip_hashes.len(),
         unique_subnets: accum.subnets.len(),
         first_seen: accum.first_ts,
         last_seen: accum.last_ts,

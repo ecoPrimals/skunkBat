@@ -135,8 +135,6 @@ pub(crate) async fn generate_epitope_feed(
             "mean_confidence": (plasmid.mean_confidence * 1000.0).round() / 1000.0,
         },
         "traffic_classification": collision,
-        "trio_distribution": dashboard.get("trio_distribution").cloned().unwrap_or(serde_json::json!({})),
-        "declaration": dashboard.get("declaration").cloned().unwrap_or(serde_json::json!({})),
         "epitope_clusters": clusters,
         "epitope_summary": summary,
         "conserved_epitopes": epitopes_arr,

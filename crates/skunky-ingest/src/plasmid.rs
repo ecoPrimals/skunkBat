@@ -189,8 +189,8 @@ pub fn generate_plasmid(
 
     let trio = score_trio(profile);
 
-    // Fleet is true non-self — no plasmid
-    if trio.classification == TrioClass::Fleet {
+    // Parasites are true non-self — no plasmid
+    if trio.classification == TrioClass::Parasite {
         return None;
     }
 
@@ -200,9 +200,9 @@ pub fn generate_plasmid(
     }
 
     let kingdom = match trio.classification {
-        TrioClass::Human => PlasmidKingdom::Human,
-        TrioClass::Agentic => PlasmidKingdom::Agentic,
-        TrioClass::Fleet => return None, // redundant but explicit
+        TrioClass::Sovereign => PlasmidKingdom::Human,
+        TrioClass::Commensal => PlasmidKingdom::Agentic,
+        TrioClass::Parasite => return None, // redundant but explicit
     };
 
     let exploration_efficiency = if trio.attention > 0.01 {

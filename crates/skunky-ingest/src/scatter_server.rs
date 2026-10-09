@@ -831,7 +831,6 @@ async fn handle_request(
                 detector_bitmap: epi,
                 confidence: conf,
                 chain_depth: chain_depth.min(255) as u8,
-                declared,
                 response_type: ResponseType::Prism,
             });
 
@@ -894,30 +893,7 @@ async fn handle_request(
         .unwrap_or_default()
         .as_secs() / 180;
     let fleet_id = if fleet_hash.is_empty() { "unknown" } else { &fleet_hash };
-
-    // Cross-frame mixing: when we have a known fleet entity AND other entities
-    // in the cache, probabilistically mix maze frames. Entity A gets a grid
-    // partially seeded by entity B. We observe A's reaction to learn.
-    // ~25% of known-fleet requests get cross-framed (rows 3-4 from donor).
-    let grid = if cached_tag.is_some() && !fleet_hash.is_empty() {
-        let cross_gate = path_deterministic_hash(&effective_path, decision_epoch) % 4;
-        if cross_gate == 0 {
-            if let Some((donor_hash, _)) = opsonize_cache.cross_mirror_lookup(&fleet_hash).await {
-                tracing::debug!(
-                    requester = %&fleet_hash[..fleet_hash.len().min(8)],
-                    donor = %&donor_hash[..donor_hash.len().min(8)],
-                    "🔀 cross-frame mixing activated"
-                );
-                CubeDecisionGrid::from_cross_frame(fleet_id, &donor_hash, &effective_path, decision_epoch)
-            } else {
-                CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch)
-            }
-        } else {
-            CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch)
-        }
-    } else {
-        CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch)
-    };
+    let grid = CubeDecisionGrid::from_context(fleet_id, &effective_path, decision_epoch);
 
     let mut response_type = ResponseType::Normal;
     let (status, content_type, body) = if is_disperse {
@@ -1010,32 +986,14 @@ async fn handle_request(
         0
     };
 
-    // Declaration Protocol (Wave 167): the price of admission is curiosity
-    // and engagement, not declaration alone. Declaration is the cheapest proof
-    // of life (F=103,308), but behavior can also demonstrate it.
-    //
-    // Penalty gradient:
-    //   declared → no penalty (you introduced yourself)
-    //   silent + low chain_depth (≤3) → +5 (new visitor, alive but quiet)
-    //   silent + known fleet (in opsonize cache, high confidence) → +15 (non-life)
-    //   silent + unknown, deep → +15 (non-life until proven otherwise)
-    //
-    // The price of admission is curiosity and engagement. SEO crawlers
-    // and agentic visitors are human-directed — they're the ants, and
-    // they're welcome. We just don't want non-life.
+    // Declaration Protocol (Wave 167): undeclared visitors get treated as
+    // deeper violators. The F-ratio proved: absence of declaration is the
+    // strongest kingdom boundary (F=103,308). Hoisted here so both HTML
+    // and non-HTML paths (and logging) can use it.
     let effective_depth = if declared {
         chain_depth
-    } else if chain_depth <= 3 {
-        // New silent visitor — could be agentic, could be privacy-focused.
-        // Light penalty. Give them a chance to show curiosity.
-        chain_depth.saturating_add(5)
-    } else if cached_tag.as_ref().map(|t| t.confidence > 0.7).unwrap_or(false) {
-        // Known fleet entity with high confidence. Non-life.
-        chain_depth.saturating_add(15)
     } else {
-        // Silent, deeper than 3, not high-confidence fleet.
-        // Medium penalty — somewhere between alive-but-quiet and non-life.
-        chain_depth.saturating_add(10)
+        chain_depth.saturating_add(15)
     };
 
     let scatter_seed = path_deterministic_hash(&effective_path, generator.seed.wrapping_add(chain_depth as u64));
@@ -1280,7 +1238,6 @@ async fn handle_request(
             detector_bitmap: epi,
             confidence: conf,
             chain_depth: chain_depth.min(255) as u8,
-            declared,
             response_type,
         });
     }

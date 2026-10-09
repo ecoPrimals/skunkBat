@@ -76,48 +76,6 @@ impl CubeDecisionGrid {
     /// Same (fleet_hash, path, epoch) -> same grid -> same decisions.
     pub fn from_context(fleet_hash: &str, path: &str, epoch: u64) -> Self {
         let seed = format!("scatter:decision:{fleet_hash}:{path}:{epoch}");
-        Self::from_seed_string(&seed)
-    }
-
-    /// Cross-frame mixing: create a grid seeded by TWO entities.
-    ///
-    /// Entity A's request gets a grid partially determined by entity B's
-    /// behavioral fingerprint. Rows 0-2 come from A's seed (response-level
-    /// decisions stay entity-specific). Rows 3-4 come from the mixed seed
-    /// (nautilus-override rows absorb the donor's influence).
-    ///
-    /// This creates "mirrors" — A sees content shaped by B's maze frame.
-    /// We observe A's reaction: does A mimic B's pattern? Does A abort
-    /// (apoptosis)? Does A change behavior? Each reaction is a new signal.
-    ///
-    /// Biological parallel: MHC cross-presentation. Dendritic cells present
-    /// fragments of OTHER cells' antigens to T cells. The T cell's response
-    /// (activate, ignore, suppress) classifies the presented antigen.
-    pub fn from_cross_frame(
-        fleet_hash: &str,
-        donor_hash: &str,
-        path: &str,
-        epoch: u64,
-    ) -> Self {
-        let own_seed = format!("scatter:decision:{fleet_hash}:{path}:{epoch}");
-        let mix_seed = format!("scatter:crossframe:{fleet_hash}:{donor_hash}:{path}:{epoch}");
-
-        let own = Self::from_seed_string(&own_seed);
-        let mixed = Self::from_seed_string(&mix_seed);
-
-        // Rows 0-2: entity's own decisions (jitter, content, temporal)
-        // Rows 3-4: mixed with donor (nautilus-override rows)
-        let mut colors = own.colors;
-        let mut scalars = own.scalars;
-        colors[3] = mixed.colors[3];
-        colors[4] = mixed.colors[4];
-        scalars[3] = mixed.scalars[3];
-        scalars[4] = mixed.scalars[4];
-
-        Self { colors, scalars }
-    }
-
-    fn from_seed_string(seed: &str) -> Self {
         let config = Config {
             grid_size: 5,
             universe_size: 100,
@@ -324,9 +282,6 @@ pub struct ScatterObservation {
     pub confidence: f64,
     /// How deep in the chain this fleet has gone.
     pub chain_depth: u8,
-    /// Whether the entity declared itself via HTTP headers (Accept-Language, Sec-Fetch).
-    /// F=103,308 — the single strongest signal in the system.
-    pub declared: bool,
     /// What response type we served (for correlating with effectiveness).
     pub response_type: ResponseType,
 }
@@ -439,9 +394,9 @@ const PREDICTION_CONFIDENCE_THRESHOLD: f64 = 0.3;
 const N_TARGETS: usize = 5;
 
 /// Number of input features per observation:
-/// [epitope_flags/255, target_class/7, detector_bitmap/255, confidence, chain_depth/255, declared]
+/// [epitope_flags/255, target_class/7, detector_bitmap/255, confidence, chain_depth/255]
 #[allow(dead_code)] // Nautilus integration point — used when predict() is wired to scatter serve path
-const N_FEATURES: usize = 6;
+const N_FEATURES: usize = 5;
 
 /// In-process bingoCube oracle backed by bingocube-core + bingocube-nautilus.
 pub(crate) struct InProcessOracle {
@@ -538,7 +493,6 @@ impl InProcessOracle {
             f64::from(obs.detector_bitmap) / 255.0,
             obs.confidence,
             f64::from(obs.chain_depth) / 255.0,
-            if obs.declared { 1.0 } else { 0.0 },
         ]
     }
 
@@ -700,7 +654,6 @@ impl CubeOracle for InProcessOracle {
             0.0, // detector_bitmap unknown
             effectiveness,
             0.0, // chain_depth unknown
-            0.0, // declared unknown from bloom alone
         ];
 
         if let Ok(mut buf) = self.observation_buffer.lock() {
@@ -839,7 +792,6 @@ mod tests {
                 detector_bitmap: (i % 256) as u8,
                 confidence: (i as f64) / 50.0,
                 chain_depth: (i % 10) as u8,
-                declared: i % 3 == 0,
                 response_type: ResponseType::Normal,
             });
         }
@@ -858,7 +810,6 @@ mod tests {
                 detector_bitmap: (i % 256) as u8,
                 confidence: (i as f64) / EVOLVE_BATCH_SIZE as f64,
                 chain_depth: (i % 10) as u8,
-                declared: i % 5 == 0,
                 response_type: if i % 3 == 0 {
                     ResponseType::CrossType
                 } else if i % 5 == 0 {

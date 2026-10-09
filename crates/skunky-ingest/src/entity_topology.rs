@@ -105,7 +105,7 @@ impl TopologyBuilder {
     fn ingest_classified(&mut self, fp: &RequestFingerprint, entity_id: EntityId) {
         let accum = self.entities.entry(entity_id).or_insert_with(EntityAccum::new);
 
-        accum.ips.insert(fp.ip.clone());
+        accum.ip_hashes.insert(crate::dashboard_writer::hash_ip(&fp.ip));
         accum.subnets.insert(fp.subnet());
         accum.uas.insert(fp.user_agent.clone());
         accum.timestamps.push(fp.timestamp);
@@ -123,7 +123,7 @@ impl TopologyBuilder {
         if let Some(repo) = fp.repo_name() {
             *accum.repos.entry(repo.clone()).or_insert(0) += 1;
             *accum.ip_repos
-                .entry(fp.ip.clone())
+                .entry(crate::dashboard_writer::hash_ip(&fp.ip))
                 .or_default()
                 .entry(repo)
                 .or_insert(0) += 1;
@@ -187,7 +187,7 @@ impl TopologyBuilder {
             .iter()
             .filter(|(_, accum)| {
                 // Quick pre-filter: needs enough data for meaningful epitope scoring
-                accum.total > 50 && accum.ips.len() > 1
+                accum.total > 50 && accum.ip_hashes.len() > 1
             })
             .filter_map(|(entity_id, accum)| {
                 // Build a lightweight fleet_confidence estimate without the full profile
