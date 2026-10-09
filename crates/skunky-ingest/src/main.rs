@@ -448,7 +448,11 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
     );
     epitope_registry::load_osint_feed(&cli.osint_bots_path, &epitope_registry);
     {
-        let stats = epitope_registry.read().unwrap().stats();
+        let Ok(guard) = epitope_registry.read() else {
+            tracing::error!("epitope registry lock poisoned — cannot read stats");
+            return Ok(());
+        };
+        let stats = guard.stats();
         tracing::info!(
             active = stats.active_tokens,
             seed = stats.seed_count,
