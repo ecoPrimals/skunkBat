@@ -221,14 +221,122 @@ fn compute_epitope_hash(profile: &IpProfile) -> String {
         .get(..20)
         .unwrap_or(profile.accept.as_deref().unwrap_or(""));
     let has_lang = if profile.has_accept_lang { "y" } else { "n" };
+    let has_sec = if profile.has_sec_fetch { "y" } else { "n" };
+    let declared = if profile.has_accept_lang || profile.has_sec_fetch { "D" } else { "S" };
 
-    let epitope_vec = format!("{}|{}|{}|{}|{}", ae, ua_bucket, blame_ratio, accept, has_lang);
+    let epitope_vec = format!("{}|{}|{}|{}|{}|{}|{}", ae, ua_bucket, blame_ratio, accept, has_lang, has_sec, declared);
 
     // BLAKE2b-equivalent via SipHash (fast, good collision properties)
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     epitope_vec.hash(&mut hasher);
     let hash = hasher.finish();
     format!("{:08x}", hash as u32)
+}
+
+// ── bingoCube trio scoring ──
+
+/// Behavioral trio scores for an IP profile.
+///
+/// The bingoCube classifier doesn't check individual features —
+/// it reads the SHAPE of the (Attention, Curiosity, Interaction) vector.
+/// Fleet: (HIGH, LOW, ZERO). Human: (LOW, HIGH, SOME). Scanner: (LOW, ZERO, ZERO).
+///
+/// This is the maze. You can fake any single dimension, but the ratio
+/// between the three reveals your nature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BingoCubeTrio {
+    /// Attention: raw volume + regularity (0.0 = silent, 1.0 = hammering)
+    pub attention: f32,
+    /// Curiosity: exploration diversity + navigation depth (0.0 = tunnel, 1.0 = explorer)
+    pub curiosity: f32,
+    /// Interaction: engagement with human-facing content (0.0 = ghost, 1.0 = participant)
+    pub interaction: f32,
+    /// Computed classification from the trio shape
+    pub classification: TrioClass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrioClass {
+    /// High A, low C, zero I — machine consumption
+    Fleet,
+    /// Low A, zero C, zero I — probing
+    Scanner,
+    /// Medium A, medium C, zero I — crawling but not engaging
+    Crawler,
+    /// Low-med A, high C, some I — organic exploration
+    Human,
+    /// Low-med A, high C, high I — reading AND doing
+    Participant,
+}
+
+/// Score the bingoCube trio from an IP profile.
+///
+/// Adapted to current IpProfile fields. Uses path_types diversity and
+/// behavioral booleans as proxies for the full content_domains/navigation
+/// signals that will be re-added when the dashboard writer ingests scatter events.
+pub fn score_trio(profile: &IpProfile) -> BingoCubeTrio {
+    let reqs = profile.requests as f32;
+
+    // ── Attention: volume + regularity ──
+    // Normalize: 1 req = 0.0, 100+ = 0.8, 1000+ = 1.0
+    let attention = (reqs.ln().max(0.0) / 7.0).min(1.0); // ln(1000) ≈ 6.9
+
+    // ── Curiosity: diversity + behavioral signals ──
+    let path_type_diversity = profile.path_types.len() as f32;
+    let repo_diversity = profile.repos.len() as f32;
+    let has_assets = if profile.has_assets { 1.0 } else { 0.0 };
+    let has_referer = if profile.has_referer { 1.0 } else { 0.0 };
+    let has_cookie = if profile.has_cookie { 1.0 } else { 0.0 };
+    // Declaration: F=103,308 — the single strongest signal. Declared entities
+    // are participating in the protocol; silent entities are taking without asking.
+    let has_declared = if profile.has_accept_lang || profile.has_sec_fetch { 1.0 } else { 0.0 };
+    // Curiosity components: path type diversity, repo diversity,
+    // asset loading, referer usage, cookie (return visit), declaration
+    let curiosity = (
+        (path_type_diversity / 5.0).min(1.0) * 0.15
+        + (repo_diversity / 5.0).min(1.0) * 0.15
+        + has_assets * 0.15
+        + has_referer * 0.10
+        + has_cookie * 0.10
+        + has_declared * 0.25
+        + if profile.host_count > 1 { 0.10 } else { 0.0 }
+    ).min(1.0);
+
+    // ── Interaction: engagement signals beyond scraping ──
+    // Without the full human_page/visited_* fields, use blame ratio as proxy:
+    // entities that hit blame endpoints are reading diffs, not bulk downloading.
+    let blame_signal = if profile.commit_count > 0 {
+        (profile.blame_count as f32 / profile.commit_count as f32).min(1.0)
+    } else {
+        0.0
+    };
+    let multi_host = if profile.host_count > 2 { 0.3 } else { 0.0 };
+    let interaction = (
+        blame_signal * 0.4
+        + multi_host
+        + has_declared * 0.3
+    ).min(1.0);
+
+    // ── Classification from trio shape ──
+    let classification = if attention > 0.6 && curiosity < 0.2 && interaction < 0.05 {
+        TrioClass::Fleet
+    } else if attention < 0.3 && curiosity < 0.05 && interaction < 0.05 {
+        TrioClass::Scanner
+    } else if curiosity < 0.15 && interaction < 0.05 {
+        TrioClass::Crawler
+    } else if interaction > 0.3 {
+        TrioClass::Participant
+    } else {
+        TrioClass::Human
+    };
+
+    BingoCubeTrio {
+        attention,
+        curiosity,
+        interaction,
+        classification,
+    }
 }
 
 // ── L2 collision classification ──
