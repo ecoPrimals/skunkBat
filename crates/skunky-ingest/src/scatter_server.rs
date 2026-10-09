@@ -1010,14 +1010,32 @@ async fn handle_request(
         0
     };
 
-    // Declaration Protocol (Wave 167): undeclared visitors get treated as
-    // deeper violators. The F-ratio proved: absence of declaration is the
-    // strongest kingdom boundary (F=103,308). Hoisted here so both HTML
-    // and non-HTML paths (and logging) can use it.
+    // Declaration Protocol (Wave 167): the price of admission is curiosity
+    // and engagement, not declaration alone. Declaration is the cheapest proof
+    // of life (F=103,308), but behavior can also demonstrate it.
+    //
+    // Penalty gradient:
+    //   declared → no penalty (you introduced yourself)
+    //   silent + low chain_depth (≤3) → +5 (new visitor, alive but quiet)
+    //   silent + known fleet (in opsonize cache, high confidence) → +15 (non-life)
+    //   silent + unknown, deep → +15 (non-life until proven otherwise)
+    //
+    // The price of admission is curiosity and engagement. SEO crawlers
+    // and agentic visitors are human-directed — they're the ants, and
+    // they're welcome. We just don't want non-life.
     let effective_depth = if declared {
         chain_depth
-    } else {
+    } else if chain_depth <= 3 {
+        // New silent visitor — could be agentic, could be privacy-focused.
+        // Light penalty. Give them a chance to show curiosity.
+        chain_depth.saturating_add(5)
+    } else if cached_tag.as_ref().map(|t| t.confidence > 0.7).unwrap_or(false) {
+        // Known fleet entity with high confidence. Non-life.
         chain_depth.saturating_add(15)
+    } else {
+        // Silent, deeper than 3, not high-confidence fleet.
+        // Medium penalty — somewhere between alive-but-quiet and non-life.
+        chain_depth.saturating_add(10)
     };
 
     let scatter_seed = path_deterministic_hash(&effective_path, generator.seed.wrapping_add(chain_depth as u64));
