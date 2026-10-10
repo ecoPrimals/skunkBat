@@ -31,7 +31,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════
-// Anderson transport math — canonical source: barraCuda anderson_transport.rs
+// Anderson transport math — CANONICAL COPY from barraCuda
+// Source: barraCuda/crates/barracuda/src/special/anderson_transport.rs
+// INVARIANT: These must match canonical exactly. Do not modify here.
+// If the math needs to change, change barraCuda first, then sync.
 // Paper 43: Selective Permeability — The Orthogonal Anderson Dimension
 // ═══════════════════════════════════════════════════════════════════
 
@@ -85,9 +88,8 @@ fn dimensional_localization_length(disorder: f64, energy: f64, d_eff: f64) -> f6
         return log_xi.exp();
     }
 
-    // d > 3: extrapolate (higher dimension = harder to localize)
-    let d_extra = d_eff - 3.0;
-    xi_3d * (1.0 + d_extra * 0.5)
+    // d > 3: even more delocalized. Use 3D result as lower bound.
+    xi_3d
 }
 
 /// Anderson membrane permeability P ∈ [0,1].

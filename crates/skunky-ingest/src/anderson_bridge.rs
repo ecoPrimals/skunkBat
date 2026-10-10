@@ -37,77 +37,73 @@ use crate::dashboard_writer::{IpProfile, TrioClass, score_trio};
 pub type SharedAndersonProfile = Arc<RwLock<Option<AndersonProfile>>>;
 
 // ══════════════════════════════════════════════════════════════════════
-// Anderson transport equations (self-contained, mirrors barracuda)
+// Anderson transport equations — CANONICAL COPY from barraCuda
+// Source: barraCuda/crates/barracuda/src/special/anderson_transport.rs
+// INVARIANT: These must match canonical exactly. Do not modify here.
+// If the math needs to change, change barraCuda first, then sync.
 // ══════════════════════════════════════════════════════════════════════
 
-/// Thouless localization length ξ for 1D Anderson model.
-///
-/// ξ ≈ 105·(4 - E²) / max(W², ε)
-///
-/// From Paper 01 §3.1, validated in barracuda `localization_length()`.
+/// Thouless-formula 1D localization length ξ(E,W).
 fn localization_length_1d(disorder: f64, energy: f64) -> f64 {
-    let numerator = 105.0 * (4.0 - energy * energy).max(0.0);
-    let denominator = (disorder * disorder).max(1e-10);
-    (numerator / denominator).max(0.1)
+    let w_sq = disorder.mul_add(disorder, 0.01);
+    let band_factor = energy.mul_add(-energy, 4.0).max(0.01);
+    105.0 * band_factor / w_sq
 }
 
-/// Dimensional localization length — fractional d_eff.
-///
-/// Interpolates between dimension-dependent behaviors:
-/// - d=1: all states localized (Thouless ξ)
-/// - d=2: weak localization (logarithmic corrections)
-/// - d=3: metal-insulator transition at W_c ≈ 16.5
-/// - fractional d: log-linear interpolation
-///
-/// From Paper 43 §4.2, barracuda `dimensional_localization_length()`.
+/// Localization length generalized to fractional effective dimension.
 fn dimensional_localization_length(disorder: f64, energy: f64, d_eff: f64) -> f64 {
+    let d_eff = d_eff.max(1.0);
     let xi_1d = localization_length_1d(disorder, energy);
 
     if d_eff <= 1.0 {
         return xi_1d;
     }
 
-    // 2D: weak localization — ξ_2d grows exponentially with ξ_1d.
-    // Capped to prevent overflow; always ≥ ξ_1d.
-    let xi_2d = {
-        let exponent = (std::f64::consts::PI * xi_1d / 2.0).min(12.0);
-        (xi_1d * exponent.exp()).min(1e6)
+    let xi_2d = if disorder > 1e-10 {
+        let exponent = (core::f64::consts::PI * (xi_1d / 10.0).min(30.0)).min(30.0);
+        xi_1d * exponent.exp()
+    } else {
+        1e15
     };
 
     if d_eff <= 2.0 {
         let frac = d_eff - 1.0;
-        let log_xi = xi_1d.ln() * (1.0 - frac) + xi_2d.ln() * frac;
+        let log_xi = xi_1d.ln().mul_add(1.0 - frac, xi_2d.ln() * frac);
         return log_xi.exp();
     }
 
-    // 3D: metal-insulator transition at W_c ≈ 16.5
-    let w_c = 16.5;
-    let nu = 1.57;
-    let xi_3d = if disorder < w_c {
-        // Extended regime — effectively infinite. Must be ≥ ξ_2d for monotonicity.
-        xi_2d.max(1e6) * 10.0
+    const W_C: f64 = 16.5;
+    const NU: f64 = 1.57;
+    const XI_EXTENDED: f64 = 1e15;
+    let xi_3d = if disorder < 1e-10 {
+        XI_EXTENDED
+    } else if disorder < W_C {
+        XI_EXTENDED
+    } else if (disorder - W_C).abs() < 0.01 {
+        xi_2d * 10.0
     } else {
-        // Localized regime: ξ_3d = A · |W - W_c|^(-ν)
-        // Still ≥ ξ_2d at the transition; decays for W >> W_c.
-        let a = 1.0;
-        let xi_loc = a * (disorder - w_c).abs().max(0.01).powf(-nu);
-        xi_loc.max(xi_2d)
+        let reduced_w = disorder / W_C - 1.0;
+        let xi_0 = xi_1d.max(1.0);
+        xi_0 * reduced_w.powf(-NU).max(0.1)
     };
 
     if d_eff <= 3.0 {
         let frac = d_eff - 2.0;
-        let log_xi = xi_2d.ln() * (1.0 - frac) + xi_3d.ln().max(-20.0) * frac;
+        let log_xi = xi_2d.ln().mul_add(1.0 - frac, xi_3d.ln() * frac);
         return log_xi.exp();
     }
 
-    // d > 3: extrapolate (higher dimensions → harder to localize)
-    xi_3d * (d_eff - 3.0 + 1.0)
+    // d > 3: even more delocalized. Use 3D result as lower bound.
+    xi_3d
 }
 
-/// Membrane permeability P(ω) = exp(-L/ξ) for a single mode.
+/// Membrane permeability P(ω) = exp(-L/ξ) for a single mode, clamped to [0,1].
 fn membrane_permeability(disorder: f64, energy: f64, d_eff: f64, system_size: f64) -> f64 {
     let xi = dimensional_localization_length(disorder, energy, d_eff);
-    (-system_size / xi).exp()
+    if xi <= 0.0 {
+        return 0.0;
+    }
+    (-system_size / xi).exp().clamp(0.0, 1.0)
 }
 
 // ══════════════════════════════════════════════════════════════════════
