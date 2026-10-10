@@ -19,6 +19,13 @@ pub(crate) const REFERER_SELF_LOOP: &str = "referer_self_loop";
 pub(crate) const BURST_RATIO: &str = "burst_ratio";
 
 /// All six conserved epitopes in detection-priority order.
+///
+/// This ordering is for detection (evaluation sequence). For
+/// **information-content** ordering (compression power), see
+/// `entity_profile::EPITOPE_SORT_ORDER` (Paper 48 §4.2).
+/// Detection priority ≠ information content: `burst_ratio` is
+/// most informative but evaluated last here because it requires
+/// timing data that arrives over many requests.
 pub(crate) const EPITOPE_NAMES: &[&str] = &[
     SEC_FETCH_MONOTONE,
     READING_DEFICIT,

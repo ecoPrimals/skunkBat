@@ -37,9 +37,19 @@ use std::sync::{Arc, Mutex};
 /// row0  jitter_type   content_var   poison_gate   mirror_gate   crawl_density
 /// row1  antibody_idx  header_var    inject_pos    federation    personality
 /// row2  temporal_ph   lure_type     fluoro_layer  prism_mode    amplify_scale
-/// row3  reserved(nautilus-override) ...
-/// row4  reserved(nautilus-override) ...
+/// row3  tense_gate    tense_depth   tense_conf    tense_decay   tense_invert
+/// row4  sort_level    sort_grain    sort_compress  sort_epoch   sort_feedback
 /// ```
+///
+/// Rows 3-4 wired in Wave 171 (Paper 48 — epitope sort compression):
+///
+/// - **Row 3 (tense)**: Controls the temporal dimension of the scatter response.
+///   Which tense frame (is/was/will-be) does the response inhabit? How deep into
+///   history? How confident is the tense classification? How fast does tense decay?
+///
+/// - **Row 4 (sort)**: Controls the epitope sort dimension. Which granularity level
+///   does the maze apply this epoch? How much compression did the last pass achieve?
+///   Feeds back to nautilus for adaptive compression scheduling.
 pub struct CubeDecisionGrid {
     colors: [[Color; 5]; 5],
     scalars: [[u64; 5]; 5],
@@ -70,6 +80,34 @@ pub enum ContentVariant {
     Release2,
 }
 
+/// Tense gate — temporal frame for the scatter response (Paper 48).
+///
+/// Maps to the three temporal states of the epitope sort compression:
+/// Is (present, observable), Was (past, recorded), WillBe (future, predicted).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TenseGate {
+    /// Present — first observation, state = 0, polynomial.
+    Is,
+    /// Past — repeat pattern, state = 1, polynomial.
+    Was,
+    /// Future — nautilus prediction, state = null, NP-bounded.
+    WillBe,
+}
+
+/// Sort level — which epitope sort dimension the maze applies this epoch (Paper 48).
+///
+/// The three sort levels form a compression hierarchy:
+/// `H(data|tense) < H(data|epitope) < H(data|alphabetic) < H(data)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortLevel {
+    /// Surface variation — content varies by path hash. Least informative.
+    Alphabetic,
+    /// Behavioral clustering — content varies by epitope. Structurally informative.
+    Epitope,
+    /// Temporal maze — content presents is/was/will-be frames. Most informative.
+    Tense,
+}
+
 impl CubeDecisionGrid {
     /// Create a decision grid from context.
     ///
@@ -79,7 +117,7 @@ impl CubeDecisionGrid {
         let config = Config {
             grid_size: 5,
             universe_size: 100,
-            palette_size: 16,
+            palette_size: 16, // Base-16: the epitope set for behavioral clustering (Paper 48 §6.3)
             free_cell: None,
         };
         let cube = BingoCube::from_seed(seed.as_bytes(), config)
@@ -241,19 +279,107 @@ impl CubeDecisionGrid {
         self.colors[2][4]
     }
 
-    // ── Row 3-4: Reserved for nautilus overrides ──
-    // Integration point: when predict() is wired to the scatter serve path,
-    // the oracle populates rows 3-4 with strategy overrides. The scatter path
-    // reads nautilus_cell(3, col) for jitter type and nautilus_cell(4, col)
-    // for content variant. Until then, rows 3-4 carry the deterministic hash
-    // values and are not consulted by the decision logic.
+    // ── Row 3: Tense dimension (Paper 48) ──
 
-    /// Nautilus override value at (row, col) in the reserved region.
-    /// Row 3-4 are reserved for trained model predictions.
-    #[allow(dead_code)] // Nautilus integration point — wired when predict() feeds scatter serve
-    pub fn nautilus_cell(&self, row: usize, col: usize) -> u8 {
-        assert!(row >= 3 && row < 5 && col < 5);
-        self.colors[row][col]
+    /// Tense gate — which temporal frame the scatter response inhabits.
+    ///
+    /// Maps the 16 colors to the three tense states (is/was/will-be):
+    /// - Colors 0-7  → Is (present, 50%)
+    /// - Colors 8-13 → Was (past, 37.5%)
+    /// - Colors 14-15 → WillBe (predicted, 12.5%)
+    ///
+    /// The `will_be` range is smallest because predictions are expensive
+    /// and the confidence floor is non-zero (P ≠ NP).
+    pub fn tense_gate(&self) -> TenseGate {
+        match self.colors[3][0] {
+            0..=7 => TenseGate::Is,
+            8..=13 => TenseGate::Was,
+            _ => TenseGate::WillBe,
+        }
+    }
+
+    /// Tense depth — how far into history (for Was) or prediction horizon (for WillBe).
+    ///
+    /// Returns 0-15. For Was: 0 = recent repeat, 15 = deep chain. For WillBe:
+    /// 0 = near-term prediction, 15 = speculative long-range.
+    pub fn tense_depth(&self) -> u8 {
+        self.colors[3][1]
+    }
+
+    /// Tense confidence — how certain the tense classification is.
+    ///
+    /// Returns 0-15. Higher = more confident. Below threshold (< 4),
+    /// the scatter path should fall back to Is (present, observable).
+    pub fn tense_confidence(&self) -> u8 {
+        self.colors[3][2]
+    }
+
+    /// Tense decay — how quickly temporal context expires.
+    ///
+    /// Returns 0-15. Low values = rapid decay (tense classification expires
+    /// after few epochs). High values = persistent tense (classification
+    /// carries across many epochs).
+    pub fn tense_decay(&self) -> u8 {
+        self.colors[3][3]
+    }
+
+    /// Tense inversion flag — whether to present the *opposite* tense.
+    ///
+    /// Colors 14-15 → invert (12.5%). Inversion shows a fleet its predicted
+    /// future as if it were recorded past, or vice versa. Disorienting.
+    pub fn tense_invert(&self) -> bool {
+        self.colors[3][4] >= 14
+    }
+
+    // ── Row 4: Sort dimension (Paper 48) ──
+
+    /// Sort level — which epitope sort dimension dominates this epoch.
+    ///
+    /// Maps 16 colors to three sort levels:
+    /// - Colors 0-7   → Alphabetic (surface variation, 50%)
+    /// - Colors 8-12  → Epitope (behavioral clustering, 31.25%)
+    /// - Colors 13-15 → Tense (temporal maze, 18.75%)
+    pub fn sort_level(&self) -> SortLevel {
+        match self.colors[4][0] {
+            0..=7 => SortLevel::Alphabetic,
+            8..=12 => SortLevel::Epitope,
+            _ => SortLevel::Tense,
+        }
+    }
+
+    /// Sort grain — granularity within the sort level.
+    ///
+    /// Returns 0-15. At Alphabetic: char vs word vs sentence variation.
+    /// At Epitope: L1 (8-hex) vs L1.5 (4-hex) vs L2 (1-byte) resolution.
+    /// At Tense: how far into history and how speculative predictions are.
+    pub fn sort_grain(&self) -> u8 {
+        self.colors[4][1]
+    }
+
+    /// Sort compression — entropy reduction from the last sort pass.
+    ///
+    /// Returns the raw color (0-15) as a proxy for compression achieved.
+    /// Fed back to nautilus: high values → this sort level was effective,
+    /// increase its frequency. Low values → decrease.
+    pub fn sort_compress(&self) -> u8 {
+        self.colors[4][2]
+    }
+
+    /// Sort epoch — modulates how often the sort level changes.
+    ///
+    /// Returns 0-15. Low values → sort level rotates every epoch.
+    /// High values → sort level persists across many epochs.
+    pub fn sort_epoch(&self) -> u8 {
+        self.colors[4][3]
+    }
+
+    /// Sort feedback — nautilus feedback strength.
+    ///
+    /// Returns 0-15. How strongly the sort compression result feeds back
+    /// to the nautilus training loop. 0 = observation only (no influence
+    /// on strategy). 15 = strong influence on next generation.
+    pub fn sort_feedback(&self) -> u8 {
+        self.colors[4][4]
     }
 
     /// Full scalar for hash-based decisions (when 16 colors aren't enough).
@@ -832,5 +958,107 @@ mod tests {
         let grid = CubeDecisionGrid::from_context("test", "/path", 1);
         let val = grid.scalar_decision(3, 0, 100);
         assert!(val < 100);
+    }
+
+    // ── Row 3-4: Tense + sort dimension tests (Paper 48) ──
+
+    #[test]
+    fn tense_gate_all_values_reachable() {
+        let mut seen_is = false;
+        let mut seen_was = false;
+        let mut seen_willbe = false;
+        for i in 0..500 {
+            let grid = CubeDecisionGrid::from_context(&format!("t{i}"), "/t", 1);
+            match grid.tense_gate() {
+                TenseGate::Is => seen_is = true,
+                TenseGate::Was => seen_was = true,
+                TenseGate::WillBe => seen_willbe = true,
+            }
+        }
+        assert!(seen_is, "TenseGate::Is should be reachable");
+        assert!(seen_was, "TenseGate::Was should be reachable");
+        assert!(seen_willbe, "TenseGate::WillBe should be reachable");
+    }
+
+    #[test]
+    fn tense_gate_distribution_reasonable() {
+        let mut is_count = 0u32;
+        let mut was_count = 0u32;
+        let mut willbe_count = 0u32;
+        for i in 0..1000 {
+            let grid = CubeDecisionGrid::from_context(&format!("td{i}"), "/test", 42);
+            match grid.tense_gate() {
+                TenseGate::Is => is_count += 1,
+                TenseGate::Was => was_count += 1,
+                TenseGate::WillBe => willbe_count += 1,
+            }
+        }
+        // Is ≈ 50%, Was ≈ 37.5%, WillBe ≈ 12.5%
+        assert!(is_count > 350, "Is should be ~50%, got {is_count}/1000");
+        assert!(was_count > 200, "Was should be ~37.5%, got {was_count}/1000");
+        assert!(willbe_count > 50, "WillBe should be ~12.5%, got {willbe_count}/1000");
+    }
+
+    #[test]
+    fn sort_level_all_values_reachable() {
+        let mut seen_alpha = false;
+        let mut seen_epitope = false;
+        let mut seen_tense = false;
+        for i in 0..500 {
+            let grid = CubeDecisionGrid::from_context(&format!("s{i}"), "/s", 1);
+            match grid.sort_level() {
+                SortLevel::Alphabetic => seen_alpha = true,
+                SortLevel::Epitope => seen_epitope = true,
+                SortLevel::Tense => seen_tense = true,
+            }
+        }
+        assert!(seen_alpha, "SortLevel::Alphabetic should be reachable");
+        assert!(seen_epitope, "SortLevel::Epitope should be reachable");
+        assert!(seen_tense, "SortLevel::Tense should be reachable");
+    }
+
+    #[test]
+    fn sort_level_distribution_reasonable() {
+        let mut alpha = 0u32;
+        let mut epitope = 0u32;
+        let mut tense = 0u32;
+        for i in 0..1000 {
+            let grid = CubeDecisionGrid::from_context(&format!("sd{i}"), "/test", 42);
+            match grid.sort_level() {
+                SortLevel::Alphabetic => alpha += 1,
+                SortLevel::Epitope => epitope += 1,
+                SortLevel::Tense => tense += 1,
+            }
+        }
+        // Alphabetic ≈ 50%, Epitope ≈ 31.25%, Tense ≈ 18.75%
+        assert!(alpha > 350, "Alphabetic should be ~50%, got {alpha}/1000");
+        assert!(epitope > 150, "Epitope should be ~31.25%, got {epitope}/1000");
+        assert!(tense > 80, "Tense should be ~18.75%, got {tense}/1000");
+    }
+
+    #[test]
+    fn tense_invert_is_rare() {
+        let inverted: u32 = (0..1000)
+            .filter(|i| {
+                CubeDecisionGrid::from_context(&format!("inv{i}"), "/test", 42).tense_invert()
+            })
+            .count() as u32;
+        // 12.5% expected
+        assert!(inverted > 50, "inversion should be ~12.5%, got {inverted}/1000");
+        assert!(inverted < 250, "inversion should be rare, got {inverted}/1000");
+    }
+
+    #[test]
+    fn tense_depth_and_grain_full_range() {
+        let mut depths = std::collections::HashSet::new();
+        let mut grains = std::collections::HashSet::new();
+        for i in 0..2000 {
+            let grid = CubeDecisionGrid::from_context(&format!("rng{i}"), "/r", 1);
+            depths.insert(grid.tense_depth());
+            grains.insert(grid.sort_grain());
+        }
+        // Should hit most of the 0-15 range
+        assert!(depths.len() >= 12, "tense_depth should cover most of 0-15, got {} unique values", depths.len());
+        assert!(grains.len() >= 12, "sort_grain should cover most of 0-15, got {} unique values", grains.len());
     }
 }

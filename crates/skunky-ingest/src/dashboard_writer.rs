@@ -1047,6 +1047,41 @@ impl DashboardWriter {
             "clusters_gt1": self.culture.epitope_collisions.values().filter(|v| v.len() > 1).count(),
         });
 
+        // Tense distribution (Paper 48 — epitope sort compression).
+        // Is = first observation (requests == 1), Was = repeat (requests > 1),
+        // WillBe = nautilus predicted (chain in culture). WillBe is not yet
+        // wired — it requires predict() feeding the dashboard. Count stays 0.
+        let tense_is = self.culture.ips.values().filter(|p| p.requests == 1).count();
+        let tense_was = self.culture.ips.values().filter(|p| p.requests > 1).count();
+        let tense_willbe: usize = 0; // Nautilus integration point
+        let tense_distribution = serde_json::json!({
+            "is": tense_is,
+            "was": tense_was,
+            "will_be": tense_willbe,
+        });
+
+        // Sort compression scores (Paper 48).
+        // Approximate bits of compression at each sort level from the current population.
+        let total_ips = self.culture.ips.len().max(1) as f64;
+        let sort_alpha = (total_ips.ln() / 2.0_f64.ln()).max(0.0); // log2(n) baseline
+        let sort_epitope = {
+            let clusters = self.culture.epitope_collisions.len().max(1) as f64;
+            sort_alpha - (clusters.ln() / 2.0_f64.ln()).max(0.0) // reduction from clustering
+        };
+        let sort_tense = {
+            // Tense sort partitions into 3 buckets (is/was/willbe).
+            // Compression = log2(n) - sum(p_i * log2(p_i)) for the 3 buckets.
+            let p_is = tense_is as f64 / total_ips;
+            let p_was = tense_was as f64 / total_ips;
+            let h = |p: f64| -> f64 { if p > 0.0 { -p * (p.ln() / 2.0_f64.ln()) } else { 0.0 } };
+            sort_alpha - (h(p_is) + h(p_was))
+        };
+        let sort_compression = serde_json::json!({
+            "alpha": (sort_alpha * 10.0).round() / 10.0,
+            "epitope": (sort_epitope * 10.0).round() / 10.0,
+            "tense": (sort_tense * 10.0).round() / 10.0,
+        });
+
         let dashboard = serde_json::json!({
             "ts": now,
             "utc": chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
@@ -1073,6 +1108,8 @@ impl DashboardWriter {
             },
             "epitope_clusters": epitope_clusters,
             "epitope_summary": epitope_summary,
+            "tense_distribution": tense_distribution,
+            "sort_compression": sort_compression,
         });
 
         // Write dashboard.json
@@ -1329,6 +1366,53 @@ mod tests {
             });
         }
         assert!(!ips_obj.is_empty(), "Culture should have at least one IP entry");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tense_distribution_in_dashboard() {
+        let dir = std::env::temp_dir().join("dashboard-tense-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let output = dir.join("dashboard.json");
+        let state = dir.join("dashboard-culture.json");
+
+        let registry = crate::epitope_registry::create_shared_registry(None);
+        let mut writer = DashboardWriter::new(output.clone(), state, 5, registry);
+
+        // 3 unique IPs — all first visit
+        for i in 0..3 {
+            writer.ingest(&make_entry(
+                &format!("10.0.1.{}", i),
+                "/",
+                "primals.eco",
+                "Mozilla/5.0 Chrome/130.0.0.0",
+                1000.0 + i as f64,
+            ));
+        }
+
+        // 2 repeat visits from first IP
+        writer.ingest(&make_entry("10.0.1.0", "/desk/", "primals.eco", "Mozilla/5.0 Chrome/130.0.0.0", 1010.0));
+        writer.ingest(&make_entry("10.0.1.0", "/analysis/", "primals.eco", "Mozilla/5.0 Chrome/130.0.0.0", 1020.0));
+
+        // Force flush
+        writer.flush();
+
+        let content = std::fs::read_to_string(&output).unwrap();
+        let dashboard: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Check tense_distribution exists
+        assert!(dashboard["tense_distribution"].is_object(), "tense_distribution should be in dashboard");
+        let is_count = dashboard["tense_distribution"]["is"].as_u64().unwrap();
+        let was_count = dashboard["tense_distribution"]["was"].as_u64().unwrap();
+        // IP 10.0.1.0 has 3 requests → Was. IPs 10.0.1.1 and 10.0.1.2 have 1 request → Is.
+        assert_eq!(is_count, 2, "two IPs should be Is (first-time)");
+        assert_eq!(was_count, 1, "one IP should be Was (repeat)");
+
+        // Check sort_compression exists
+        assert!(dashboard["sort_compression"].is_object(), "sort_compression should be in dashboard");
+        let alpha = dashboard["sort_compression"]["alpha"].as_f64().unwrap();
+        assert!(alpha > 0.0, "alphabetic compression should be > 0");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

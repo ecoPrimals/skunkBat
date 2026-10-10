@@ -99,6 +99,92 @@ pub struct EpitopeResult {
     pub description: String,
 }
 
+// ── Epitope sort order (Paper 48 — information-content ordering) ──
+
+/// The six conserved epitopes ordered by information content (compression power),
+/// NOT by detection priority. This is the canonical sort key for the epitope
+/// sort compression (Paper 48).
+///
+/// Ordering rationale — each epitope's mutual information with fleet identity:
+///
+/// 1. `burst_ratio`       — timing regularity is the strongest fleet signal (CV < 0.15
+///                          is definitive). Cannot be cheaply evaded without throttling.
+/// 2. `reading_deficit`   — absence of reading pauses (>8s gaps) cleanly separates
+///                          machines from humans. Adding pauses kills throughput.
+/// 3. `ua_pool_poverty`   — small UA pool ÷ visit count reveals coordinated fleet.
+///                          Growing the pool requires tracking Chrome releases.
+/// 4. `sec_fetch_monotone` — identical Sec-Fetch triplets across 95%+ of requests
+///                          proves non-browser automation. Can be faked but creates
+///                          new detectable patterns.
+/// 5. `session_absent`    — no cookies/session across multi-page visits. Stateful
+///                          sessions kill parallelism, but absence is not unique to
+///                          fleets (privacy-conscious humans also block cookies).
+/// 6. `referer_self_loop` — no external referrers. Weakest signal because privacy
+///                          tools strip referrers (and we protect that choice).
+pub const EPITOPE_SORT_ORDER: [&str; 6] = [
+    "burst_ratio",
+    "reading_deficit",
+    "ua_pool_poverty",
+    "sec_fetch_monotone",
+    "session_absent",
+    "referer_self_loop",
+];
+
+impl EpitopeScores {
+    /// Returns a 6-byte sort key ordered by information content (Paper 48).
+    ///
+    /// Each byte encodes: 0x00 = not evaluated, 0x01 = evaluated but not triggered,
+    /// 0x02 = triggered. The key sorts entities by their strongest-first epitope
+    /// signature, maximizing compression of the fleet search space.
+    ///
+    /// The ordering is `burst_ratio > reading_deficit > ua_pool_poverty >
+    /// sec_fetch_monotone > session_absent > referer_self_loop`.
+    pub fn epitope_sort_key(&self) -> [u8; 6] {
+        let fields: [&Option<EpitopeResult>; 6] = [
+            &self.burst_ratio,
+            &self.reading_deficit,
+            &self.ua_pool_poverty,
+            &self.sec_fetch_monotone,
+            &self.session_absent,
+            &self.referer_self_loop,
+        ];
+        let mut key = [0u8; 6];
+        for (i, field) in fields.iter().enumerate() {
+            key[i] = match field {
+                None => 0x00,
+                Some(r) if r.triggered => 0x02,
+                Some(_) => 0x01,
+            };
+        }
+        key
+    }
+
+    /// Returns the information-content compression score.
+    ///
+    /// Each triggered epitope contributes its rank weight (strongest = 6,
+    /// weakest = 1). The score ranges from 0 (no epitopes triggered, no
+    /// compression) to 21 (all 6 triggered, maximum compression).
+    ///
+    /// The score represents how many bits of fleet-vs-human uncertainty
+    /// have been eliminated by the epitope sort.
+    pub fn compression_score(&self) -> u32 {
+        let fields: [&Option<EpitopeResult>; 6] = [
+            &self.burst_ratio,
+            &self.reading_deficit,
+            &self.ua_pool_poverty,
+            &self.sec_fetch_monotone,
+            &self.session_absent,
+            &self.referer_self_loop,
+        ];
+        let weights: [u32; 6] = [6, 5, 4, 3, 2, 1];
+        fields.iter().zip(weights.iter())
+            .filter_map(|(f, w)| {
+                f.as_ref().filter(|r| r.triggered).map(|_| *w)
+            })
+            .sum()
+    }
+}
+
 /// Header presence/absence fingerprint.
 #[derive(Debug, Serialize)]
 pub struct HeaderFingerprint {
@@ -646,4 +732,107 @@ pub fn build_comparative(profiles: &[EntityProfile]) -> Vec<ComparativeRow> {
             honest: p.is_honest,
         }
     }).collect()
+}
+
+// ── Tests ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_result(score: f64, triggered: bool) -> EpitopeResult {
+        EpitopeResult { score, triggered, description: String::new() }
+    }
+
+    fn empty_scores() -> EpitopeScores {
+        EpitopeScores {
+            sec_fetch_monotone: None,
+            reading_deficit: None,
+            ua_pool_poverty: None,
+            session_absent: None,
+            referer_self_loop: None,
+            burst_ratio: None,
+            referer_absence: None,
+        }
+    }
+
+    #[test]
+    fn sort_key_all_none_is_zeros() {
+        let scores = empty_scores();
+        assert_eq!(scores.epitope_sort_key(), [0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn sort_key_all_triggered() {
+        let scores = EpitopeScores {
+            burst_ratio: Some(make_result(90.0, true)),
+            reading_deficit: Some(make_result(2.0, true)),
+            ua_pool_poverty: Some(make_result(3.0, true)),
+            sec_fetch_monotone: Some(make_result(98.0, true)),
+            session_absent: Some(make_result(0.5, true)),
+            referer_self_loop: Some(make_result(0.1, true)),
+            referer_absence: None,
+        };
+        assert_eq!(scores.epitope_sort_key(), [2, 2, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn sort_key_mixed() {
+        let scores = EpitopeScores {
+            burst_ratio: Some(make_result(90.0, true)),
+            reading_deficit: Some(make_result(25.0, false)),
+            ua_pool_poverty: None,
+            sec_fetch_monotone: Some(make_result(98.0, true)),
+            session_absent: None,
+            referer_self_loop: Some(make_result(15.0, false)),
+            referer_absence: None,
+        };
+        // burst=triggered, reading=not-triggered, ua=none, sec=triggered, session=none, referer=not-triggered
+        assert_eq!(scores.epitope_sort_key(), [0x02, 0x01, 0x00, 0x02, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn compression_score_none_is_zero() {
+        let scores = empty_scores();
+        assert_eq!(scores.compression_score(), 0);
+    }
+
+    #[test]
+    fn compression_score_all_triggered() {
+        let scores = EpitopeScores {
+            burst_ratio: Some(make_result(90.0, true)),         // weight 6
+            reading_deficit: Some(make_result(2.0, true)),      // weight 5
+            ua_pool_poverty: Some(make_result(3.0, true)),      // weight 4
+            sec_fetch_monotone: Some(make_result(98.0, true)),  // weight 3
+            session_absent: Some(make_result(0.5, true)),       // weight 2
+            referer_self_loop: Some(make_result(0.1, true)),    // weight 1
+            referer_absence: None,
+        };
+        assert_eq!(scores.compression_score(), 6 + 5 + 4 + 3 + 2 + 1);
+    }
+
+    #[test]
+    fn compression_score_partial() {
+        let scores = EpitopeScores {
+            burst_ratio: Some(make_result(90.0, true)),          // weight 6
+            reading_deficit: Some(make_result(25.0, false)),     // not triggered
+            ua_pool_poverty: None,
+            sec_fetch_monotone: Some(make_result(98.0, true)),   // weight 3
+            session_absent: None,
+            referer_self_loop: Some(make_result(0.1, true)),     // weight 1
+            referer_absence: None,
+        };
+        assert_eq!(scores.compression_score(), 6 + 3 + 1);
+    }
+
+    #[test]
+    fn sort_order_matches_information_content() {
+        // Verify the constant array is in the correct order
+        assert_eq!(EPITOPE_SORT_ORDER[0], "burst_ratio");
+        assert_eq!(EPITOPE_SORT_ORDER[1], "reading_deficit");
+        assert_eq!(EPITOPE_SORT_ORDER[2], "ua_pool_poverty");
+        assert_eq!(EPITOPE_SORT_ORDER[3], "sec_fetch_monotone");
+        assert_eq!(EPITOPE_SORT_ORDER[4], "session_absent");
+        assert_eq!(EPITOPE_SORT_ORDER[5], "referer_self_loop");
+    }
 }

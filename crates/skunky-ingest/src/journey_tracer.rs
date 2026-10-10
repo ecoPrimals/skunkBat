@@ -182,6 +182,44 @@ impl JourneyEpitope {
     }
 }
 
+// ── Temporal tense ──
+
+/// Temporal tense classification for the epitope sort compression.
+///
+/// Every observation exists in one of three temporal states. This trichotomy
+/// maps to computational complexity (Paper 48):
+///
+/// - **Is** (present): Observable, polynomial — first-time session, state = 0
+/// - **Was** (past): Recorded, polynomial — previously seen pattern, state = 1
+/// - **WillBe** (future): Predicted, NP — nautilus forecast, state = null → collapsed
+///
+/// The tense dimension is the sharpest epitope sort because it partitions
+/// the behavioral space into regions of fundamentally different computability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EpitopeTense {
+    /// First observation — no prior pattern match (chain_depth == 0).
+    /// State = 0. Compressible by direct measurement.
+    Is,
+    /// Matches a previously observed journey pattern (chain_depth > 0).
+    /// State = 1. Compressible by chain_depth deduplication.
+    Was,
+    /// Nautilus predicted this fleet hash before observation arrived.
+    /// State = null → collapsed. Compression bounded by prediction capacity.
+    WillBe,
+}
+
+impl EpitopeTense {
+    /// Human-readable description of this tense.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Is => "Present — first observation, no prior pattern",
+            Self::Was => "Past — previously observed behavioral pattern",
+            Self::WillBe => "Future — nautilus-predicted before observation",
+        }
+    }
+}
+
 // ── Completed journey ──
 
 /// A completed visitor journey — the full behavioral trace.
@@ -196,6 +234,8 @@ pub struct Journey {
     pub session_hash: u64,
     /// Behavioral epitope classification.
     pub epitope: JourneyEpitope,
+    /// Temporal tense — is this journey happening now, a repeat, or predicted?
+    pub tense: EpitopeTense,
     /// Why the visitor arrived.
     pub arrival: ArrivalReason,
     /// Why the visitor departed.
@@ -238,6 +278,9 @@ struct ActiveSession {
     steps: Vec<JourneyStep>,
     /// Timestamp of last activity.
     last_ts: f64,
+    /// Chain depth — how many previous sessions from this hash we've seen.
+    /// 0 = first time (Is), >0 = repeat (Was).
+    chain_depth: u32,
 }
 
 /// Population-level journey statistics (what gets emitted).
@@ -260,6 +303,8 @@ pub struct JourneyObservation {
     pub bridge_walks: u32,
     /// Total completed journeys.
     pub total_journeys: u32,
+    /// Tense distribution: is (first-time), was (repeat), will_be (predicted).
+    pub by_tense: HashMap<String, u32>,
     /// The journeys themselves (epitope-sorted, session hashes stripped).
     pub journeys: Vec<Journey>,
 }
@@ -278,6 +323,10 @@ pub struct JourneyTracer {
     sessions: HashMap<u64, ActiveSession>,
     /// Completed journeys in current window.
     completed: Vec<Journey>,
+    /// Chain depth per session hash — how many completed sessions we've seen.
+    /// Maps session_hash → number of previous completions.
+    /// Used for tense classification: 0 = Is (first time), >0 = Was (repeat).
+    chain_depths: HashMap<u64, u32>,
 }
 
 impl JourneyTracer {
@@ -292,6 +341,7 @@ impl JourneyTracer {
             window_start: 0.0,
             sessions: HashMap::new(),
             completed: Vec::new(),
+            chain_depths: HashMap::new(),
         }
     }
 
@@ -353,13 +403,15 @@ impl JourneyTracer {
                 if ts - session.last_ts > self.session_timeout.as_secs_f64() {
                     // Complete the old session, start a new one
                     let old = self.sessions.remove(&session_key).unwrap();
-                    self.complete_session(old);
+                    self.complete_session(session_key, old);
 
+                    let depth = self.chain_depths.get(&session_key).copied().unwrap_or(0);
                     self.sessions.insert(session_key, ActiveSession {
                         reader_type,
                         arrival: referrer_source.into(),
                         steps: vec![step],
                         last_ts: ts,
+                        chain_depth: depth,
                     });
                 } else {
                     session.steps.push(step);
@@ -367,11 +419,13 @@ impl JourneyTracer {
                 }
             }
             None => {
+                let depth = self.chain_depths.get(&session_key).copied().unwrap_or(0);
                 self.sessions.insert(session_key, ActiveSession {
                     reader_type,
                     arrival: referrer_source.into(),
                     steps: vec![step],
                     last_ts: ts,
+                    chain_depth: depth,
                 });
             }
         }
@@ -390,14 +444,17 @@ impl JourneyTracer {
 
         for key in expired {
             if let Some(session) = self.sessions.remove(&key) {
-                self.complete_session(session);
+                self.complete_session(key, session);
             }
         }
     }
 
     /// Classify and complete a session into a journey.
-    fn complete_session(&mut self, session: ActiveSession) {
+    fn complete_session(&mut self, session_key: u64, session: ActiveSession) {
         let journey = classify_journey(session);
+        // Increment chain depth for this hash — next session from same hash
+        // will be classified as Was instead of Is.
+        *self.chain_depths.entry(session_key).or_insert(0) += 1;
         self.completed.push(journey);
     }
 
@@ -408,6 +465,7 @@ impl JourneyTracer {
         let mut by_epitope: HashMap<String, u32> = HashMap::new();
         let mut by_arrival: HashMap<String, u32> = HashMap::new();
         let mut by_departure: HashMap<String, u32> = HashMap::new();
+        let mut by_tense: HashMap<String, u32> = HashMap::new();
         let mut total_depth: u32 = 0;
         let mut max_depth: u32 = 0;
         let mut bridge_walks: u32 = 0;
@@ -416,6 +474,7 @@ impl JourneyTracer {
             *by_epitope.entry(format!("{:?}", j.epitope)).or_default() += 1;
             *by_arrival.entry(format!("{:?}", j.arrival)).or_default() += 1;
             *by_departure.entry(format!("{:?}", j.departure)).or_default() += 1;
+            *by_tense.entry(format!("{:?}", j.tense)).or_default() += 1;
 
             let depth = j.steps.len() as u32;
             total_depth += depth;
@@ -444,6 +503,7 @@ impl JourneyTracer {
             max_depth,
             bridge_walks,
             total_journeys: total,
+            by_tense,
             journeys,
         }
     }
@@ -452,8 +512,8 @@ impl JourneyTracer {
     pub fn flush_remaining(&mut self) -> Option<JourneyObservation> {
         // Complete all active sessions
         let sessions: Vec<_> = self.sessions.drain().collect();
-        for (_, session) in sessions {
-            self.complete_session(session);
+        for (key, session) in sessions {
+            self.complete_session(key, session);
         }
 
         if self.completed.is_empty() {
@@ -564,9 +624,19 @@ fn classify_journey(session: ActiveSession) -> Journey {
         DepartureReason::Satisfied
     };
 
+    // Classify tense — the temporal dimension of this journey.
+    // chain_depth == 0 means first-time (Is), > 0 means repeat (Was).
+    // WillBe is reserved for nautilus predictions — not yet wired.
+    let tense = if session.chain_depth == 0 {
+        EpitopeTense::Is
+    } else {
+        EpitopeTense::Was
+    };
+
     Journey {
         session_hash: 0, // Cleared — not stored
         epitope,
+        tense,
         arrival: session.arrival,
         departure,
         reader_type: session.reader_type,
@@ -761,6 +831,7 @@ mod tests {
         let j = Journey {
             session_hash: 0,
             epitope: JourneyEpitope::BridgeWalker,
+            tense: EpitopeTense::Is,
             arrival: ArrivalReason::Direct,
             departure: DepartureReason::Satisfied,
             reader_type: ReaderType::Human,
@@ -805,5 +876,55 @@ mod tests {
         let obs = tracer.flush_remaining().unwrap();
         assert_eq!(obs.total_journeys, 2);
         assert!(obs.avg_depth > 1.0);
+    }
+
+    // ── Tense classification tests ──
+
+    #[test]
+    fn first_session_is_tense_is() {
+        let mut tracer = JourneyTracer::new(Duration::from_secs(300), Duration::from_secs(600));
+
+        tracer.ingest(&human_entry(1000.0, "tuebor.primals.eco", "/", "42.42.42.42"));
+
+        let obs = tracer.flush_remaining().unwrap();
+        let j = &obs.journeys[0];
+        assert_eq!(j.tense, EpitopeTense::Is, "first session should be tense Is");
+    }
+
+    #[test]
+    fn repeat_session_is_tense_was() {
+        let mut tracer = JourneyTracer::new(Duration::from_secs(60), Duration::from_secs(3600));
+        let ip = "42.42.42.42";
+
+        // Session 1 — first visit
+        tracer.ingest(&human_entry(1000.0, "tuebor.primals.eco", "/", ip));
+        tracer.ingest(&human_entry(1020.0, "tuebor.primals.eco", "/desk/", ip));
+
+        // Gap > 60s — session timeout, session 1 completes
+        // Session 2 — same hash returns
+        tracer.ingest(&human_entry(1200.0, "tuebor.primals.eco", "/analysis/", ip));
+
+        let obs = tracer.flush_remaining().unwrap();
+        assert_eq!(obs.total_journeys, 2);
+
+        let first = &obs.journeys[0];
+        assert_eq!(first.tense, EpitopeTense::Is, "first session = Is");
+
+        let second = &obs.journeys[1];
+        assert_eq!(second.tense, EpitopeTense::Was, "repeat session = Was");
+    }
+
+    #[test]
+    fn tense_distribution_in_observation() {
+        let mut tracer = JourneyTracer::new(Duration::from_secs(60), Duration::from_secs(3600));
+
+        // Three different IPs — all first-time
+        tracer.ingest(&human_entry(1000.0, "tuebor.primals.eco", "/", "1.1.1.1"));
+        tracer.ingest(&human_entry(1000.0, "tuebor.primals.eco", "/", "2.2.2.2"));
+        tracer.ingest(&human_entry(1000.0, "tuebor.primals.eco", "/", "3.3.3.3"));
+
+        let obs = tracer.flush_remaining().unwrap();
+        assert_eq!(obs.by_tense.get("Is"), Some(&3));
+        assert_eq!(obs.by_tense.get("Was"), None);
     }
 }
