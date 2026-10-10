@@ -1192,7 +1192,6 @@ impl DashboardWriter {
         }
 
         let mesh_size = 4_u32; // current operational bodies
-        let membrane_thickness = 10.0; // detection rule count (L)
         let observations = crate::anderson_bridge::extract_observations(
             &self.culture.ips,
             mesh_size,
@@ -1200,7 +1199,6 @@ impl DashboardWriter {
         let profile = crate::anderson_bridge::compute_profile(
             &observations,
             mesh_size,
-            membrane_thickness,
         );
 
         // Write to /run/membrane/ so the scatter server's /plasmid endpoint reads it

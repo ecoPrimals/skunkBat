@@ -244,11 +244,11 @@ pub struct ClassObservation {
 ///
 /// `observations` maps TrioClass → ClassObservation.
 /// `mesh_size` is the total number of golgi bodies in the mesh.
-/// `membrane_thickness` is L (number of detection rules/layers).
+/// L (membrane thickness) is assigned per-mode based on ecological role,
+/// not passed as a single parameter — each mode sees a different membrane.
 pub fn compute_profile(
     observations: &HashMap<EcoMode, ClassObservation>,
     mesh_size: u32,
-    membrane_thickness: f64,
 ) -> AndersonProfile {
     // Population-level Pielou J from mode counts (6 modes)
     let counts: Vec<u64> = [
@@ -584,7 +584,7 @@ mod tests {
             bodies_observing: 4, accept_ratio: 0.97,
         });
 
-        let profile = compute_profile(&obs, 4, 10.0);
+        let profile = compute_profile(&obs, 4);
         assert!(profile.selectivity_predicted > 0.5,
             "healthy membrane should have high selectivity, got {}", profile.selectivity_predicted);
         assert!(profile.pielou_j > 0.0, "non-zero population should have non-zero J");
@@ -600,7 +600,7 @@ mod tests {
             bodies_observing: 2, accept_ratio: 0.95,
         });
 
-        let profile = compute_profile(&obs, 4, 10.0);
+        let profile = compute_profile(&obs, 4);
         // With moderate disorder and d=2 (chorus), predicted P should be less
         // than 0.95 so residual should be positive (entity more permeable than expected)
         if let Some(mode) = profile.modes.first() {
@@ -626,7 +626,7 @@ mod tests {
         obs.insert(EcoMode::Human, ClassObservation { count: 30, mean_interaction: 0.3, accept_ratio: 0.92, ..base });
         obs.insert(EcoMode::Sovereign, ClassObservation { count: 5, mean_interaction: 0.8, accept_ratio: 0.97, ..base });
 
-        let profile = compute_profile(&obs, 4, 10.0);
+        let profile = compute_profile(&obs, 4);
         assert_eq!(profile.modes.len(), 6, "all 6 modes should appear");
         assert!(profile.selectivity_predicted > 0.0, "6-mode profile should have selectivity");
 
