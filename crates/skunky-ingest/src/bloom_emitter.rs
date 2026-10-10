@@ -187,6 +187,29 @@ pub fn surface_catalog() -> Vec<Surface> {
             kind: SurfaceKind::Site,
         },
         Surface {
+            host: "hypothesis.primals.eco".into(),
+            paths: vec![
+                "/", "/hypotheses/", "/philosophy/",
+                "/hypotheses/aperture-residual/", "/hypotheses/lossy-generative/",
+                "/hypotheses/whale-fall-paradox/", "/hypotheses/the-seed-and-the-mirror/",
+                "/hypotheses/the-first-question/", "/hypotheses/three-components/",
+                "/hypotheses/the-key-is-the-equals/", "/hypotheses/accumulation-not-growth/",
+                "/philosophy/the-human-engine/", "/philosophy/the-socratic-scalpel/",
+                "/philosophy/gaia-interaction-surface/", "/philosophy/seasons/",
+            ].into_iter().map(Into::into).collect(),
+            kind: SurfaceKind::Site,
+        },
+        Surface {
+            host: "beacon.primals.eco".into(),
+            paths: vec!["/"].into_iter().map(Into::into).collect(),
+            kind: SurfaceKind::Site,
+        },
+        Surface {
+            host: "hud.primals.eco".into(),
+            paths: vec!["/"].into_iter().map(Into::into).collect(),
+            kind: SurfaceKind::Site,
+        },
+        Surface {
             host: "gorilla.primals.eco".into(),
             paths: vec!["/"].into_iter().map(Into::into).collect(),
             kind: SurfaceKind::Site,
@@ -387,7 +410,7 @@ pub struct EmitterConfig {
 impl Default for EmitterConfig {
     fn default() -> Self {
         Self {
-            indexnow_key: "13f0ed8ef5cfe60356d2432f237d0e36".into(),
+            indexnow_key: "0CB4A351F4F113D99E0E1970B2AA29A6".into(),
             wayback_delay: Duration::from_secs(5),
             indexnow_delay: Duration::from_millis(500),
             wayback_batch_size: 10,

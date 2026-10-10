@@ -10,8 +10,8 @@
 //! Module declarations live in `lib.rs` for reuse; binary owns CLI + tail loop.
 
 use skunky_ingest::{
-    aggregator, anderson_bridge, caddy_bridge, cloudflare, cursor, dashboard_writer,
-    entity_classifier, epitope_registry, error, federation, fleet,
+    aggregator, anderson_bridge, bloom_emitter, caddy_bridge, cloudflare, cursor,
+    dashboard_writer, entity_classifier, epitope_registry, error, federation, fleet,
     inflammatory, ingestion_observer, lysogeny,
     rpc, abuse_reporter, bloom_sensor, scatter_server, signal_spine,
     signal_writer, threat_feed,
@@ -200,6 +200,15 @@ struct Cli {
     /// Timeline ledger for ingestion observer (shared with Python observer).
     #[arg(long, default_value = "/var/lib/skunky-ingest/ingestion-timeline.jsonl")]
     observer_timeline_path: PathBuf,
+
+    /// Enable bloom emitter — efferent IndexNow + Wayback signal push.
+    /// Runs a full cascade every bloom_emitter_interval_secs.
+    #[arg(long, default_value_t = false)]
+    bloom_emitter: bool,
+
+    /// Bloom emitter cascade interval in seconds (default: 6 hours).
+    #[arg(long, default_value_t = 21600)]
+    bloom_emitter_interval_secs: u64,
 }
 
 #[tokio::main]
@@ -420,6 +429,36 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                     Err(e) => tracing::warn!(error = %e, "plasmid federation cycle failed"),
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            }
+        });
+    }
+
+    // Bloom emitter — efferent IndexNow + Wayback signal push
+    if cli.bloom_emitter {
+        let interval = Duration::from_secs(cli.bloom_emitter_interval_secs);
+        tracing::info!(
+            interval_secs = cli.bloom_emitter_interval_secs,
+            "🌺 bloom emitter active — efferent signal propagation (IndexNow + Wayback)"
+        );
+        tokio::spawn(async move {
+            let config = bloom_emitter::EmitterConfig::default();
+            let emitter = bloom_emitter::BloomEmitter::new(config);
+            // Initial cascade on startup (after 60s warmup)
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            loop {
+                match emitter.cascade().await {
+                    Ok(report) => {
+                        tracing::info!(
+                            indexnow_urls = report.indexnow_total_urls,
+                            wayback_pages = report.wayback_total_pages,
+                            errors = report.errors.len(),
+                            elapsed_secs = report.elapsed.as_secs(),
+                            "🌺 bloom cascade complete"
+                        );
+                    }
+                    Err(e) => tracing::warn!(error = %e, "bloom cascade failed"),
+                }
+                tokio::time::sleep(interval).await;
             }
         });
     }
