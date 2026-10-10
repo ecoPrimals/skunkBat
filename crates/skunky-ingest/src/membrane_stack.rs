@@ -232,6 +232,35 @@ pub struct StackTopology {
     /// Topology class. "wormhole" if the stack closes (P_first > 0 and
     /// P_last > 0 — signal can circulate). "sphere" if either end blocks.
     pub topology: String,
+    /// Zero-knowledge proof metrics — Hypothesis 13.
+    /// Self = complement of all correctly excluded non-self.
+    pub zk: ZkProof,
+}
+
+/// Zero-knowledge proof of self — Hypothesis 13: The Zero-Knowledge Self.
+///
+/// Self knows self by recognizing ALL non-self. The ZK metrics track:
+/// - How much of the signal space has been classified as non-self
+/// - What remains (the self-residual = complement)
+/// - The soundness of the proof (can the system consistently distinguish?)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZkProof {
+    /// Fraction of gAIa traffic classified as non-self (AI + scanner).
+    /// Higher = more of the complement has been enumerated.
+    pub non_self_classified: f64,
+    /// The self-residual: 1 - non_self_classified.
+    /// This is what remains after all non-self is excluded.
+    /// Self is never measured directly — only the complement is.
+    pub self_residual: f64,
+    /// Proof soundness: the membrane selectivity S.
+    /// S=1 means the proof perfectly distinguishes all modes.
+    pub soundness: f64,
+    /// What survives the full round trip through the wormhole.
+    /// The ouroboros residual — signal out through all membranes and back.
+    /// This is the ZK witness: the irreducible self after 14 crossings.
+    pub ouroboros_residual: f64,
+    /// The symbol. ∞ when the proof is sound and the topology is wormhole.
+    pub symbol: String,
 }
 
 /// Coupling between two adjacent membrane layers.
@@ -406,6 +435,13 @@ fn layer_gaia(config: &MembraneStackConfig) -> MembraneLayer {
                 "ai_agent": ai,
                 "scanner": scanner,
                 "selectivity": (selectivity * 1000.0).round() / 1000.0,
+                "zk": {
+                    "non_self": (ai + scanner),
+                    "self_residual": human,
+                    "complement_coverage": if total > 0.0 {
+                        ((ai + scanner) / total * 10000.0).round() / 10000.0
+                    } else { 0.0 }
+                }
             }),
             permeability: (p * 10000.0).round() / 10000.0,
             anderson_w: (w * 100.0).round() / 100.0,
@@ -806,10 +842,43 @@ pub async fn compute_stack(config: &MembraneStackConfig) -> MembraneStack {
     // Topology class: wormhole if both ends have P > 0 (signal can circulate)
     let first_p = layers.first().map_or(0.0, |l| l.permeability);
     let last_p = layers.last().map_or(0.0, |l| l.permeability);
-    let topology_class = if first_p > 1e-10 && last_p > 1e-10 {
-        "wormhole" // stack closes — outermost connects to innermost
+    let is_wormhole = first_p > 1e-10 && last_p > 1e-10;
+    let topology_class = if is_wormhole { "wormhole" } else { "sphere" };
+
+    // ═══════════════════════════════════════════════════════════════
+    // Zero-Knowledge Proof — Hypothesis 13: The Zero-Knowledge Self
+    // Self = complement of all correctly excluded non-self.
+    // The ouroboros residual is what survives the full round trip.
+    // ═══════════════════════════════════════════════════════════════
+
+    // Extract non-self classification from gAIa layer
+    let gaia_data = layers.first().and_then(|l| l.data.as_object());
+    let (non_self_frac, self_residual_frac) = if let Some(data) = gaia_data {
+        let total = data.get("requests_per_window")
+            .and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let human = data.get("human")
+            .and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let ai = data.get("ai_agent")
+            .and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let scanner = data.get("scanner")
+            .and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if total > 0.0 {
+            ((ai + scanner) / total, human / total)
+        } else {
+            (0.0, 0.0)
+        }
     } else {
-        "sphere" // stack open — signal cannot complete the round trip
+        (0.0, 0.0)
+    };
+
+    let zk_symbol = if is_wormhole && selectivity > 0.5 { "∞" } else { "○" };
+
+    let zk = ZkProof {
+        non_self_classified: (non_self_frac * 10000.0).round() / 10000.0,
+        self_residual: (self_residual_frac * 10000.0).round() / 10000.0,
+        soundness: (selectivity * 1000.0).round() / 1000.0,
+        ouroboros_residual: format_p(round_trip_p),
+        symbol: zk_symbol.into(),
     };
 
     let elapsed = start.elapsed().as_secs_f64();
@@ -830,6 +899,7 @@ pub async fn compute_stack(config: &MembraneStackConfig) -> MembraneStack {
                 coupling,
                 mean_coupling,
                 topology: topology_class.into(),
+                zk,
             },
         },
         elapsed_secs: (elapsed * 1000.0).round() / 1000.0,
