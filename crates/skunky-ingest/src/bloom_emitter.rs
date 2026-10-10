@@ -206,7 +206,7 @@ pub fn surface_catalog() -> Vec<Surface> {
         },
         Surface {
             host: "hud.primals.eco".into(),
-            paths: vec!["/"].into_iter().map(Into::into).collect(),
+            paths: vec!["/", "/membrane/"].into_iter().map(Into::into).collect(),
             kind: SurfaceKind::Site,
         },
         Surface {
