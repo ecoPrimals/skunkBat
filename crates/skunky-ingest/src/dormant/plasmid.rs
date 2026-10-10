@@ -1,3 +1,8 @@
+// DORMANT — Wave 171 fossil. Behavioral plasmid tokens (Human/Agentic kingdom).
+// Original: skunky-ingest/src/plasmid.rs
+// Reason: tests only, zero production refs. ConservedPlasmid (scatter_types) is the live path.
+// Fossilized: 2026-10-10T15:51:57Z
+
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 

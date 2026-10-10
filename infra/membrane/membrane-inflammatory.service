@@ -1,7 +1,0 @@
-[Unit]
-Description=Membrane inflammatory response watchdog
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/opt/membrane/membrane-inflammatory.sh

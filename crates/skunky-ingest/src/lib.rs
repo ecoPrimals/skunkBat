@@ -18,9 +18,9 @@ pub mod entity_classifier;
 pub mod entity_profile;
 pub mod entity_topology;
 pub mod epitope_defs;
-pub mod epitope_inversion;
+// dormant: epitope_inversion (Wave 171 — tests only, never wired)
 pub mod epitope_registry;
-pub mod epitope_lure;
+// dormant: epitope_lure (Wave 171 — tests only, never wired)
 pub mod error;
 pub mod federation;
 pub mod fleet;
@@ -34,7 +34,7 @@ pub mod abuse_reporter;
 pub mod bloom_sensor;
 pub mod bloom_emitter;
 pub mod membrane_stack;
-pub mod journey_tracer;
+// dormant: journey_tracer (Wave 171 — tests only, never wired)
 pub mod scatter_nft;
 pub mod scatter_rng;
 pub mod scatter_generator;
@@ -48,5 +48,5 @@ pub mod scatter_temporal;
 pub mod scyborg_prism;
 pub mod signal_spine;
 pub mod signal_writer;
-pub mod plasmid;
+// dormant: plasmid (Wave 171 — behavioral tokens, tests only; ConservedPlasmid in scatter_types is live)
 pub mod threat_feed;

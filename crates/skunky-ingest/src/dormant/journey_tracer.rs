@@ -1,3 +1,8 @@
+// DORMANT — Wave 171 fossil. Declared but never wired to production.
+// Original: skunky-ingest/src/journey_tracer.rs
+// Reason: tests only, zero production refs. Wire in or delete.
+// Fossilized: 2026-10-10T15:51:20Z
+
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2025-2026 ecoPrimal <ecoPrimal@pm.me>
 

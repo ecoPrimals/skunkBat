@@ -838,7 +838,6 @@ async fn handle_request(
                 detector_bitmap: epi,
                 confidence: conf,
                 chain_depth: chain_depth.min(255) as u8,
-                declared: false,
                 response_type: ResponseType::Prism,
             });
 
@@ -1246,7 +1245,6 @@ async fn handle_request(
             detector_bitmap: epi,
             confidence: conf,
             chain_depth: chain_depth.min(255) as u8,
-            declared: false,
             response_type,
         });
     }
