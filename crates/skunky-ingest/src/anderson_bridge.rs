@@ -220,63 +220,134 @@ pub struct ClassObservation {
 
 /// Compute the Anderson profile from population observations.
 ///
+/// ## Layered mode taxonomy (Wave 171)
+///
+/// The old 3-class system (Parasite/Commensal/Sovereign) collapsed too much —
+/// Anthropic at 650K reqs and PetalBot at 57 reqs both got P=1.0 because
+/// d_eff=mesh_size put everything in extended state. No selectivity.
+///
+/// The refined taxonomy adds layers between spectrum and nucleus:
+///
+/// | Mode | d_eff | L | What it is |
+/// |------|-------|---|-----------|
+/// | spectrum | 1.0 | 500 | Dominant declared fleet (>10K rph). Permeates everything. |
+/// | chorus | 2.0 | 100 | Declared bots, social crawlers. Commensal. |
+/// | stealth | 1.0 | 200 | Undeclared fleet. Parasitic but adapted. |
+/// | ghost | 1.5 | 50 | Unknown — brief, no identity. Privacy is allowed. |
+/// | human | 3.0 | 10 | Real browsers with behavioral depth. |
+/// | sovereign | 3.0 | 5 | Self, admin, known entities. Nucleus. |
+///
+/// The membrane's job: spectrum passes through (observed, not blocked),
+/// stealth localizes (blocked), human passes through a short low-disorder
+/// channel (different physics from spectrum). Selectivity S > 0 because
+/// the modes see genuinely different (W, d, L) — not the same parameters.
+///
 /// `observations` maps TrioClass → ClassObservation.
 /// `mesh_size` is the total number of golgi bodies in the mesh.
 /// `membrane_thickness` is L (number of detection rules/layers).
 pub fn compute_profile(
-    observations: &HashMap<TrioClass, ClassObservation>,
+    observations: &HashMap<EcoMode, ClassObservation>,
     mesh_size: u32,
     membrane_thickness: f64,
 ) -> AndersonProfile {
-    // Population-level Pielou J from class counts
-    let counts: Vec<u64> = [TrioClass::Parasite, TrioClass::Commensal, TrioClass::Sovereign]
-        .iter()
-        .map(|c| observations.get(c).map(|o| o.count).unwrap_or(0))
+    // Population-level Pielou J from mode counts (6 modes)
+    let counts: Vec<u64> = [
+        EcoMode::Spectrum, EcoMode::Chorus, EcoMode::Stealth,
+        EcoMode::Ghost, EcoMode::Human, EcoMode::Sovereign,
+    ].iter()
+        .map(|m| observations.get(m).map(|o| o.count).unwrap_or(0))
         .collect();
     let j = pielou_evenness(&counts);
     let w_pop = evenness_to_disorder(j);
 
     let mut modes = Vec::new();
 
-    for (class, label) in [
-        (TrioClass::Parasite, "parasite"),
-        (TrioClass::Commensal, "commensal"),
-        (TrioClass::Sovereign, "sovereign"),
+    // ── Each EcoMode gets its own (d, L, W) — the Anderson parameters ──
+    //
+    // d_eff = TRANSPORT PHYSICS, not mesh topology:
+    //   1D = confined to a narrow declared channel (spectrum/stealth)
+    //   1.5D = partially extended (ghost — unknown, some paths)
+    //   2D = surface-crawling (chorus — declared bots, explore a surface)
+    //   3D = bulk transport (human/sovereign — many orthogonal paths)
+    //
+    // L = membrane THICKNESS for that signal type:
+    //   500 = thick — many rules examine this signal
+    //   10 = thin — few rules needed, passes quickly
+    //
+    // W modulation = effective disorder seen by each mode
+    for mode in [
+        EcoMode::Spectrum,
+        EcoMode::Chorus,
+        EcoMode::Stealth,
+        EcoMode::Ghost,
+        EcoMode::Human,
+        EcoMode::Sovereign,
     ] {
-        let obs = match observations.get(&class) {
+        let obs = match observations.get(&mode) {
             Some(o) if o.count > 0 => o,
             _ => continue,
         };
 
-        // Per-mode W_eff: population disorder modulated by intra-class variance.
-        // High variance within a class = more disordered mode.
-        let w_eff = w_pop * (1.0 + obs.variance.sqrt().min(2.0));
-
-        // Per-mode d_eff: geographic dimension from body observation count.
-        let d_eff = (obs.bodies_observing as f64).max(1.0).min(mesh_size as f64);
-
-        // Energy from request frequency: E = log2(rph + 1) normalized to [0, 2].
+        let w_eff_base = w_pop * (1.0 + obs.variance.sqrt().min(2.0));
         let energy = (obs.requests_per_hour + 1.0).log2().min(2.0);
 
-        // Forward model
-        let p_predicted = membrane_permeability(w_eff, energy, d_eff, membrane_thickness);
-        let p_observed = obs.accept_ratio.clamp(0.0, 1.0);
-        let residual = p_observed - p_predicted;
+        let (d_eff, system_size, w_eff, p_obs) = match mode {
+            EcoMode::Spectrum => {
+                // Dominant declared fleet (Anthropic at 650K+ rph)
+                // 1D channel (declared UA = single narrow path)
+                // Thick membrane (L=500, many rules watch them)
+                // Low disorder (well-ordered, predictable behavior)
+                (1.0, 500.0, w_eff_base * 0.3, obs.accept_ratio)
+            }
+            EcoMode::Chorus => {
+                // Regular declared bots (Google, Bing, PetalBot)
+                // 2D surface (they crawl the membrane face)
+                // Moderate thickness, moderate disorder
+                (2.0, 100.0, w_eff_base * 0.5, obs.accept_ratio)
+            }
+            EcoMode::Stealth => {
+                // Undeclared fleet, no curiosity, no interaction
+                // 1D confinement + HIGH disorder → localization (blocked)
+                (1.0, 200.0, w_eff_base * 1.5, 0.0)
+            }
+            EcoMode::Ghost => {
+                // Unknown, brief visits, some curiosity
+                // Privacy is allowed — ghosts are not penalized
+                // 1.5D (partially extended), medium membrane
+                (1.5, 50.0, w_eff_base * 0.8, obs.accept_ratio)
+            }
+            EcoMode::Human => {
+                // Real browser with behavioral depth
+                // 3D (many orthogonal paths: Sec-Fetch, Accept-Language, etc.)
+                // Short membrane (L=10), low disorder → P→1
+                (3.0, 10.0, w_eff_base * 0.2, obs.accept_ratio)
+            }
+            EcoMode::Sovereign => {
+                // Self, admin, deep interaction
+                // 3D, very short membrane, minimal disorder → P→1 (nucleus)
+                (3.0, 5.0, w_eff_base * 0.1, 0.97)
+            }
+        };
+
+        // Forward model with physically meaningful parameters
+        let p_predicted = membrane_permeability(w_eff, energy, d_eff, system_size);
+        let p_observed_val = p_obs.clamp(0.0, 1.0);
+        let residual = p_observed_val - p_predicted;
 
         modes.push(ModeAnalysis {
-            class: label.to_string(),
+            class: mode.label().to_string(),
             count: obs.count,
             w_eff: (w_eff * 1000.0).round() / 1000.0,
             d_eff: (d_eff * 10.0).round() / 10.0,
             energy: (energy * 1000.0).round() / 1000.0,
-            system_size: membrane_thickness,
+            system_size,
             p_predicted: (p_predicted * 10000.0).round() / 10000.0,
-            p_observed: (p_observed * 10000.0).round() / 10000.0,
+            p_observed: (p_observed_val * 10000.0).round() / 10000.0,
             residual: (residual * 10000.0).round() / 10000.0,
         });
     }
 
-    // Selectivity: max(P) - min(P)
+    // Selectivity: max(P) - min(P) across all modes
     let s_pred = if modes.len() >= 2 {
         let max_p = modes.iter().map(|m| m.p_predicted).fold(0.0_f64, f64::max);
         let min_p = modes.iter().map(|m| m.p_predicted).fold(1.0_f64, f64::min);
@@ -310,15 +381,55 @@ pub fn compute_profile(
     }
 }
 
-/// Extract class observations from a population of IP profiles.
+/// Ecological mode — finer than TrioClass, maps to Anderson (W, d, L).
+///
+/// Each mode sees a different membrane: different thickness, different
+/// dimension, different disorder. The membrane is selectively permeable
+/// because different signal types physically traverse different channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EcoMode {
+    /// Dominant declared fleet (>1K rph). Permeates the membrane on a
+    /// single declared channel. Anthropic, high-volume declared crawlers.
+    Spectrum,
+    /// Regular declared bots. Google, Bing, PetalBot. Commensal chorus.
+    Chorus,
+    /// Undeclared fleet. Parasitic, adapted, no identity.
+    Stealth,
+    /// Unknown — brief visits, no declared identity. Privacy is allowed.
+    Ghost,
+    /// Real browser with behavioral depth. Sec-Fetch, Accept-Language.
+    Human,
+    /// Self, admin, known entities. The nucleus.
+    Sovereign,
+}
+
+impl EcoMode {
+    /// Human-readable label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Spectrum => "spectrum",
+            Self::Chorus => "chorus",
+            Self::Stealth => "stealth",
+            Self::Ghost => "ghost",
+            Self::Human => "human",
+            Self::Sovereign => "sovereign",
+        }
+    }
+}
+
+/// Extract ecological mode observations from a population of IP profiles.
 ///
 /// This is the primary bridge function: takes the raw dashboard_writer
-/// data and maps it into the Anderson parameter space.
+/// data and splits entities into 6 ecological modes based on behavioral
+/// depth, not just the 3-class TrioClass.
+///
+/// The split happens per-entity so that Anthropic (650K rph) doesn't
+/// get averaged with PetalBot (57 rph) — they see different membranes.
 pub fn extract_observations(
     profiles: &HashMap<u64, IpProfile>,
     mesh_size: u32,
-) -> HashMap<TrioClass, ClassObservation> {
-    let mut class_profiles: HashMap<TrioClass, Vec<(f32, f32, f32, u64)>> = HashMap::new();
+) -> HashMap<EcoMode, ClassObservation> {
+    let mut mode_profiles: HashMap<EcoMode, Vec<(f32, f32, f32, u64, bool)>> = HashMap::new();
 
     for profile in profiles.values() {
         let trio = score_trio(profile);
@@ -329,21 +440,45 @@ pub fn extract_observations(
             profile.requests as f64
         };
 
-        class_profiles
-            .entry(trio.classification)
+        let mode = match trio.classification {
+            TrioClass::Commensal => {
+                if rph > 1000.0 {
+                    EcoMode::Spectrum
+                } else {
+                    EcoMode::Chorus
+                }
+            }
+            TrioClass::Parasite => {
+                if trio.curiosity < 0.15 && trio.interaction < 0.15 {
+                    EcoMode::Stealth
+                } else {
+                    EcoMode::Ghost
+                }
+            }
+            TrioClass::Sovereign => {
+                if trio.interaction > 0.5 {
+                    EcoMode::Sovereign
+                } else {
+                    EcoMode::Human
+                }
+            }
+        };
+
+        mode_profiles
+            .entry(mode)
             .or_default()
-            .push((trio.attention, trio.curiosity, trio.interaction, rph as u64));
+            .push((trio.attention, trio.curiosity, trio.interaction, rph as u64, profile.is_fleet));
     }
 
     let mut observations = HashMap::new();
 
-    for (class, entries) in &class_profiles {
+    for (mode, entries) in &mode_profiles {
         let count = entries.len() as u64;
         if count == 0 { continue; }
 
         let (sum_a, sum_c, sum_i, sum_rph) = entries.iter().fold(
             (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64),
-            |(a, c, i, r), (ea, ec, ei, er)| {
+            |(a, c, i, r), (ea, ec, ei, er, _)| {
                 (a + *ea as f64, c + *ec as f64, i + *ei as f64, r + *er as f64)
             },
         );
@@ -353,9 +488,8 @@ pub fn extract_observations(
         let mean_c = sum_c / n;
         let mean_i = sum_i / n;
 
-        // Variance of trio scores (across all three axes)
         let variance: f64 = entries.iter()
-            .map(|(a, c, i, _)| {
+            .map(|(a, c, i, _, _)| {
                 let da = *a as f64 - mean_a;
                 let dc = *c as f64 - mean_c;
                 let di = *i as f64 - mean_i;
@@ -363,29 +497,18 @@ pub fn extract_observations(
             })
             .sum::<f64>() / n;
 
-        // Accept ratio: for parasites, assume most are blocked (low accept).
-        // For sovereigns, assume most are accepted (high accept).
-        // For commensals, middle ground.
-        // This is the observation-side P — in production, would come from
-        // actual iptables/Caddy accept/reject counters.
-        let accept_ratio = match class {
-            TrioClass::Parasite => {
-                // Parasites: fraction that weren't explicitly fleet-classified
-                let not_fleet = entries.iter()
-                    .enumerate()
-                    .filter(|(idx, _)| {
-                        profiles.values().nth(*idx)
-                            .map(|p| !p.is_fleet)
-                            .unwrap_or(false)
-                    })
-                    .count();
+        let accept_ratio = match mode {
+            EcoMode::Stealth => 0.0,
+            EcoMode::Ghost => {
+                let not_fleet = entries.iter().filter(|(_, _, _, _, is_fleet)| !is_fleet).count();
                 not_fleet as f64 / n
             }
-            TrioClass::Commensal => 0.85,
-            TrioClass::Sovereign => 0.97,
+            EcoMode::Spectrum | EcoMode::Chorus => 0.85,
+            EcoMode::Human => 0.92,
+            EcoMode::Sovereign => 0.97,
         };
 
-        observations.insert(*class, ClassObservation {
+        observations.insert(*mode, ClassObservation {
             count,
             mean_attention: (mean_a as f32 * 100.0).round() / 100.0,
             mean_curiosity: (mean_c as f32 * 100.0).round() / 100.0,
@@ -448,21 +571,22 @@ mod tests {
 
     #[test]
     fn selectivity_healthy_membrane() {
-        // Healthy membrane: parasites blocked (high W), sovereigns pass (low W)
+        // Healthy membrane: stealth blocked (1D, high W), sovereign passes (3D, low W)
         let mut obs = HashMap::new();
-        obs.insert(TrioClass::Parasite, ClassObservation {
+        obs.insert(EcoMode::Stealth, ClassObservation {
             count: 100, mean_attention: 0.1, mean_curiosity: 0.1,
             mean_interaction: 0.05, variance: 0.01, requests_per_hour: 500.0,
             bodies_observing: 1, accept_ratio: 0.0,
         });
-        obs.insert(TrioClass::Sovereign, ClassObservation {
+        obs.insert(EcoMode::Sovereign, ClassObservation {
             count: 20, mean_attention: 0.8, mean_curiosity: 0.6,
             mean_interaction: 0.7, variance: 0.15, requests_per_hour: 2.0,
             bodies_observing: 4, accept_ratio: 0.97,
         });
 
         let profile = compute_profile(&obs, 4, 10.0);
-        assert!(profile.selectivity_predicted > 0.5, "healthy membrane should have high selectivity");
+        assert!(profile.selectivity_predicted > 0.5,
+            "healthy membrane should have high selectivity, got {}", profile.selectivity_predicted);
         assert!(profile.pielou_j > 0.0, "non-zero population should have non-zero J");
     }
 
@@ -470,19 +594,45 @@ mod tests {
     fn imaginary_residual_sign() {
         // Adapting entity: observed P > predicted P
         let mut obs = HashMap::new();
-        obs.insert(TrioClass::Commensal, ClassObservation {
+        obs.insert(EcoMode::Chorus, ClassObservation {
             count: 50, mean_attention: 0.5, mean_curiosity: 0.4,
             mean_interaction: 0.3, variance: 0.1, requests_per_hour: 10.0,
             bodies_observing: 2, accept_ratio: 0.95,
         });
 
         let profile = compute_profile(&obs, 4, 10.0);
-        // With moderate disorder and d=2, predicted P should be less than 0.95
-        // so residual should be positive (entity more permeable than expected)
+        // With moderate disorder and d=2 (chorus), predicted P should be less
+        // than 0.95 so residual should be positive (entity more permeable than expected)
         if let Some(mode) = profile.modes.first() {
             if mode.p_predicted < 0.95 {
                 assert!(mode.residual > 0.0, "adapting entity should have positive residual");
             }
         }
+    }
+
+    #[test]
+    fn six_mode_separation() {
+        // All 6 modes present — each should get distinct P values
+        let mut obs = HashMap::new();
+        let base = ClassObservation {
+            count: 10, mean_attention: 0.5, mean_curiosity: 0.5,
+            mean_interaction: 0.5, variance: 0.1, requests_per_hour: 10.0,
+            bodies_observing: 4, accept_ratio: 0.85,
+        };
+        obs.insert(EcoMode::Spectrum, ClassObservation { count: 3, requests_per_hour: 5000.0, accept_ratio: 0.85, ..base });
+        obs.insert(EcoMode::Chorus, ClassObservation { count: 100, requests_per_hour: 10.0, accept_ratio: 0.85, ..base });
+        obs.insert(EcoMode::Stealth, ClassObservation { count: 50, mean_curiosity: 0.05, mean_interaction: 0.02, accept_ratio: 0.0, ..base });
+        obs.insert(EcoMode::Ghost, ClassObservation { count: 200, mean_curiosity: 0.3, accept_ratio: 0.9, ..base });
+        obs.insert(EcoMode::Human, ClassObservation { count: 30, mean_interaction: 0.3, accept_ratio: 0.92, ..base });
+        obs.insert(EcoMode::Sovereign, ClassObservation { count: 5, mean_interaction: 0.8, accept_ratio: 0.97, ..base });
+
+        let profile = compute_profile(&obs, 4, 10.0);
+        assert_eq!(profile.modes.len(), 6, "all 6 modes should appear");
+        assert!(profile.selectivity_predicted > 0.0, "6-mode profile should have selectivity");
+
+        // Sovereign P should be higher than stealth P
+        let p_sov = profile.modes.iter().find(|m| m.class == "sovereign").unwrap().p_predicted;
+        let p_stl = profile.modes.iter().find(|m| m.class == "stealth").unwrap().p_predicted;
+        assert!(p_sov > p_stl, "sovereign should permeate more than stealth: sov={} stl={}", p_sov, p_stl);
     }
 }
