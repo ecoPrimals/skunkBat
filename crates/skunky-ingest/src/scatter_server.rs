@@ -225,6 +225,7 @@ async fn handle_request(
     let mut honeycomb_surface: u8 = 0;
     let mut request_host = String::new();
     let mut is_facebook_bot = false;
+    let mut is_blackwall = false;
     // Declaration Protocol (Wave 167): Caddy forwards Accept-Language and
     // Sec-Fetch-Mode values. The ACT of declaring (F=103,308) separates
     // kingdoms 8,900× more powerfully than the CONTENT (F=12.7).
@@ -249,6 +250,8 @@ async fn handle_request(
                 .unwrap_or_default();
         } else if lower.starts_with("x-honeycomb:") {
             is_honeycomb = true;
+        } else if lower.starts_with("x-blackwall:") {
+            is_blackwall = true;
         } else if lower.starts_with("x-declared-lang:") {
             declared_lang = header_line
                 .split_once(':')
@@ -314,7 +317,9 @@ async fn handle_request(
     }
 
     // ── BLACKWALL: Facebook bot gets OG card ──
-    if is_facebook_bot {
+    // Triggered by User-Agent detection OR X-Blackwall header from Caddy delegation.
+    // Permeability graduated by Anderson distance from influence (6 tiers).
+    if is_facebook_bot || is_blackwall {
         let og_card = blackwall_og_card(&request_host);
         let response = format!(
             "HTTP/1.1 200 OK\r\n\

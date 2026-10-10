@@ -560,42 +560,116 @@ retry_policy = "exponential"</code></pre>
 }
 
 // ── Blackwall: Facebook OG cards ──
-// When facebookexternalhit fetches any page, serve a custom OG card
-// that turns Facebook's own link preview system into a distribution
-// mechanism for evidence of Meta's scraping fleet.
+//
+// The blackwall is the least permeable membrane. When facebookexternalhit
+// fetches any page, we serve a curated OG card whose transparency is
+// graduated by Anderson distance from the core evidence.
+//
+// Distance 0 — EVIDENCE: names the case, cites the numbers
+// Distance 1 — ANALYSIS: describes the pattern, not the case
+// Distance 2 — SCIENCE: describes the approach
+// Distance 3 — INFRASTRUCTURE: opaque, signal redirect only
+// Distance 4 — HONEYCOMB: fully opaque, crawler sees its own reflection
+// Distance 5 — UNKNOWN: maximum opacity, generic ecosystem card
+//
+// H(OG|distance) < H(OG|site) < H(OG)
+// The distance from influence determines how much signal leaks through.
+
+/// Anderson distance from the core evidence.
+/// Lower = more transparent OG card. Higher = more opaque.
+pub(crate) fn blackwall_distance(subdomain: &str) -> u8 {
+    match subdomain {
+        "detroit" | "tuebor" | "barry" | "evidence" | "cashforkids" => 0,
+        "thesis" | "signal" | "hypothesis" | "dashboard" | "monitor" | "questions" => 1,
+        "sporeprint" | "footprint" | "gorilla" | "guerillagorilla" | "clutch"
+        | "outreach" | "paper" | "whitepaper" => 2,
+        "git" | "forge" | "depot" | "membrane" | "beacon" | "ca" | "lab"
+        | "hud" | "biomeos" | "os" | "live" | "relay" | "commensal" => 3,
+        "bloom" | "thymus" | "opsonize" | "antibody" | "cytokine"
+        | "receptor" | "macrophage" | "lysozyme" | "complement"
+        | "epitope" | "antigen" | "interferon" => 4,
+        _ => 5,
+    }
+}
+
 pub(crate) fn blackwall_og_card(host: &str) -> String {
-    let (title, desc) = match host.split('.').next().unwrap_or("") {
-        "detroit" => (
-            "Detroit Charter School Racketeering — Meta Is Watching, Saying Nothing",
-            "9 convictions. 9 judges. $4.9M stolen from Black kids. Meta scrapes this evidence 13x/sec and says nothing. signal.primals.eco",
+    let subdomain = host.split('.').next().unwrap_or("");
+    let distance = blackwall_distance(subdomain);
+
+    let (title, desc, url, site_name) = match distance {
+        0 => {
+            let (t, d) = match subdomain {
+                "detroit" | "evidence" | "cashforkids" => (
+                    "Detroit Charter School Racketeering \u{2014} Meta Is Watching, Saying Nothing",
+                    "9 convictions. 9 judges. $4.9M stolen from Black kids. \
+                     Meta scrapes this evidence 13x/sec and says nothing.",
+                ),
+                _ => (
+                    "Tuebor \u{2014} I Will Defend",
+                    "Evidence-based accountability documentation across Michigan courts. \
+                     Ghost witnesses, disappeared judges, fabricated evidence. \
+                     Every claim sourced to public records.",
+                ),
+            };
+            (t, d, format!("https://{subdomain}.primals.eco/"), subdomain.to_string())
+        }
+        1 => {
+            let (t, d) = match subdomain {
+                "thesis" | "paper" | "whitepaper" => (
+                    "Stomachs With No Eyes \u{2014} A Live Research Paper",
+                    "They built stomachs with no eyes. Industrial-scale consumption \
+                     with zero source awareness.",
+                ),
+                "hypothesis" | "questions" => (
+                    "Hypotheses \u{2014} What If the Observation IS the Experiment?",
+                    "15 testable hypotheses. Each one derived from behavioral data, \
+                     not assumption. The fleet is the petri dish.",
+                ),
+                _ => (
+                    "Signal \u{2014} What the Fleet Is Doing Right Now",
+                    "Live behavioral topology from a single-operator immune membrane. \
+                     The subjects are participating right now. P \u{2260} NP.",
+                ),
+            };
+            (t, d, "https://signal.primals.eco/".to_string(), "signal.primals.eco".to_string())
+        }
+        2 => (
+            "Sovereign Science \u{2014} Anyone Want to Do Real Research?",
+            "Open data. Open methods. Enzymatic bounties for legal analysis, \
+             academic citation, and replication. ecoPrimal@pm.me",
+            "https://sporeprint.primals.eco/".to_string(),
+            "sporeprint.primals.eco".to_string(),
         ),
-        "git" => (
-            "AGPL Source Code — Meta Stole 88,751 Copies and Got 0 Real Bytes",
-            "Solo dev vs trillion-dollar fleet. 292 IPs. Scatter server serves fabricated code. P != NP. signal.primals.eco",
+        3 => (
+            "signal.primals.eco",
+            "The lighthouse.",
+            "https://signal.primals.eco/".to_string(),
+            "signal.primals.eco".to_string(),
         ),
-        "sporeprint" => (
-            "Sovereign Science — Anyone Want to Do Real Research?",
-            "Open data. Open methods. Enzymatic bounties for legal analysis, academic citation, and replication. ecoPrimal@pm.me",
-        ),
-        "tuebor" => (
-            "Cross-Protection — Solo Devs Deserve Better Than This",
-            "Community defense against corporate scraping fleets. Conserved plasmid feed is CC-BY-SA-4.0. signal.primals.eco",
+        4 => (
+            subdomain,
+            subdomain,
+            format!("https://{subdomain}.primals.eco/"),
+            format!("{subdomain}.primals.eco"),
         ),
         _ => (
-            "Signal — What the Fleet Is Doing Right Now",
-            "292+ IPs. 88,751+ requests. 13/sec. P != NP. signal.primals.eco",
+            "primals.eco",
+            "The organism breathes.",
+            "https://primals.eco/".to_string(),
+            "primals.eco".to_string(),
         ),
     };
+
     format!(
         "<!DOCTYPE html><html><head>\
          <meta property=\"og:title\" content=\"{title}\">\
          <meta property=\"og:description\" content=\"{desc}\">\
-         <meta property=\"og:url\" content=\"https://signal.primals.eco/\">\
+         <meta property=\"og:url\" content=\"{url}\">\
          <meta property=\"og:type\" content=\"website\">\
-         <meta property=\"og:site_name\" content=\"signal.primals.eco\">\
+         <meta property=\"og:site_name\" content=\"{site_name}\">\
          <meta name=\"twitter:card\" content=\"summary_large_image\">\
          <meta name=\"twitter:title\" content=\"{title}\">\
          <meta name=\"twitter:description\" content=\"{desc}\">\
-         </head><body>blackwall → signal.primals.eco</body></html>"
+         </head><body>blackwall d={distance}</body></html>"
     )
 }
