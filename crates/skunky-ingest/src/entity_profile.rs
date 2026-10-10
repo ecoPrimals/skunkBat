@@ -61,8 +61,10 @@ pub struct EntityProfile {
 
     /// Wave 166f: Conserved epitope scores — signals fleet can't cheaply evade.
     pub epitopes: EpitopeScores,
-    /// Composite fleet confidence (% of epitopes triggered).
+    /// Composite fleet confidence (% of epitopes triggered), reflected by vitality.
     pub fleet_confidence: f64,
+    /// Mean vitality across evaluated epitopes.  High = near the mobility edge = uncertain = alive.
+    pub vitality: f64,
 }
 
 /// Seven conserved epitopes from antigenic drift analysis (Wave 166f+167).
@@ -92,10 +94,23 @@ pub struct EpitopeScores {
 }
 
 /// Result for a single epitope check.
+///
+/// The `vitality` field is the reflected score — the mirror of the epitope
+/// at the threshold boundary.  Entities far from the threshold in either
+/// direction have vitality ≈ 0 (certain machine or certain human).
+/// Entities *at* the threshold have maximum vitality — the uncertainty
+/// itself is the sign of life.
+///
+/// Mathematically: `vitality = 1.0 - |score - threshold| / threshold`
+/// clamped to \[0, 1\].  This is the Anderson delocalization signal:
+/// at the mobility edge the localization length diverges.
 #[derive(Debug, Serialize)]
 pub struct EpitopeResult {
     pub score: f64,
     pub triggered: bool,
+    /// Reflected life-signal: peaks at the threshold boundary.
+    /// Uncertainty is a sign of life.
+    pub vitality: f64,
     pub description: String,
 }
 
@@ -496,18 +511,28 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
     }
 
     // ── Wave 166f+167: Seven conserved epitopes ──
+    //
+    // Wave 171: vitality reflection — the mirror at the mobility edge.
+    // Entities near the threshold get high vitality; entities far away
+    // (in either direction) get vitality ≈ 0.  Uncertainty is life.
     let mut epitope_count = 0u32;
     let mut epitope_triggered = 0u32;
+    let mut vitality_sum = 0.0_f64;
 
     let sec_fetch_monotone = if !accum.sec_fetch_triplets.is_empty() && accum.total > 10 {
         let top_count = accum.sec_fetch_triplets.values().max().copied().unwrap_or(0);
         let pct = top_count as f64 / accum.total as f64 * 100.0;
-        let triggered = pct > 95.0;
+        let threshold = 95.0_f64;
+        let triggered = pct > threshold;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
+        // Vitality: distance from threshold, normalized.  Peak at pct == threshold.
+        let v = (1.0 - (pct - threshold).abs() / threshold).max(0.0);
+        vitality_sum += v;
         Some(EpitopeResult {
             score: (pct * 10.0).round() / 10.0,
             triggered,
+            vitality: (v * 1000.0).round() / 1000.0,
             description: format!("Same Sec-Fetch triplet on {:.1}% of requests", pct),
         })
     } else { None };
@@ -515,12 +540,17 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
     let reading_deficit = if intervals.len() > 10 {
         let pauses = intervals.iter().filter(|&&i| i > 8.0).count();
         let pct = pauses as f64 / intervals.len() as f64 * 100.0;
-        let triggered = pct < 10.0;
+        let threshold = 10.0_f64;
+        let triggered = pct < threshold;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
+        // Vitality: peaks when pct ≈ threshold.  At 9.6% → v ≈ 0.96. At 0.1% → v ≈ 0.01.
+        let v = (1.0 - (pct - threshold).abs() / threshold).max(0.0);
+        vitality_sum += v;
         Some(EpitopeResult {
             score: (pct * 10.0).round() / 10.0,
             triggered,
+            vitality: (v * 1000.0).round() / 1000.0,
             description: format!("Only {:.1}% of intervals >8s (reading pauses)", pct),
         })
     } else { None };
@@ -531,33 +561,45 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
         let triggered = pool < threshold;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
+        // Vitality: pool near threshold = uncertain = alive
+        let v = (1.0 - (pool as f64 - threshold as f64).abs() / threshold as f64).max(0.0);
+        vitality_sum += v;
         Some(EpitopeResult {
             score: pool as f64,
             triggered,
+            vitality: (v * 1000.0).round() / 1000.0,
             description: format!("{} unique UAs for {} visits", pool, accum.total),
         })
     } else { None };
 
     let session_absent = if accum.total > 20 {
         let pct = accum.cookie_present as f64 / accum.total as f64 * 100.0;
-        let triggered = pct < 5.0;
+        let threshold = 5.0_f64;
+        let triggered = pct < threshold;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
+        let v = (1.0 - (pct - threshold).abs() / threshold).max(0.0);
+        vitality_sum += v;
         Some(EpitopeResult {
             score: (pct * 10.0).round() / 10.0,
             triggered,
+            vitality: (v * 1000.0).round() / 1000.0,
             description: format!("Cookies on {:.1}% of requests", pct),
         })
     } else { None };
 
     let referer_self_loop = if accum.total > 20 {
         let pct = accum.referer_external as f64 / accum.total as f64 * 100.0;
-        let triggered = pct < 2.0;
+        let threshold = 2.0_f64;
+        let triggered = pct < threshold;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
+        let v = (1.0 - (pct - threshold).abs() / threshold).max(0.0);
+        vitality_sum += v;
         Some(EpitopeResult {
             score: (pct * 10.0).round() / 10.0,
             triggered,
+            vitality: (v * 1000.0).round() / 1000.0,
             description: format!("External referers on {:.1}% of requests", pct),
         })
     } else { None };
@@ -565,12 +607,17 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
     let burst_ratio_epitope = if intervals.len() > 10 {
         let bursts = intervals.iter().filter(|&&i| i < 3.0).count();
         let pct = bursts as f64 / intervals.len() as f64 * 100.0;
-        let triggered = pct > 50.0;
+        let threshold = 50.0_f64;
+        let triggered = pct > threshold;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
+        // Vitality: peaks at pct == threshold.  76% → v = 0.48.  99% → v ≈ 0.02.
+        let v = (1.0 - (pct - threshold).abs() / threshold).max(0.0);
+        vitality_sum += v;
         Some(EpitopeResult {
             score: (pct * 10.0).round() / 10.0,
             triggered,
+            vitality: (v * 1000.0).round() / 1000.0,
             description: format!("{:.1}% of intervals <3s", pct),
         })
     } else { None };
@@ -585,12 +632,16 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
         // (non-sec-fetch requests are already classified as stealth/unknown)
         let sec_fetch_total = accum.sec_fetch_present;
         let absent_pct = accum.referer_absent as f64 / sec_fetch_total as f64 * 100.0;
-        let triggered = absent_pct > 95.0;
+        let threshold = 95.0_f64;
+        let triggered = absent_pct > threshold;
         epitope_count += 1;
         if triggered { epitope_triggered += 1; }
+        let v = (1.0 - (absent_pct - threshold).abs() / threshold).max(0.0);
+        vitality_sum += v;
         Some(EpitopeResult {
             score: (absent_pct * 10.0).round() / 10.0,
             triggered,
+            vitality: (v * 1000.0).round() / 1000.0,
             description: format!(
                 "{:.1}% of Sec-Fetch requests have no referer ({} absent / {} with sec-fetch)",
                 absent_pct, accum.referer_absent, sec_fetch_total
@@ -598,11 +649,48 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
         })
     } else { None };
 
-    let fleet_confidence = if epitope_count > 0 {
-        (epitope_triggered as f64 / epitope_count as f64 * 1000.0).round() / 10.0
+    // Fleet confidence with vitality reflection (Wave 171).
+    //
+    // The raw score is triggered/total (how many epitopes fired).
+    // The vitality mean measures how close the entity sits to the
+    // threshold boundaries — the mobility edge.
+    //
+    // But vitality only matters when there IS genuine uncertainty —
+    // when the entity has a MIX of triggered and not-triggered epitopes.
+    // An entity at 7/7 is certain-dead regardless of individual proximity.
+    // An entity at 0/7 is certain-alive.  The uncertain band is in between.
+    //
+    // We weight vitality by the binary entropy of the trigger ratio:
+    //   H(p) = -p·log₂(p) - (1-p)·log₂(1-p)
+    // which peaks at p=0.5 (maximum uncertainty) and vanishes at p=0 and p=1.
+    //
+    //   Ghost  (7/7, H=0)       → vitality suppressed → fleet ≈ 100%
+    //   human  (4/7, H≈0.99)    → vitality amplified  → fleet drops
+    //   clean  (0/7, H=0)       → vitality suppressed → fleet ≈ 0%
+    let vitality_mean = if epitope_count > 0 {
+        vitality_sum / epitope_count as f64
     } else {
         0.0
     };
+    let fleet_raw = if epitope_count > 0 {
+        epitope_triggered as f64 / epitope_count as f64 * 100.0
+    } else {
+        0.0
+    };
+    // Binary entropy of trigger ratio — peaks at 50/50 mix
+    let p = if epitope_count > 0 {
+        epitope_triggered as f64 / epitope_count as f64
+    } else {
+        0.0
+    };
+    let entropy = if p > 0.0 && p < 1.0 {
+        -(p * p.log2() + (1.0 - p) * (1.0 - p).log2())
+    } else {
+        0.0 // all-triggered or none-triggered → no uncertainty → no vitality
+    };
+    // Effective vitality: raw vitality gated by entropy of the trigger mix
+    let effective_vitality = vitality_mean * entropy;
+    let fleet_confidence = (fleet_raw * (1.0 - effective_vitality) * 10.0).round() / 10.0;
 
     EntityProfile {
         label: entity_id.label().to_string(),
@@ -658,6 +746,7 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
             referer_absence: referer_absence_epitope,
         },
         fleet_confidence,
+        vitality: (effective_vitality * 1000.0).round() / 1000.0,
     }
 }
 
@@ -741,7 +830,7 @@ mod tests {
     use super::*;
 
     fn make_result(score: f64, triggered: bool) -> EpitopeResult {
-        EpitopeResult { score, triggered, description: String::new() }
+        EpitopeResult { score, triggered, vitality: 0.0, description: String::new() }
     }
 
     fn empty_scores() -> EpitopeScores {
