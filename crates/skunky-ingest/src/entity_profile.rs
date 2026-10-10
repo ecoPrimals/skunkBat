@@ -65,6 +65,20 @@ pub struct EntityProfile {
     pub fleet_confidence: f64,
     /// Mean vitality across evaluated epitopes.  High = near the mobility edge = uncertain = alive.
     pub vitality: f64,
+
+    /// Wave 171: Negentropy — defensive information provided TO the organism.
+    ///
+    /// Vuln scanners, path probers, and traversal attempts generate information
+    /// about the attack surface.  Every `.env` probe they run is a diagnostic
+    /// the organism didn't have to pay for.  They are free pen testers.
+    ///
+    /// `negentropy` measures how much defensive information this entity provides:
+    /// unique vulnerability paths probed × probe diversity.  Higher = more useful.
+    /// Entities with high negentropy defend others by mapping the attack surface.
+    pub negentropy: f64,
+    /// The unique vulnerability paths this entity has probed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub vuln_probes: Vec<String>,
 }
 
 /// Seven conserved epitopes from antigenic drift analysis (Wave 166f+167).
@@ -692,6 +706,44 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
     let effective_vitality = vitality_mean * entropy;
     let fleet_confidence = (fleet_raw * (1.0 - effective_vitality) * 10.0).round() / 10.0;
 
+    // ── Wave 171: Negentropy — defensive information from vuln probes ──
+    //
+    // Vulnerability scanners, path traversal probers, and .env hunters are
+    // free pen testers.  Each unique probe path teaches the organism something
+    // about its attack surface.  Negentropy = information they provide TO us.
+    //
+    // Negentropy score = log₂(unique_vuln_paths + 1) × coverage_ratio
+    // where coverage_ratio = vuln_probes / total_requests.
+    //
+    // A scanner that probes 50 unique .env paths across 3000 requests has high
+    // negentropy.  A fleet that hits the same /commit/ path 800K times has zero.
+    const VULN_MARKERS: &[&str] = &[
+        ".env", ".git/", ".git-", ".aws/", ".docker/",
+        "wp-admin", "wp-login", "wp-includes", "wp-content",
+        "actuator", "phpinfo", "phpmyadmin", "adminer",
+        "config.", "backup.", "database.", ".sql",
+        "xmlrpc", "shell", "cgi-bin", "eval-stdin",
+        "%2e%2e", "../", "etc/passwd", "proc/self",
+    ];
+    let vuln_paths: Vec<String> = repo_vec.iter()
+        .filter(|(path, _)| {
+            let lp = path.to_lowercase();
+            VULN_MARKERS.iter().any(|m| lp.contains(m))
+        })
+        .map(|(path, _)| path.clone())
+        .take(30)
+        .collect();
+    let vuln_count = vuln_paths.len();
+    let negentropy_score = if vuln_count > 0 {
+        let diversity = ((vuln_count + 1) as f64).log2();
+        let coverage = vuln_count as f64 / accum.total.max(1) as f64;
+        // Scale: log₂(paths) × coverage × 100, capped at 100
+        (diversity * coverage * 100.0 * 100.0).min(100.0)
+    } else {
+        0.0
+    };
+    let negentropy_score = (negentropy_score * 100.0).round() / 100.0;
+
     EntityProfile {
         label: entity_id.label().to_string(),
         is_fleet: entity_id.is_fleet(),
@@ -731,7 +783,7 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
         },
         path_ops,
         blame_pct,
-        top_repos: repo_vec.into_iter().take(20).collect(),
+        top_repos: repo_vec.clone().into_iter().take(20).collect(),
         targets_real_only: has_real && !has_scatter,
         targets_scatter_only: !has_real && has_scatter,
         timing,
@@ -747,6 +799,8 @@ pub(crate) fn build_profile(entity_id: EntityId, accum: EntityAccum) -> EntityPr
         },
         fleet_confidence,
         vitality: (effective_vitality * 1000.0).round() / 1000.0,
+        negentropy: negentropy_score,
+        vuln_probes: vuln_paths,
     }
 }
 
