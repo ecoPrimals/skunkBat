@@ -189,7 +189,7 @@ pub fn generate_plasmid(
 
     let trio = score_trio(profile);
 
-    // Parasites are true non-self — no plasmid
+    // Fleet is true non-self — no plasmid
     if trio.classification == TrioClass::Parasite {
         return None;
     }
