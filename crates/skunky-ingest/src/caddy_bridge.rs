@@ -30,16 +30,25 @@ use cellmembrane_types::fleet::DefensePosture;
 /// Configuration for the Caddy bridge.
 #[derive(Debug, Clone)]
 pub struct CaddyBridgeConfig {
-    /// Path to the Caddyfile to modify.
+    /// Path to the Caddyfile (used for reload command, NOT written to).
     pub caddyfile_path: PathBuf,
     /// Command to reload Caddy.
     pub caddy_reload_cmd: String,
     /// How long matched IPs stay in the block list (seconds).
     pub ip_ttl_secs: u64,
-    /// Start marker in the Caddyfile.
+    /// Start marker in the Caddyfile (legacy — used only for one-time migration).
     pub start_marker: String,
-    /// End marker in the Caddyfile.
+    /// End marker in the Caddyfile (legacy — used only for one-time migration).
     pub end_marker: String,
+    /// Directory for import snippet files. caddy-bridge writes fleet matchers
+    /// here instead of injecting into the Caddyfile. The Caddyfile uses
+    /// `import /path/to/fleet.snippet` to include them.
+    ///
+    /// This is the vacuole fix: the Caddyfile was 78% fleet IP data (294KB
+    /// of 378KB) because caddy-bridge rewrote the entire file every sync.
+    /// Now the Caddyfile is static config and snippets are the ephemeral
+    /// routing layer.
+    pub snippet_dir: PathBuf,
 }
 
 impl Default for CaddyBridgeConfig {
@@ -50,6 +59,7 @@ impl Default for CaddyBridgeConfig {
             ip_ttl_secs: 3600,
             start_marker: "~~FLEET_PRESSURE_START~~".to_string(),
             end_marker: "~~FLEET_PRESSURE_END~~".to_string(),
+            snippet_dir: PathBuf::from("/opt/membrane/fleet-imports"),
         }
     }
 }
@@ -120,25 +130,48 @@ impl CaddyBridge {
     /// `self_ips` contains IPs that must never be blocked. Pass an empty set
     /// to disable negative selection (not recommended in production).
     ///
-    /// **Sourdough bootstrapping**: On creation, the bridge parses the
-    /// existing Caddyfile between FLEET_PRESSURE markers and restores
-    /// `tracked_ips` from the directives already written there. This
-    /// ensures restarts don't wipe active defense posture. The Caddyfile
-    /// itself is the durable state until the provenance trio
-    /// (rhizoCrypt/loamSpine/sweetGrass) provides a proper DAG.
+    /// **Sourdough bootstrapping**: On creation, the bridge reads the
+    /// fleet snippet file to restore `tracked_ips`. Falls back to parsing
+    /// Caddyfile markers for backward compatibility during migration.
+    /// The snippet file is the durable state.
     #[must_use]
     pub fn new(config: CaddyBridgeConfig, self_ips: HashSet<String>) -> Self {
-        let tracked_ips = Self::restore_from_caddyfile(&config);
-        let mut last_written: Vec<String> = tracked_ips.keys().cloned().collect();
-        last_written.sort();
-
-        if !tracked_ips.is_empty() {
-            tracing::info!(
-                restored = tracked_ips.len(),
-                "🫓 sourdough: restored {} fleet IPs from existing Caddyfile directives",
-                tracked_ips.len()
+        // Ensure snippet directory exists
+        if let Err(e) = std::fs::create_dir_all(&config.snippet_dir) {
+            tracing::warn!(
+                error = %e,
+                dir = %config.snippet_dir.display(),
+                "could not create snippet directory"
             );
         }
+
+        // Try snippet files first, fall back to Caddyfile markers
+        let tracked_ips = {
+            let snippet_path = config.snippet_dir.join("fleet.snippet");
+            let from_snippets = Self::restore_from_snippet(&snippet_path);
+            if from_snippets.is_empty() {
+                // Backward compat: try legacy Caddyfile markers
+                let from_legacy = Self::restore_from_caddyfile(&config);
+                if !from_legacy.is_empty() {
+                    tracing::info!(
+                        restored = from_legacy.len(),
+                        "🫓 sourdough: migrated {} fleet IPs from legacy Caddyfile markers",
+                        from_legacy.len()
+                    );
+                }
+                from_legacy
+            } else {
+                tracing::info!(
+                    restored = from_snippets.len(),
+                    "🫓 sourdough: restored {} fleet IPs from snippet file",
+                    from_snippets.len()
+                );
+                from_snippets
+            }
+        };
+
+        let mut last_written: Vec<String> = tracked_ips.keys().cloned().collect();
+        last_written.sort();
 
         Self {
             config,
@@ -148,13 +181,21 @@ impl CaddyBridge {
         }
     }
 
-    /// Parse existing fleet directives from the Caddyfile between markers.
+    /// Parse fleet directives from a snippet file.
     ///
     /// Reads `@fleet_{posture} remote_ip {ip_list}` lines and reconstructs
-    /// TrackedIp entries. This is the sourdough starter — the Caddyfile
-    /// ferments its own state across restarts.
+    /// TrackedIp entries. The snippet file is the sourdough starter.
+    fn restore_from_snippet(path: &Path) -> HashMap<String, TrackedIp> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return HashMap::new(),
+        };
+        Self::parse_fleet_directives(&content)
+    }
+
+    /// Parse existing fleet directives from the Caddyfile between markers.
+    /// Legacy method — used only for backward-compatible migration.
     fn restore_from_caddyfile(config: &CaddyBridgeConfig) -> HashMap<String, TrackedIp> {
-        let mut tracked = HashMap::new();
         let content = match std::fs::read_to_string(&config.caddyfile_path) {
             Ok(c) => c,
             Err(e) => {
@@ -162,27 +203,30 @@ impl CaddyBridge {
                     error = %e,
                     "sourdough: could not read Caddyfile for restoration"
                 );
-                return tracked;
+                return HashMap::new();
             }
         };
 
         let start_idx = content.find(&config.start_marker);
         let end_idx = content.find(&config.end_marker);
         let (Some(start), Some(end)) = (start_idx, end_idx) else {
-            return tracked;
+            return HashMap::new();
         };
 
-        let section = &content[start..end];
+        Self::parse_fleet_directives(&content[start..end])
+    }
+
+    /// Shared parser for fleet directives — works on snippet content or
+    /// Caddyfile marker sections. Extracts @fleet_* matchers and X-Fleet-Hash
+    /// headers into TrackedIp entries.
+    fn parse_fleet_directives(content: &str) -> HashMap<String, TrackedIp> {
+        let mut tracked: HashMap<String, TrackedIp> = HashMap::new();
         let now = SystemTime::now();
-        // Track the most recently parsed IPs so we can backfill
-        // when we encounter their X-Fleet-Hash in a later line
         let mut last_parsed_ips: Vec<String> = Vec::new();
 
-        for line in section.lines() {
+        for line in content.lines() {
             let trimmed = line.trim();
 
-            // Capture X-Fleet-Hash from header_up directive and backfill
-            // the hash onto the IPs from the preceding @fleet_ matcher
             if trimmed.starts_with("header_up X-Fleet-Hash") {
                 if let Some(hash) = trimmed
                     .split("X-Fleet-Hash")
@@ -213,7 +257,6 @@ impl CaddyBridge {
                 continue;
             };
 
-            // Parse: @fleet_{name}[_N] remote_ip {ip1} {ip2} ...
             last_parsed_ips.clear();
             if let Some(ip_part) = trimmed.split("remote_ip").nth(1) {
                 for ip in ip_part.split_whitespace() {
@@ -527,38 +570,21 @@ impl CaddyBridge {
         }
     }
 
+    /// Write fleet matchers to snippet files instead of injecting into the
+    /// Caddyfile. The Caddyfile uses `import` directives to include them.
+    ///
+    /// This is the vacuole fix: the Caddyfile was 78% fleet IP data because
+    /// caddy-bridge rewrote the entire file every 30 seconds. Now the
+    /// Caddyfile is static config (~500 lines) and snippet files are the
+    /// ephemeral routing layer (~2 small files that get atomically replaced).
     fn write_caddyfile(&self) -> Result<(), std::io::Error> {
-        let content = std::fs::read_to_string(&self.config.caddyfile_path)?;
-
-        let start_idx = content.find(&self.config.start_marker);
-        let end_idx = content.find(&self.config.end_marker);
-
-        let (Some(start), Some(end)) = (start_idx, end_idx) else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Caddyfile markers not found: {} / {}",
-                    self.config.start_marker, self.config.end_marker
-                ),
-            ));
-        };
-
-        let start_line_end = content[start..]
-            .find('\n')
-            .map_or(content.len(), |i| start + i + 1);
-
-        // Find the beginning of the line containing the end marker
-        // (preserves any `\t# ` prefix so the marker stays commented)
-        let end_line_start = content[..end].rfind('\n').map_or(0, |i| i + 1);
+        std::fs::create_dir_all(&self.config.snippet_dir)?;
 
         let hash_groups = self.ips_by_posture_and_hash();
         let groups = self.ips_by_posture();
 
-        // Build directive blocks in escalation order (most aggressive first —
-        // Caddy evaluates matchers top-to-bottom, first match wins).
-        // Within each posture, IPs are sub-grouped by behavioral hash so
-        // each reverse_proxy block passes the correct X-Fleet-Hash header.
-        let mut ip_block = String::new();
+        // Build regular fleet directive block (escalation order)
+        let mut fleet_block = String::from("# Auto-generated by caddy-bridge — do not edit\n");
         for posture in [
             DefensePosture::Disperse,
             DefensePosture::Vanish,
@@ -568,7 +594,7 @@ impl CaddyBridge {
         ] {
             if let Some(sub_groups) = hash_groups.get(&posture) {
                 for (idx, (hash, ips)) in sub_groups.iter().enumerate() {
-                    ip_block.push_str(&Self::posture_directive(
+                    fleet_block.push_str(&Self::posture_directive(
                         posture,
                         ips,
                         hash.as_deref(),
@@ -578,60 +604,37 @@ impl CaddyBridge {
             }
         }
 
-        let new_content = format!(
-            "{}{}{}",
-            &content[..start_line_end],
-            ip_block,
-            &content[end_line_start..]
-        );
-
-        // ── Also inject honeycomb fleet routing (cross-mirror) ──
-        // Same fleet IPs but with X-Honeycomb header added.
-        // Honeycomb subdomains serve cross-mirror content where each
-        // fleet team sees another team's violation data (scyBorg framed).
-        let hc_start_marker = "~~HONEYCOMB_FLEET_START~~";
-        let hc_end_marker = "~~HONEYCOMB_FLEET_END~~";
-
-        let final_content = if let (Some(hc_start), Some(hc_end)) =
-            (new_content.find(hc_start_marker), new_content.find(hc_end_marker))
-        {
-            let hc_start_line_end = new_content[hc_start..]
-                .find('\n')
-                .map_or(new_content.len(), |i| hc_start + i + 1);
-            let hc_end_line_start = new_content[..hc_end].rfind('\n').map_or(0, |i| i + 1);
-
-            let mut hc_block = String::new();
-            for posture in [
-                DefensePosture::Disperse,
-                DefensePosture::Vanish,
-                DefensePosture::Scatter,
-                DefensePosture::SlowDegrade,
-                DefensePosture::WarnRoute,
-            ] {
-                if let Some(sub_groups) = hash_groups.get(&posture) {
-                    for (idx, (hash, ips)) in sub_groups.iter().enumerate() {
-                        hc_block.push_str(&Self::honeycomb_directive(
-                            posture,
-                            ips,
-                            hash.as_deref(),
-                            idx,
-                        ));
-                    }
+        // Build honeycomb fleet directive block (cross-mirror routing)
+        let mut hc_block = String::from("# Auto-generated by caddy-bridge — do not edit\n");
+        for posture in [
+            DefensePosture::Disperse,
+            DefensePosture::Vanish,
+            DefensePosture::Scatter,
+            DefensePosture::SlowDegrade,
+            DefensePosture::WarnRoute,
+        ] {
+            if let Some(sub_groups) = hash_groups.get(&posture) {
+                for (idx, (hash, ips)) in sub_groups.iter().enumerate() {
+                    hc_block.push_str(&Self::honeycomb_directive(
+                        posture,
+                        ips,
+                        hash.as_deref(),
+                        idx,
+                    ));
                 }
             }
+        }
 
-            format!(
-                "{}{}{}",
-                &new_content[..hc_start_line_end],
-                hc_block,
-                &new_content[hc_end_line_start..]
-            )
-        } else {
-            tracing::debug!("No HONEYCOMB_FLEET markers found in Caddyfile — skipping cross-mirror routing");
-            new_content
-        };
+        // Atomic write: write to .tmp then rename (prevents partial reads)
+        let fleet_path = self.config.snippet_dir.join("fleet.snippet");
+        let fleet_tmp = self.config.snippet_dir.join("fleet.snippet.tmp");
+        std::fs::write(&fleet_tmp, &fleet_block)?;
+        std::fs::rename(&fleet_tmp, &fleet_path)?;
 
-        std::fs::write(&self.config.caddyfile_path, final_content)?;
+        let hc_path = self.config.snippet_dir.join("honeycomb.snippet");
+        let hc_tmp = self.config.snippet_dir.join("honeycomb.snippet.tmp");
+        std::fs::write(&hc_tmp, &hc_block)?;
+        std::fs::rename(&hc_tmp, &hc_path)?;
 
         let total: usize = groups.values().map(Vec::len).sum();
         let summary: Vec<String> = groups
@@ -641,8 +644,9 @@ impl CaddyBridge {
         tracing::info!(
             total,
             postures = %summary.join(" "),
-            path = %self.config.caddyfile_path.display(),
-            "Caddyfile updated with posture-aware fleet directives (git + honeycomb)"
+            fleet_snippet = %fleet_path.display(),
+            hc_snippet = %hc_path.display(),
+            "fleet snippets updated (vacuole: Caddyfile no longer modified)"
         );
 
         Ok(())

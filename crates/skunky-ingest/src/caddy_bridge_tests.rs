@@ -6,12 +6,14 @@ use std::io::Write;
     }
 
     fn test_config(caddyfile: PathBuf) -> CaddyBridgeConfig {
+        let snippet_dir = caddyfile.parent().unwrap().join("fleet-imports");
         CaddyBridgeConfig {
             caddyfile_path: caddyfile,
             caddy_reload_cmd: "true".to_string(),
             ip_ttl_secs: 3600,
             start_marker: "~~FLEET_PRESSURE_START~~".to_string(),
             end_marker: "~~FLEET_PRESSURE_END~~".to_string(),
+            snippet_dir,
         }
     }
 
@@ -88,11 +90,13 @@ use std::io::Write;
         );
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("@fleet_warn"));
-        assert!(content.contains("57.141.20.1"));
-        assert!(content.contains("respond 403"));
-        assert!(content.contains("~~FLEET_PRESSURE_END~~"));
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("@fleet_warn"));
+        assert!(snippet.contains("57.141.20.1"));
+        assert!(snippet.contains("respond 403"));
+        // Caddyfile itself should NOT be modified
+        let caddyfile_content = std::fs::read_to_string(&caddyfile).unwrap();
+        assert_eq!(caddyfile_content, test_caddyfile_content());
     }
 
     #[test]
@@ -105,10 +109,10 @@ use std::io::Write;
         bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::SlowDegrade);
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("@fleet_tarpit"));
-        assert!(content.contains("/tarpit{uri}"));
-        assert!(content.contains("reverse_proxy localhost:9753"));
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("@fleet_tarpit"));
+        assert!(snippet.contains("/tarpit{uri}"));
+        assert!(snippet.contains("reverse_proxy localhost:9753"));
     }
 
     #[test]
@@ -121,9 +125,9 @@ use std::io::Write;
         bridge.add_fleet_ips(&["10.0.0.2".to_string()], DefensePosture::Scatter);
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("@fleet_scatter"));
-        assert!(content.contains("reverse_proxy localhost:9753"));
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("@fleet_scatter"));
+        assert!(snippet.contains("reverse_proxy localhost:9753"));
     }
 
     #[test]
@@ -136,9 +140,9 @@ use std::io::Write;
         bridge.add_fleet_ips(&["10.0.0.3".to_string()], DefensePosture::Vanish);
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("@fleet_vanish"));
-        assert!(content.contains("abort"));
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("@fleet_vanish"));
+        assert!(snippet.contains("abort"));
     }
 
     #[test]
@@ -153,11 +157,10 @@ use std::io::Write;
         bridge.add_fleet_ips(&["10.0.0.3".to_string()], DefensePosture::Scatter);
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        // Vanish should appear before Scatter, Scatter before WarnRoute
-        let vanish_pos = content.find("@fleet_vanish").unwrap();
-        let scatter_pos = content.find("@fleet_scatter").unwrap();
-        let warn_pos = content.find("@fleet_warn").unwrap();
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        let vanish_pos = snippet.find("@fleet_vanish").unwrap();
+        let scatter_pos = snippet.find("@fleet_scatter").unwrap();
+        let warn_pos = snippet.find("@fleet_warn").unwrap();
         assert!(vanish_pos < scatter_pos, "vanish should come before scatter");
         assert!(scatter_pos < warn_pos, "scatter should come before warn");
     }
@@ -172,8 +175,8 @@ use std::io::Write;
         bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::Observe);
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(!content.contains("@fleet_"));
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(!snippet.contains("@fleet_"));
     }
 
     #[test]
@@ -218,7 +221,6 @@ use std::io::Write;
     }
 
     #[test]
-    #[test]
     fn negative_selection_from_file() {
         let dir = tempfile::tempdir().unwrap();
         let self_file = dir.path().join("self-ips.txt");
@@ -241,26 +243,20 @@ use std::io::Write;
     }
 
     #[test]
-    fn sourdough_restores_existing_directives() {
+    fn sourdough_restores_from_snippet() {
         let dir = tempfile::tempdir().unwrap();
         let caddyfile = dir.path().join("Caddyfile");
-        // Write a Caddyfile with existing fleet directives
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        // Write a snippet file directly (simulates previous session)
+        let snippet_dir = dir.path().join("fleet-imports");
+        std::fs::create_dir_all(&snippet_dir).unwrap();
         std::fs::write(
-            &caddyfile,
-            "git.primals.eco {\n\
-             \t# ~~FLEET_PRESSURE_START~~\n\
-             \t@fleet_disperse remote_ip 57.141.20.1 57.141.20.2 57.141.20.3\n\
-             \thandle @fleet_disperse {\n\
-             \t\trewrite * /disperse{uri}\n\
-             \t\treverse_proxy localhost:9753\n\
-             \t}\n\
+            snippet_dir.join("fleet.snippet"),
+            "\t@fleet_disperse remote_ip 57.141.20.1 57.141.20.2 57.141.20.3\n\
+             \thandle @fleet_disperse {\n\t\trewrite * /disperse{uri}\n\t\treverse_proxy localhost:9753\n\t}\n\
              \t@fleet_warn remote_ip 10.0.0.1\n\
-             \thandle @fleet_warn {\n\
-             \t\trespond 403\n\
-             \t}\n\
-             \t# ~~FLEET_PRESSURE_END~~\n\
-             \troot * /opt/ecoPrimals/gitea-data\n\
-             }\n",
+             \thandle @fleet_warn {\n\t\trespond 403\n\t}\n",
         )
         .unwrap();
 
@@ -281,9 +277,10 @@ use std::io::Write;
     }
 
     #[test]
-    fn sourdough_restores_multi_posture() {
+    fn sourdough_legacy_migration_from_caddyfile() {
         let dir = tempfile::tempdir().unwrap();
         let caddyfile = dir.path().join("Caddyfile");
+        // Legacy Caddyfile with fleet directives between markers (no snippet files)
         std::fs::write(
             &caddyfile,
             "git.primals.eco {\n\
@@ -310,7 +307,7 @@ use std::io::Write;
     }
 
     #[test]
-    fn sourdough_empty_section_restores_nothing() {
+    fn sourdough_empty_restores_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
@@ -325,7 +322,7 @@ use std::io::Write;
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        // Session 1: add IPs and write
+        // Session 1: add IPs and write to snippets
         let mut bridge1 = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
         bridge1.add_fleet_ips(
             &["57.141.20.1".to_string(), "57.141.20.2".to_string()],
@@ -333,7 +330,7 @@ use std::io::Write;
         );
         bridge1.write_caddyfile().unwrap();
 
-        // Session 2: new bridge should restore those IPs
+        // Session 2: new bridge should restore from snippet file
         let bridge2 = CaddyBridge::new(test_config(caddyfile), HashSet::new());
         assert_eq!(bridge2.tracked_count(), 2);
         assert!(bridge2.tracked_ips.contains_key("57.141.20.1"));
@@ -370,11 +367,11 @@ use std::io::Write;
         );
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("@fleet_scatter"), "should have scatter matcher");
-        assert!(content.contains("X-Fleet-Hash"), "should have X-Fleet-Hash header");
-        assert!(content.contains("abc123deadbeef"), "should have the behavioral hash value");
-        assert!(content.contains("X-Real-IP"), "should still have X-Real-IP");
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("@fleet_scatter"), "should have scatter matcher");
+        assert!(snippet.contains("X-Fleet-Hash"), "should have X-Fleet-Hash header");
+        assert!(snippet.contains("abc123deadbeef"), "should have the behavioral hash value");
+        assert!(snippet.contains("X-Real-IP"), "should still have X-Real-IP");
     }
 
     #[test]
@@ -383,7 +380,7 @@ use std::io::Write;
         let caddyfile = dir.path().join("Caddyfile");
         std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
 
-        // Session 1: add IPs with hash and write
+        // Session 1: add IPs with hash and write to snippet
         let mut bridge1 = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
         bridge1.add_fleet_ips_with_hash(
             &["57.141.20.1".to_string()],
@@ -392,11 +389,11 @@ use std::io::Write;
         );
         bridge1.write_caddyfile().unwrap();
 
-        // Verify it was written
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("deadbeef12345678"), "hash should be in Caddyfile");
+        // Verify it was written to snippet
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("deadbeef12345678"), "hash should be in snippet");
 
-        // Session 2: new bridge should restore hash from Caddyfile
+        // Session 2: new bridge should restore hash from snippet
         let bridge2 = CaddyBridge::new(test_config(caddyfile), HashSet::new());
         assert_eq!(bridge2.tracked_count(), 1);
         assert!(bridge2.tracked_ips.contains_key("57.141.20.1"));
@@ -421,10 +418,9 @@ use std::io::Write;
         );
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("@fleet_warn"), "should have warn matcher");
-        // WarnRoute uses respond 403, no reverse_proxy, so no header_up
-        assert!(!content.contains("X-Fleet-Hash"), "warn route has no reverse_proxy, no hash header");
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("@fleet_warn"), "should have warn matcher");
+        assert!(!snippet.contains("X-Fleet-Hash"), "warn route has no reverse_proxy, no hash header");
     }
 
     #[test]
@@ -441,10 +437,9 @@ use std::io::Write;
         );
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("abort"), "vanish should abort");
-        // Vanish aborts — no reverse_proxy, no hash header
-        assert!(!content.contains("X-Fleet-Hash"), "vanish has no reverse_proxy, no hash header");
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("abort"), "vanish should abort");
+        assert!(!snippet.contains("X-Fleet-Hash"), "vanish has no reverse_proxy, no hash header");
     }
 
     #[test]
@@ -466,7 +461,37 @@ use std::io::Write;
         );
         bridge.write_caddyfile().unwrap();
 
-        let content = std::fs::read_to_string(&caddyfile).unwrap();
-        assert!(content.contains("disperse_hash_001"), "disperse should have its hash");
-        assert!(content.contains("tarpit_hash_002"), "tarpit should have its hash");
+        let snippet = std::fs::read_to_string(dir.path().join("fleet-imports/fleet.snippet")).unwrap();
+        assert!(snippet.contains("disperse_hash_001"), "disperse should have its hash");
+        assert!(snippet.contains("tarpit_hash_002"), "tarpit should have its hash");
+    }
+
+    #[test]
+    fn honeycomb_snippet_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        std::fs::write(&caddyfile, test_caddyfile_content()).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
+        bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::Scatter);
+        bridge.write_caddyfile().unwrap();
+
+        let hc_snippet = std::fs::read_to_string(dir.path().join("fleet-imports/honeycomb.snippet")).unwrap();
+        assert!(hc_snippet.contains("@hc_fleet"), "honeycomb snippet should have hc_fleet matcher");
+        assert!(hc_snippet.contains("X-Honeycomb"), "honeycomb snippet should have X-Honeycomb header");
+    }
+
+    #[test]
+    fn caddyfile_not_modified_by_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let caddyfile = dir.path().join("Caddyfile");
+        let original = test_caddyfile_content();
+        std::fs::write(&caddyfile, &original).unwrap();
+
+        let mut bridge = CaddyBridge::new(test_config(caddyfile.clone()), HashSet::new());
+        bridge.add_fleet_ips(&["10.0.0.1".to_string()], DefensePosture::Disperse);
+        bridge.write_caddyfile().unwrap();
+
+        let after = std::fs::read_to_string(&caddyfile).unwrap();
+        assert_eq!(after, original, "Caddyfile should not be modified by snippet-based write");
     }
