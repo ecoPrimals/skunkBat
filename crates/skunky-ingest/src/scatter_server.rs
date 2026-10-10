@@ -331,6 +331,89 @@ async fn handle_request(
         return Ok(());
     }
 
+    // ── APERTURE: /can-serve — Caddy on-demand TLS validation ──
+    // Caddy asks "should I provision a cert for this domain?"
+    // The aperture validates: must be *.primals.eco, reasonable length,
+    // not an explicit service that already has its own cert block.
+    if path.starts_with("/can-serve") {
+        let domain = path.split("domain=")
+            .nth(1)
+            .unwrap_or("")
+            .split('&')
+            .next()
+            .unwrap_or("");
+        let allowed = crate::aperture::can_serve(domain);
+        let status = if allowed { "200 OK" } else { "403 Forbidden" };
+        let body = if allowed {
+            format!(r#"{{"allowed":true,"domain":"{domain}"}}"#)
+        } else {
+            format!(r#"{{"allowed":false,"domain":"{domain}"}}"#)
+        };
+        let response = format!(
+            "HTTP/1.1 {status}\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        if !allowed {
+            tracing::debug!(domain = %domain, "🔒 aperture denied cert for {domain}");
+        }
+        return Ok(());
+    }
+
+    // ── APERTURE: /aperture-resolve — wildcard routing decision ──
+    // Returns the routing decision for a subdomain as JSON.
+    // Used by Caddy's wildcard block to decide how to route.
+    if path.starts_with("/aperture-resolve") {
+        let subdomain = request_host.split('.').next().unwrap_or("");
+        let decision = crate::aperture::resolve(subdomain);
+        let body = match &decision {
+            crate::aperture::ApertureDecision::ServeSite { subdomain, root_path, spa_fallback } => {
+                format!(
+                    r#"{{"action":"serve","subdomain":"{subdomain}","root":"{root_path}","spa":{spa_fallback}}}"#
+                )
+            }
+            crate::aperture::ApertureDecision::Redirect { target_url } => {
+                format!(r#"{{"action":"redirect","url":"{target_url}"}}"#)
+            }
+            crate::aperture::ApertureDecision::Honeycomb { surface_index } => {
+                format!(r#"{{"action":"honeycomb","surface":{surface_index}}}"#)
+            }
+            crate::aperture::ApertureDecision::Scatter => {
+                r#"{"action":"scatter"}"#.to_string()
+            }
+            crate::aperture::ApertureDecision::ExplicitService => {
+                r#"{"action":"explicit"}"#.to_string()
+            }
+            crate::aperture::ApertureDecision::NotFound => {
+                r#"{"action":"not_found"}"#.to_string()
+            }
+        };
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             Cache-Control: public, max-age=60\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+        );
+        writer.write_all(response.as_bytes()).await?;
+        writer.flush().await?;
+        tracing::debug!(
+            subdomain = %subdomain,
+            "🔬 aperture resolved: {subdomain} → {:?}",
+            decision
+        );
+        return Ok(());
+    }
+
     // ── LIVE TERMINAL FEED — /live endpoint ──
     if path == "/live" {
         let feed_path = std::path::Path::new("/opt/membrane/live-terminal/feed.txt");
@@ -838,6 +921,7 @@ async fn handle_request(
                 detector_bitmap: epi,
                 confidence: conf,
                 chain_depth: chain_depth.min(255) as u8,
+                declared: false,
                 response_type: ResponseType::Prism,
             });
 
@@ -1245,6 +1329,7 @@ async fn handle_request(
             detector_bitmap: epi,
             confidence: conf,
             chain_depth: chain_depth.min(255) as u8,
+            declared: false,
             response_type,
         });
     }

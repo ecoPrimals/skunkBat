@@ -8,6 +8,7 @@
 
 pub mod aggregator;
 pub mod anderson_bridge;
+pub mod aperture;
 pub mod caddy;
 pub mod caddy_bridge;
 pub mod cloudflare;
