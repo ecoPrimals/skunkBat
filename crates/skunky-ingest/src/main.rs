@@ -12,7 +12,7 @@
 use skunky_ingest::{
     aggregator, anderson_bridge, bloom_emitter, caddy_bridge, cloudflare, cursor,
     dashboard_writer, entity_classifier, epitope_registry, error, federation, fleet,
-    inflammatory, ingestion_observer, lysogeny,
+    inflammatory, ingestion_observer, lysogeny, membrane_stack,
     rpc, abuse_reporter, bloom_sensor, scatter_server, signal_spine,
     signal_writer, threat_feed,
 };
@@ -209,6 +209,15 @@ struct Cli {
     /// Bloom emitter cascade interval in seconds (default: 6 hours).
     #[arg(long, default_value_t = 21600)]
     bloom_emitter_interval_secs: u64,
+
+    /// Enable membrane stack observer — nested membrane profile from core to heliosphere.
+    /// Writes membrane-stack.json every membrane_stack_interval_secs.
+    #[arg(long, default_value_t = false)]
+    membrane_stack: bool,
+
+    /// Membrane stack observer interval in seconds (default: 5 minutes).
+    #[arg(long, default_value_t = 300)]
+    membrane_stack_interval_secs: u64,
 }
 
 #[tokio::main]
@@ -460,6 +469,19 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
                 }
                 tokio::time::sleep(interval).await;
             }
+        });
+    }
+
+    // Membrane stack observer — nested membrane profile from core to heliosphere
+    if cli.membrane_stack {
+        let interval = cli.membrane_stack_interval_secs;
+        tracing::info!(
+            interval_secs = interval,
+            "🫧 membrane stack observer active — gAIa breathes"
+        );
+        tokio::spawn(async move {
+            let config = membrane_stack::MembraneStackConfig::default();
+            membrane_stack::breathe_loop(config, interval).await;
         });
     }
 

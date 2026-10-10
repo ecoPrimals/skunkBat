@@ -33,6 +33,7 @@ pub mod rpc;
 pub mod abuse_reporter;
 pub mod bloom_sensor;
 pub mod bloom_emitter;
+pub mod membrane_stack;
 pub mod journey_tracer;
 pub mod scatter_nft;
 pub mod scatter_rng;
