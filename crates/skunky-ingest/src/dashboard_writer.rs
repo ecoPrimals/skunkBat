@@ -529,6 +529,8 @@ pub struct DashboardWriter {
     registry: crate::epitope_registry::SharedRegistry,
     /// Shared Anderson profile — updated on flush, read by /plasmid endpoint.
     anderson_profile: crate::anderson_bridge::SharedAndersonProfile,
+    /// Announce Anderson profile to squirrel AI coordination primal.
+    squirrel_announce: bool,
 }
 
 impl DashboardWriter {
@@ -539,7 +541,7 @@ impl DashboardWriter {
         write_interval: u64,
         registry: crate::epitope_registry::SharedRegistry,
     ) -> Self {
-        Self::with_anderson(output_path, state_path, write_interval, registry, std::sync::Arc::new(tokio::sync::RwLock::new(None)))
+        Self::with_anderson(output_path, state_path, write_interval, registry, std::sync::Arc::new(tokio::sync::RwLock::new(None)), false)
     }
 
     /// Create a new dashboard writer with shared Anderson profile output.
@@ -549,6 +551,7 @@ impl DashboardWriter {
         write_interval: u64,
         registry: crate::epitope_registry::SharedRegistry,
         anderson_profile: crate::anderson_bridge::SharedAndersonProfile,
+        squirrel_announce: bool,
     ) -> Self {
         let culture = Self::load_culture(&state_path);
         let writer = Self {
@@ -561,6 +564,7 @@ impl DashboardWriter {
             culture,
             registry,
             anderson_profile,
+            squirrel_announce,
         };
         tracing::info!(
             output = %writer.output_path.display(),
@@ -1205,6 +1209,14 @@ impl DashboardWriter {
         if let Ok(json) = serde_json::to_string(&profile) {
             let _ = std::fs::create_dir_all("/run/membrane");
             let _ = std::fs::write("/run/membrane/anderson-profile.json", &json);
+        }
+
+        // Announce to squirrel (fire-and-forget, spawned, never blocks bloom)
+        if self.squirrel_announce {
+            let profile_clone = profile.clone();
+            tokio::spawn(async move {
+                crate::squirrel_announce::announce_to_squirrel(&profile_clone).await;
+            });
         }
 
         // Also update the shared profile for in-process consumers

@@ -187,6 +187,13 @@ struct Cli {
     #[arg(long, default_value_t = 200)]
     dashboard_flush_interval: u64,
 
+    /// Announce membrane observations to squirrel AI coordination primal.
+    /// Fire-and-forget via capabilities.announce to /run/membrane/squirrel.sock.
+    /// Off by default — enable with --squirrel-announce after verifying squirrel
+    /// is running and accepting connections.
+    #[arg(long, default_value_t = false)]
+    squirrel_announce: bool,
+
     /// Enable ingestion observer — tracks scatter content lifecycle.
     /// Reads phase from Python observer state, exposes to dashboard,
     /// appends Rust-side volume to the timeline ledger.
@@ -554,6 +561,7 @@ async fn run(cli: Cli) -> Result<(), IngestError> {
             cli.dashboard_flush_interval,
             epitope_registry.clone(),
             anderson_profile.clone(),
+            cli.squirrel_announce,
         ))
     } else {
         None
